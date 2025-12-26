@@ -86,7 +86,6 @@ db_pw = os.getenv("DB_PW")
 db_ip = os.getenv("DB_IP")
 db_database = os.getenv("DB_DATABASE")
 db_port = int(os.getenv("DB_PORT"))
-path_to_scripts = os.getenv("PATH_TO_SCRIPTS")
 
 
 # --------------------
@@ -430,7 +429,7 @@ def delete_host():
 def scripts():
 
     # Get the list of all files and directories
-    dir_list = os.listdir(path_to_scripts)
+    dir_list = os.listdir("/var/lib/netpac/scripts")
 
     return render_template("scripts.html", scripts=dir_list)
 
@@ -445,10 +444,10 @@ def view_script(filename):
     safe_filename = secure_filename(filename)
     
     # Vollständigen Pfad erstellen
-    path = os.path.join(path_to_scripts, safe_filename)
+    path = os.path.join("/var/lib/netpac/scripts", safe_filename)
     
     # Sicherstellen, dass der Pfad im erlaubten Verzeichnis liegt
-    if not os.path.abspath(path).startswith(os.path.abspath(path_to_scripts)):
+    if not os.path.abspath(path).startswith(os.path.abspath("/var/lib/netpac/scripts")):
         logger.warning(f"Path traversal attempt detected: {filename}")
         abort(403)
     
@@ -511,8 +510,8 @@ def run_script(filename):
         conn.close()
     
     # Pfad validieren
-    script_path = os.path.join(path_to_scripts, safe_filename)
-    if not os.path.abspath(script_path).startswith(os.path.abspath(path_to_scripts)):
+    script_path = os.path.join("/var/lib/netpac/scripts", safe_filename)
+    if not os.path.abspath(script_path).startswith(os.path.abspath("/var/lib/netpac/scripts")):
         logger.warning(f"Path traversal attempt in run_script: {filename}")
         abort(403)
     
