@@ -93,15 +93,21 @@ echo -e "${YELLOW}Checking log directory...${NC}"
 
 if [ ! -d "/var/log/netpac" ]; then
     sudo mkdir -p /var/log/netpac
-    sudo addgroup netpaclogs
-    sudo chown netpac:netpaclogs /var/log/netpac
-    sudo chmod 750 /var/log/netpac
-    sudo usermod -aG netpaclogs netpac
-
-    print_status "Log directory created"
-else
-    print_warning "Log directory already exists"
+    print_status "Created log directory"
 fi
+
+if ! getent group netpaclogs > /dev/null; then
+    sudo groupadd netpaclogs
+fi
+
+sudo chown netpac:netpaclogs /var/log/netpac
+sudo chmod 750 /var/log/netpac
+
+if ! id -nG netpac | grep -qw netpaclogs; then
+    sudo usermod -aG netpac netpaclogs
+fi
+
+print_status "Finish all for logs directory"
 
 # ===================================
 # 3. CREATE SCRIPT DIRECTORY
@@ -111,15 +117,21 @@ echo -e "${YELLOW}Checking script directory...${NC}"
 
 if [ ! -d "/var/lib/netpac/scripts" ]; then
     sudo mkdir -p /var/lib/netpac/scripts
-    sudo groupadd netpacscript
-    sudo chown netpac:netpacscript /var/lib/netpac/scripts
-    sudo chmod 770 /var/lib/netpac/scripts
-    sudo usermod -aG netpacscript netpac
-
-    print_status "Script directory created"
-else
-    print_warning "Script directory already exists"
+    print_status "Created Script directory"
 fi
+
+if ! getent group netpacscript > /dev/null; then
+    sudo groupadd netpacscript
+fi
+
+sudo chown netpac:netpacscript /var/lib/netpac/scripts
+sudo chmod 770 /var/lib/netpac/scripts
+
+if ! id -nG netpac | grep -qw netpacscript; then
+    sudo usermod -aG netpac netpacscript
+fi
+
+print_status "Finish all for script directory"
 
 # ===================================
 # 4. CHECK GIT REPOSITORY
