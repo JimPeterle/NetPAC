@@ -1,30 +1,31 @@
 #!/bin/bash
 
-##############################################
+######################################
 # NetPAC Automatic Setup Script
-# Wird im bereits geklonten Git-Repo ausgeführt
-# Installiert und konfiguriert:
-# - Python venv
+# Run inside the already cloned Git repository
+#
+# Installs and configures:
+# - Required directories
+# - Python virtual environment
 # - Gunicorn
 # - Nginx
-# - Systemd Services
-##############################################
+# - Systemd services
+######################################
 
-set -e  # Bei Fehler abbrechen
+set -e
 
-# Farben für Output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}╔════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║   NetPAC Auto-Setup Script        ║${NC}"
+echo -e "${GREEN}║        NetPAC Auto-Setup           ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
 echo ""
 
 # ===================================
-# KONFIGURATION - HIER ANPASSEN!
+# CONFIGURATION – ADJUST HERE!
 # ===================================
 
 DOMAIN=""
@@ -35,12 +36,12 @@ PATHPRIVATKEY=""
 # MAIN
 # ===================================
 
-APP_DIR="$(pwd)"  # Aktuelles Verzeichnis (Git-Repo)
-APP_USER="$USER"  # Aktueller User
-APP_GROUP="$(id -gn)"  # Primäre Gruppe
+APP_DIR="$(pwd)"        # Current directory (Git repo)
+APP_USER="$USER"        # Current user
+APP_GROUP="$(id -gn)"   # Primary group
 
 # ===================================
-# Funktionen
+# FUNCTIONS
 # ===================================
 
 print_status() {
@@ -56,51 +57,87 @@ print_warning() {
 }
 
 # ===================================
-# 1. Voraussetzungen prüfen
+# 1. CHECK PREREQUISITES
 # ===================================
 
 echo -e "${YELLOW}Checking prerequisites...${NC}"
 
-if [ "$EUID" -eq 0 ]; then 
-    print_error "Bitte NICHT als root ausführen!"
-    print_warning "Starte mit: ./setup.sh"
+if [ "$EUID" -eq 0 ]; then
+    print_error "Please DO NOT run this script as root!"
+    print_warning "Run it as a normal user: ./setup.sh"
     exit 1
 fi
 
-# Prüfen ob wir im richtigen Verzeichnis sind
+# Ensure we are in the correct directory
 if [ ! -f "netpac.py" ]; then
-    print_error "netpac.py nicht gefunden!"
-    print_warning "Bitte im NetPAC Git-Repo Verzeichnis ausführen"
+    print_error "netpac.py not found!"
+    print_warning "Please run this script inside the NetPAC Git repository"
     exit 1
 fi
 
-# Python 3 prüfen
+# Check Python 3
 if ! command -v python3 &> /dev/null; then
-    print_error "Python 3 nicht gefunden!"
-    echo "Installiere mit: sudo apt install python3 python3-venv python3-pip"
+    print_error "Python 3 not found!"
+    echo "Install with: sudo apt install python3 python3-venv python3-pip"
     exit 1
 fi
 
-print_status "Python 3: $(python3 --version)"
+print_status "Python detected: $(python3 --version)"
 print_status "Working directory: $APP_DIR"
 
 # ===================================
-# 2. Git-Repo prüfen (bereits geklont)
+# 2. CREATE LOG DIRECTORY
+# ===================================
+
+echo -e "${YELLOW}Checking log directory...${NC}"
+
+if [ ! -d "/var/log/netpac" ]; then
+    sudo mkdir -p /var/log/netpac
+    sudo addgroup netpaclogs
+    sudo chown netpac:netpaclogs /var/log/netpac
+    sudo chmod 750 /var/log/netpac
+    sudo usermod -aG netpaclogs netpac
+
+    print_status "Log directory created"
+else
+    print_warning "Log directory already exists"
+fi
+
+# ===================================
+# 3. CREATE SCRIPT DIRECTORY
+# ===================================
+
+echo -e "${YELLOW}Checking script directory...${NC}"
+
+if [ ! -d "/var/lib/netpac/scripts" ]; then
+    sudo mkdir -p /var/lib/netpac/scripts
+    sudo groupadd netpacscript
+    sudo chown netpac:netpacscript /var/lib/netpac/scripts
+    sudo chmod 770 /var/lib/netpac/scripts
+    sudo usermod -aG netpacscript netpac
+
+    print_status "Script directory created"
+else
+    print_warning "Script directory already exists"
+fi
+
+# ===================================
+# 4. CHECK GIT REPOSITORY
 # ===================================
 
 echo ""
 echo -e "${YELLOW}Checking Git repository...${NC}"
 
 if [ -d ".git" ]; then
-    print_status "Git repository gefunden"
+    print_status "Git repository detected"
     CURRENT_BRANCH=$(git branch --show-current)
-    print_status "Branch: $CURRENT_BRANCH"
+    print_status "Current branch: $CURRENT_BRANCH"
 else
-    print_warning "Kein Git repository gefunden (optional)"
+    print_warning "No Git repository found (optional)"
 fi
 
 # ===================================
-# 3. Virtual Environment
+# 5. PYTHON VIRTUAL ENVIRONMENT
 # ===================================
 
 echo ""
@@ -108,16 +145,16 @@ echo -e "${YELLOW}Setting up Python virtual environment...${NC}"
 
 if [ ! -d "venv" ]; then
     python3 -m venv venv
-    print_status "Virtual environment erstellt"
+    print_status "Virtual environment created"
 else
-    print_warning "venv existiert bereits"
+    print_warning "Virtual environment already exists"
 fi
 
 source venv/bin/activate
-print_status "Virtual environment aktiviert"
+print_status "Virtual environment activated"
 
 # ===================================
-# 4. Dependencies installieren
+# 6. INSTALL DEPENDENCIES
 # ===================================
 
 echo ""
@@ -126,14 +163,14 @@ echo -e "${YELLOW}Installing Python dependencies...${NC}"
 if [ -f "requirements.txt" ]; then
     pip3 install --upgrade pip
     pip3 install -r requirements.txt
-    print_status "Dependencies installiert"
+    print_status "Dependencies installed"
 else
-    print_error "requirements.txt nicht gefunden!"
+    print_error "requirements.txt not found!"
     exit 1
 fi
 
 # ===================================
-# 6. Gunicorn Config erstellen
+# 7. CREATE GUNICORN CONFIG
 # ===================================
 
 echo ""
@@ -144,7 +181,7 @@ import os
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-# Gunicorn Configuration
+# Gunicorn configuration
 bind = "127.0.0.1:8443"
 workers = 4
 worker_class = "sync"
@@ -167,10 +204,10 @@ proc_name = "netpac"
 pidfile = f"{dir_path}/gunicorn.pid"
 EOF
 
-print_status "Gunicorn config: gunicorn_config.py"
+print_status "Gunicorn configuration created"
 
 # ===================================
-# 7. Systemd Service erstellen
+# 8. CREATE SYSTEMD SERVICE
 # ===================================
 
 echo ""
@@ -178,7 +215,7 @@ echo -e "${YELLOW}Creating systemd service...${NC}"
 
 sudo tee /etc/systemd/system/netpac.service > /dev/null << EOF
 [Unit]
-Description=NetPAC with Gunicorn
+Description=NetPAC Application (Gunicorn)
 After=network.target
 
 [Service]
@@ -202,33 +239,33 @@ NoNewPrivileges=true
 WantedBy=multi-user.target
 EOF
 
-print_status "Systemd service: /etc/systemd/system/netpac.service"
+print_status "Systemd service created"
 
 # ===================================
-# 8. Nginx installieren (falls nötig)
+# 9. INSTALL NGINX (IF REQUIRED)
 # ===================================
 
 echo ""
 echo -e "${YELLOW}Checking Nginx installation...${NC}"
 
 if ! command -v nginx &> /dev/null; then
-    print_warning "Nginx nicht gefunden"
-    read -p "Nginx installieren? (y/n) " -n 1 -r
+    print_warning "Nginx not found"
+    read -p "Install Nginx now? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         sudo apt update
         sudo apt install -y nginx
-        print_status "Nginx installiert"
+        print_status "Nginx installed"
     else
-        print_error "Nginx wird benötigt!"
+        print_error "Nginx is required!"
         exit 1
     fi
 else
-    print_status "Nginx: $(nginx -v 2>&1)"
+    print_status "Nginx detected: $(nginx -v 2>&1)"
 fi
 
 # ===================================
-# 9. Nginx Config erstellen
+# 10. CREATE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -239,7 +276,7 @@ upstream netpac_backend {
     server 127.0.0.1:8443 fail_timeout=0;
 }
 
-# HTTP -> HTTPS Redirect
+# Redirect HTTP to HTTPS
 server {
     listen 80;
     server_name $DOMAIN;
@@ -251,16 +288,16 @@ server {
     listen 443 ssl http2;
     server_name $DOMAIN;
 
-    # SSL Zertifikate (ANPASSEN!)
+    # SSL certificates
     ssl_certificate $PATHCERT;
     ssl_certificate_key $PATHPRIVATKEY;
-    
-    # SSL Config
+
+    # SSL configuration
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    # Security Headers
+    # Security headers
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-XSS-Protection "1; mode=block" always;
@@ -271,27 +308,27 @@ server {
     access_log /var/log/nginx/netpac_access.log;
     error_log /var/log/nginx/netpac_error.log;
 
-    # Client Settings
+    # Client settings
     client_max_body_size 16M;
 
     location / {
         proxy_pass http://netpac_backend;
-        
+
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
-        
+
         proxy_read_timeout 300s;
         proxy_connect_timeout 300s;
         proxy_send_timeout 300s;
-        
+
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
     }
 
-    # Static Files
+    # Static files
     location /static/ {
         alias $APP_DIR/static/;
         expires 30d;
@@ -300,100 +337,91 @@ server {
 }
 EOF
 
-print_status "Nginx config: /etc/nginx/sites-available/netpac"
+print_status "Nginx configuration created"
 
 # ===================================
-# 10. Nginx Config aktivieren
+# 11. ENABLE NGINX CONFIG
 # ===================================
 
 echo ""
 echo -e "${YELLOW}Activating Nginx configuration...${NC}"
 
-# Symlink erstellen
 if [ ! -L "/etc/nginx/sites-enabled/netpac" ]; then
     sudo ln -s /etc/nginx/sites-available/netpac /etc/nginx/sites-enabled/
-    print_status "Nginx config aktiviert"
+    print_status "Nginx configuration enabled"
 fi
 
-# Default Site deaktivieren (optional)
 if [ -L "/etc/nginx/sites-enabled/default" ]; then
-    read -p "Default Nginx Site deaktivieren? (y/n) " -n 1 -r
+    read -p "Disable default Nginx site? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         sudo rm /etc/nginx/sites-enabled/default
-        print_status "Default site deaktiviert"
+        print_status "Default site disabled"
     fi
 fi
 
-# Nginx Config testen
 if sudo nginx -t; then
-    print_status "Nginx config test erfolgreich"
+    print_status "Nginx configuration test passed"
 else
-    print_error "Nginx config test fehlgeschlagen!"
-    print_warning "Bitte SSL-Zertifikate in /etc/nginx/sites-available/netpac anpassen"
+    print_error "Nginx configuration test failed!"
 fi
 
 # ===================================
-# 11. Services starten
+# 12. START SERVICES
 # ===================================
 
 echo ""
 echo -e "${YELLOW}Starting services...${NC}"
 
-# Systemd neu laden
 sudo systemctl daemon-reload
 print_status "Systemd reloaded"
 
-# NetPAC Service
 sudo systemctl enable netpac
 sudo systemctl start netpac
 
 if sudo systemctl is-active --quiet netpac; then
-    print_status "netpac service gestartet"
+    print_status "NetPAC service started"
 else
-    print_error "netpac service start fehlgeschlagen!"
+    print_error "NetPAC service failed to start"
     echo "Logs: sudo journalctl -u netpac -n 50"
 fi
 
-# Nginx
 if sudo systemctl is-active --quiet nginx; then
     sudo systemctl reload nginx
     print_status "Nginx reloaded"
 else
     sudo systemctl start nginx
-    print_status "Nginx gestartet"
+    print_status "Nginx started"
 fi
 
 # ===================================
-# 13. Zusammenfassung
+# 13. SUMMARY
 # ===================================
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║       Setup abgeschlossen!         ║${NC}"
+echo -e "${GREEN}║        Setup completed!            ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${YELLOW}Konfiguration:${NC}"
-echo "  App Directory: $APP_DIR"
-echo "  App User: $APP_USER"
-echo "  App Port: 8443"
+echo -e "${YELLOW}Configuration:${NC}"
+echo "  App directory: $APP_DIR"
+echo "  App user: $APP_USER"
+echo "  App port: 8443"
 echo "  Domain: $DOMAIN"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
-echo "  Status prüfen: sudo systemctl status netpac nginx"
-echo "  netpac neu starten: sudo systemctl restart netpac"
-echo "  Nginx neu laden: sudo systemctl reload nginx"
+echo "  Check status: sudo systemctl status netpac nginx"
+echo "  Restart NetPAC: sudo systemctl restart netpac"
+echo "  Reload Nginx: sudo systemctl reload nginx"
 echo ""
 echo -e "${YELLOW}Logs:${NC}"
-echo "  netpac: sudo journalctl -u netpac -f"
-echo "  Gunicorn: tail -f $APP_DIR/logs/gunicorn_error.log"
-echo "  Nginx: sudo tail -f /var/log/nginx/${APP_NAME}_error.log"
+echo "  NetPAC: sudo journalctl -u netpac -f"
+echo "  Gunicorn: tail -f /var/log/netpac/gunicorn_error.log"
+echo "  Nginx: sudo tail -f /var/log/nginx/netpac_error.log"
 echo ""
-echo -e "${YELLOW}Wichtig:${NC}"
-echo "  1. Domain '$DOMAIN' im Script anpassen (Zeile 18)"
-echo "  2. SSL-Zertifikate einrichten:"
-echo "     sudo apt install certbot python3-certbot-nginx"
-echo "     sudo certbot --nginx -d $DOMAIN"
-echo "  3. App testen: https://$DOMAIN"
+echo -e "${YELLOW}Important:${NC}"
+echo "  1. Set the DOMAIN variable in this script"
+echo "  2. Configure SSL certificates (recommended via Certbot)"
+echo "  3. Test the application: https://$DOMAIN"
 echo ""
-echo -e "${GREEN}Viel Erfolg! 🚀${NC}"
+echo -e "${GREEN}Good luck! 🚀${NC}"
