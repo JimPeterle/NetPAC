@@ -239,7 +239,7 @@ Environment="PATH=$APP_DIR/venv/bin"
 
 ExecStart=$APP_DIR/venv/bin/gunicorn \\
     -c $APP_DIR/gunicorn_config.py \\
-    app:app
+    netpac:app
 
 Restart=always
 RestartSec=10
