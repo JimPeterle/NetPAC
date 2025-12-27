@@ -1,4 +1,18 @@
-*.env
+# Environment files
 .env
-__pychache__
+*.env
+
+# Python cache
+__pycache__/
+
+# Gunicorn
 gunicorn.pid
+
+# Virtualenv
+venv/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
