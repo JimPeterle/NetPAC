@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+<body class="dashboard-body">
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">NetPAC</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
+                <span class="sidebar-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link">
+                <span class="sidebar-text">Hosts</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="sidebar-link">
+                <span class="sidebar-text">Groups</span>
+            </a>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link">
+                <span class="sidebar-text">Scripts</span>
+            </a>
+            <a href="{{ url_for('history') }}" class="sidebar-link">
+                <span class="sidebar-text">History</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-menu">
+                <button class="user-btn" id="userMenuBtn">
+                    <span class="sidebar-text">{{ current_user.id }}</span>
+                </button>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="{{ url_for('settings') }}" class="active-dropdown">Settings</a>
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <div class="main-content" id="mainContent">
+        
+        <div class="page-header">
+            <div class="page-header-content">
+                <h1 class="page-title">Settings</h1>
+                <p class="page-subtitle">Manage system settings and updates</p>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">System update</h3>
+            </div>
+            
+            <div class="card-body" style="padding: 30px;">
+                <div class="settings-section">
+                    <div class="settings-info">
+                        <h4 class="settings-title">Update system</h4>
+                        <p class="settings-description">
+                            Update the required libraries in the Python venv. For a complete update of NetPAC, run update_git.sh in the CLI. This can be found in the app directory.
+                        </p>
+                    </div>
+                    
+                    <form action="{{ url_for('settings') }}" method="POST" id="updateForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <button type="submit" id="updateButton" class="action-button action-button-primary">
+                            <span>Update system</span>
+                        </button>
+                    </form>
+                </div>
+
+                <div id="statusMessage" class="status-message">
+                    <div class="loading-spinner"></div>
+                    <h3 class="status-title">Update is running</h3>
+                    <div class="status-timer" id="timer">00:00</div>
+                    <p class="status-text">Please wait while the system is being updated...</p>
+                </div>
+
+                {% if output %}
+                <div class="output-card">
+                    <div class="output-header">
+                        <span class="output-title">Update output</span>
+                    </div>
+                    <div class="output-content">
+                        <pre id="terminalOutput">{{ output }}</pre>
+                    </div>
+                </div>
+
+                <script>
+
+                    const ansi_up = new AnsiUp();
+                    const element = document.getElementById('terminalOutput');
+                    const text = element.textContent;
+                    element.innerHTML = ansi_up.ansi_to_html(text);
+                </script>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">System logs</h3>
+            </div>
+
+                    {% if logs %}
+                    <div class="logs-list">
+                        {% for log in logs %}
+                        <div class="log-list-item" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px;">
+                            <div class="log-info" style="flex: 1;">
+                                <div style="font-weight: 600; margin-bottom: 5px;">{{ log['name'] }}</div>
+                                <div style="font-size: 13px; color: #6c757d;">
+                                    Size: {{ "%.2f"|format(log['size'] / 1024) }} KB | 
+                                    Modified: {{ log['modified'].strftime('%Y-%m-%d %H:%M:%S') }}
+                                </div>
+                            </div>
+                            <a href="{{ url_for('view_log', filename=log['name']) }}" class="action-button action-button-primary" style="margin-left: 15px;">
+                                <span>View log</span>
+                            </a>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p style="color: #6c757d; text-align: center; padding: 20px;">No logs available</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+    </div>
+
+    <script>
+        let timerInterval;
+        let seconds = 0;
+
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        });
+
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userDropdown = document.getElementById('userDropdown');
+
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            userDropdown.classList.remove('show');
+        });
+
+        function startTimer() {
+            seconds = 0;
+            updateTimerDisplay();
+            timerInterval = setInterval(() => {
+                seconds++;
+                updateTimerDisplay();
+            }, 1000);
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+        }
+
+        function updateTimerDisplay() {
+            const minutes = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            const display = `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            document.getElementById('timer').textContent = display;
+        }
+
+        function showLoading() {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.classList.add('active');
+            startTimer();
+        }
+
+        function hideLoading() {
+            const statusMessage = document.getElementById('statusMessage');
+            statusMessage.classList.remove('active');
+            stopTimer();
+        }
+
+        document.getElementById('updateForm').addEventListener('submit', function(e) {
+            showLoading();
+        });
+
+        window.addEventListener('load', function() {
+            hideLoading();
+        });
+    </script>
+
+</body>
+</html>

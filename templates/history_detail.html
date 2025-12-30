@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>History #{{ job.job_id }} - NetPAC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+<body class="dashboard-body">
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">NetPAC</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
+                <span class="sidebar-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link">
+                <span class="sidebar-text">Hosts</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="sidebar-link">
+                <span class="sidebar-text">Groups</span>
+            </a>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link">
+                <span class="sidebar-text">Scripts</span>
+            </a>
+            <a href="{{ url_for('history') }}" class="sidebar-link active">
+                <span class="sidebar-text">History</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-menu">
+                <button class="user-btn" id="userMenuBtn">
+                    <span class="sidebar-text">{{ current_user.id }}</span>
+                </button>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <div class="main-content" id="mainContent">
+        
+        <div class="page-header">
+            <div class="page-header-content">
+                <h1 class="page-title">History #{{ job.job_id }}</h1>
+            </div>
+            <div class="page-header-actions">
+                <a href="{{ url_for('history') }}" class="action-button action-button-secondary">
+                    <span class="button-icon">←</span>
+                    <span>Back to History</span>
+                </a>
+                {% if job.status == 'running' %}
+                <button class="action-button action-button-secondary" onclick="location.reload()">
+                    <span>Refresh</span>
+                </button>
+                {% endif %}
+                {% if job.status == 'completed' %}
+                <a href="{{ url_for('export_history_pdf', job_id=job.job_id) }}" class="action-button action-button-danger">
+                    <span>PDF Export</span>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Execution Information</h3>
+                {% if job.status == 'running' %}
+                    <span class="status-badge status-running">Running</span>
+                {% elif job.status == 'completed' %}
+                    <span class="status-badge status-success">✓ Completed</span>
+                {% elif job.status == 'failed' %}
+                    <span class="status-badge status-error">✗ Failed</span>
+                {% elif job.status == 'timeout' %}
+                    <span class="status-badge status-warning">Timeout</span>
+                {% endif %}
+            </div>
+            
+            <div class="card-body">
+                <div class="job-info-grid">
+                    <div class="job-info-row">
+                        <div class="job-info-col">
+                            <span class="job-info-label">ID</span>
+                            <span class="job-info-value">#{{ job.job_id }}</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">Script</span>
+                            <span class="job-info-value">{{ job.script_name }}</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">User</span>
+                            <span class="job-info-value">{{ job.user_id }}</span>
+                        </div>
+                    </div>
+
+                    <div class="job-info-row">
+                        <div class="job-info-col">
+                            <span class="job-info-label">Target</span>
+                            <span class="job-info-value">{{ job.target if job.target else 'No target' }}</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">Status</span>
+                            <span class="job-info-value">{{ job.status|capitalize }}</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">Duration</span>
+                            <span class="job-info-value">
+                                {% if job.duration is none %}
+                                    -
+                                {% elif job.duration < 1 %}
+                                    &lt; 1s
+                                {% else %}
+                                    {{ job.duration }}s
+                                {% endif %}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="job-info-row">
+                        <div class="job-info-col">
+                            <span class="job-info-label">Started</span>
+                            <span class="job-info-value">{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">Finished</span>
+                            <span class="job-info-value">
+                                {% if job.finished_at %}
+                                    {{ job.finished_at.strftime('%Y-%m-%d %H:%M:%S') }}
+                                {% else %}
+                                    Still running...
+                                {% endif %}
+                            </span>
+                        </div>
+                        <div class="job-info-col">
+                            {% if job.variables and job.variables.varCount != '0' %}
+                            <span class="job-info-label">Variables</span>
+                            <span class="job-info-value job-info-variables">
+                                {% if job.variables.variable1 %}
+                                <div><span class="var-label">Var 1:</span> {{ job.variables.variable1 }}</div>
+                                {% endif %}
+                                {% if job.variables.variable2 %}
+                                <div><span class="var-label">Var 2:</span> {{ job.variables.variable2 }}</div>
+                                {% endif %}
+                                {% if job.variables.variable3 %}
+                                <div><span class="var-label">Var 3:</span> {{ job.variables.variable3 }}</div>
+                                {% endif %}
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Script Output</h3>
+            </div>
+            
+            <div class="card-body" style="padding: 0;">
+                <div class="script-output-viewer">
+                    {% if job.output %}
+                    <pre><code>{{ job.output }}</code></pre>
+                    {% elif job.status == 'running' %}
+                    <div style="padding: 3rem; text-align: center; color: #6b7280;">
+                        <p style="font-size: 1.125rem; margin-bottom: 0.5rem; font-weight: 500;">Script is running...</p>
+                        <p style="font-size: 0.875rem;">Output will appear here when available</p>
+                    </div>
+                    {% else %}
+                    <div style="padding: 3rem; text-align: center; color: #6b7280;">
+                        <p style="font-size: 1.125rem; margin-bottom: 0.5rem;">No output available</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        });
+
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userDropdown = document.getElementById('userDropdown');
+
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            userDropdown.classList.remove('show');
+        });
+
+        {% if job.status == 'running' %}
+        setTimeout(() => location.reload(), 3000);
+        {% endif %}
+    </script>
+
+</body>
+</html>

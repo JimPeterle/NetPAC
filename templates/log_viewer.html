@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ file_info.name }} - NetPAC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+<body class="dashboard-body" style="overflow: hidden;">
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">NetPAC</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
+                <span class="sidebar-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link">
+                <span class="sidebar-text">Hosts</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="sidebar-link">
+                <span class="sidebar-text">Groups</span>
+            </a>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link">
+                <span class="sidebar-text">Scripts</span>
+            </a>
+            <a href="{{ url_for('history') }}" class="sidebar-link">
+                <span class="sidebar-text">History</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-menu">
+                <button class="user-btn" id="userMenuBtn">
+                    <span class="sidebar-text">{{ current_user.id }}</span>
+                </button>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="{{ url_for('settings') }}" class="active-dropdown">Settings</a>
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <div class="main-content" id="mainContent">
+        
+        <div class="page-header">
+            <div class="page-header-content">
+                <h1 class="page-title">{{ file_info.name }}</h1>
+            </div>
+            <div class="page-header-actions">
+                <a href="{{ url_for('settings') }}" class="action-button action-button-secondary">
+                    <span class="button-icon">←</span>
+                    <span>Back to settings</span>
+                </a>
+                <button class="action-button action-button-secondary" onclick="location.reload()">
+                    <span>Refresh</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header" style="display: block;">
+                <h3 class="card-title">Log Information</h3>
+                <p class="settings-description" style="margin-top: 8px; margin-bottom: 0;">
+                    You see here the last 50 lines. For more, login to CLI and go to /var/log/netpac/
+                </p>
+            </div>
+            
+            <div class="card-body" style="padding: 30px;">
+                <div class="job-info-grid">
+                    <div class="job-info-row">
+                        <div class="job-info-col">
+                            <span class="job-info-label">Filename</span>
+                            <span class="job-info-value">{{ file_info.name }}</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">Size</span>
+                            <span class="job-info-value">{{ "%.2f"|format(file_info.size / 1024) }} KB</span>
+                        </div>
+                        <div class="job-info-col">
+                            <span class="job-info-label">Last Modified</span>
+                            <span class="job-info-value">{{ file_info.modified.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Log Content</h3>
+                <span class="card-badge">{{ file_info.lines }} Lines</span>
+            </div>
+            
+            <div class="card-body" style="padding: 0;">
+                <div class="script-output-viewer">
+                    <pre><code>{{ log_content }}</code></pre>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        });
+
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userDropdown = document.getElementById('userDropdown');
+
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            userDropdown.classList.remove('show');
+        });
+    </script>
+
+</body>
+</html>
