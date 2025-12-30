@@ -12,8 +12,8 @@ Hosts can be created and deleted in the GUI.
 In the Settings area, you can view the system logs.
 
 The following explains the steps required to install NetPAC.
+
 ## Database configuration
----
 
 Passwords in user table are stored as bcrypt hashes.
 In my setup, I use a mariadb, but a mysql database can also be used.
@@ -96,7 +96,6 @@ COLLATE=utf8mb3_bin;
 
 
 ## NetPAC configuration
----
 
 Create a new user and install git.
 ```Bash
@@ -136,7 +135,6 @@ bash setup.sh
 
 
 ## Additional information
----
 
 For all users who need to create scripts:
 ``` Bash
