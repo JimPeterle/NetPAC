@@ -106,10 +106,12 @@
                                 </td>
                                 <td>{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                                 <td>
-                                    {% if job.duration %}
-                                        {{ job.duration }}s
-                                    {% else %}
+                                    {% if job.duration is none %}
                                         -
+                                    {% elif job.duration < 1 %}
+                                        &lt; 1s
+                                    {% else %}
+                                        {{ job.duration }}s
                                     {% endif %}
                                 </td>
                                 <td>
