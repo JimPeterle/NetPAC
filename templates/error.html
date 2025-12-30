@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ error_code }} - Server Error</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+
+<body class="error-body">
+
+    <div class="error-background"></div>
+
+
+    <div class="error-container">
+        
+
+        <div class="error-card">
+            <h1 class="error-code">{{ error_code }}</h1>
+            <h2 class="error-title">Oops! Something went wrong</h2>
+            <p class="error-description">
+                The server encountered an error and could not complete your request.
+            </p>
+
+            <div class="error-actions">
+                <a class="error-button error-button-primary" href="{{ url_for('logout') }}">Logout</a>
+                </a>
+                <a href="javascript:history.back()" class="error-button error-button-secondary">
+                    <span class="button-icon">←</span>
+                    <span>Go Back</span>
+                </a>
+            </div>
+        </div>
+
+
+        <div class="error-footer">
+            <p>© 2025 NetPAC. All rights reserved.</p>
+            <p>Created by Jan-Phillip Barthel</p>
+        </div>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hosts</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+<body class="dashboard-body">
+
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">NetPAC</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
+                <span class="sidebar-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link active">
+                <span class="sidebar-text">Hosts</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="sidebar-link">
+                <span class="sidebar-text">Groups</span>
+            </a>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link">
+                <span class="sidebar-text">Scripts</span>
+            </a>
+            <a href="{{ url_for('history') }}" class="sidebar-link">
+                <span class="sidebar-text">History</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-menu">
+                <button class="user-btn" id="userMenuBtn">
+                    <span class="sidebar-text">{{ current_user.id }}</span>
+                </button>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+
+    <div class="main-content" id="mainContent">
+
+        <div class="page-header">
+            <div class="page-header-content">
+                <h1 class="page-title">Hosts</h1>
+                <p class="page-subtitle">Manage your host systems</p>
+            </div>
+            <div class="page-header-actions">
+                <button class="action-button action-button-primary" onclick="togglePanel()">
+                    <span class="button-icon">➕</span>
+                    <span>Add Host</span>
+                </button>
+                <div class="search-container">
+                    <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search hosts...">
+                </div>
+            </div>
+        </div>
+
+
+        <div id="panel" class="slide-panel">
+            <div class="panel-header">
+                <h3 class="panel-title">➕ Add new host</h3>
+            </div>
+            <form action="{{ url_for('add_host') }}" method="POST" class="panel-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="form-group">
+                    <label class="form-label">Hostname</label>
+                    <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">First group</label>
+                    <input type="text" name="Group" class="form-input" placeholder="e.g C9200" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Second group</label>
+                    <input type="text" name="Group2" class="form-input" placeholder="e.g Datacenter" required>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="action-button action-button-secondary" onclick="togglePanel()">Cancel</button>
+                    <button type="submit" class="action-button action-button-primary">Add</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Host list</h3>
+                <span class="card-badge">{{ hosts|length }} Hosts</span>
+            </div>
+            
+            <div class="card-body">
+                {% if hosts %}
+                    <ul class="host-list" id="hostList">
+                        {% for row in hosts %}
+                            <li class="host-item">
+                                <div class="host-info">
+                                    <span class="host-name">{{ row[0] }}</span>
+                                </div>
+                                <form action="{{ url_for('delete_host') }}" method="POST" style="display:inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                    <input type="hidden" name="hostname" value="{{ row[0] }}">
+                                    <button type="submit" class="delete-btn" title="Delete host">
+                                        <img src="{{ url_for('static', filename='icons/delete_button.png') }}" width="20" height="20" alt="Delete">
+                                    </button>
+                                </form>
+                            </li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <div class="empty-state">
+                        <h3 class="empty-title">No host available </h3>
+                        <p class="empty-text">Add your first host</p>
+                        <button class="action-button action-button-primary" onclick="togglePanel()">
+                            <span class="button-icon">➕</span>
+                            <span>Add first host</span>
+                        </button>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        });
+
+
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userDropdown = document.getElementById('userDropdown');
+
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            userDropdown.classList.remove('show');
+        });
+
+
+        function togglePanel() {
+            const panel = document.getElementById("panel");
+            panel.classList.toggle("open");
+        }
+
+
+        document.getElementById("searchInput").addEventListener("input", function() {
+            const filter = this.value.toLowerCase();
+            const items = document.querySelectorAll("#hostList li");
+
+            items.forEach(item => {
+                const text = item.innerText.toLowerCase();
+                item.style.display = text.includes(filter) ? "" : "none";
+            });
+        });
+    </script>
+
+</body>
+</html>

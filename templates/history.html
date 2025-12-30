@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>History - NetPAC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+<body class="dashboard-body">
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">NetPAC</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
+                <span class="sidebar-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link">
+                <span class="sidebar-text">Hosts</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="sidebar-link">
+                <span class="sidebar-text">Groups</span>
+            </a>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link">
+                <span class="sidebar-text">Scripts</span>
+            </a>
+            <a href="{{ url_for('history') }}" class="sidebar-link active">
+                <span class="sidebar-text">History</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-menu">
+                <button class="user-btn" id="userMenuBtn">
+                    <span class="sidebar-text">{{ current_user.id }}</span>
+                </button>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <div class="main-content" id="mainContent">
+        
+        <div class="page-header">
+            <div class="page-header-content">
+                <h1 class="page-title">History</h1>
+                <p class="page-subtitle">Script execution history</p>
+            </div>
+            <div class="page-header-actions">
+                <button class="action-button action-button-secondary" onclick="location.reload()">
+                    <span>Refresh</span>
+                </button>
+                <div class="search-container" style="margin-bottom: 0;">
+                    <input type="text" id="jobSearch" class="search-input" placeholder="🔍 Search history...">
+                </div>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Execution History</h3>
+                <span class="card-badge">{{ jobs|length }} Entries</span>
+            </div>
+            
+            <div class="card-body" style="padding: 0;">
+                {% if jobs %}
+                <div class="table-container">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Script</th>
+                                <th>Target</th>
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Duration</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for job in jobs %}
+                            <tr>
+                                <td>#{{ job.job_id }}</td>
+                                <td>{{ job.script_name }}</td>
+                                <td>{{ job.target if job.target else '-' }}</td>
+                                <td>
+                                    {% if job.status == 'running' %}
+                                        <span class="status-badge status-running">Running</span>
+                                    {% elif job.status == 'completed' %}
+                                        <span class="status-badge status-success">✓ Completed</span>
+                                    {% elif job.status == 'failed' %}
+                                        <span class="status-badge status-error">✗ Failed</span>
+                                    {% elif job.status == 'timeout' %}
+                                        <span class="status-badge status-warning">⌛ Timeout</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                                <td>
+                                    {% if job.duration %}
+                                        {{ job.duration }}s
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <a href="{{ url_for('history_detail', job_id=job.job_id) }}" class="action-button-small">
+                                        View Details
+                                    </a>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="table-empty-state">
+                    <p class="table-empty-title">No history yet</p>
+                    <p class="table-empty-text">Run a script to see it here</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        });
+
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userDropdown = document.getElementById('userDropdown');
+
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            userDropdown.classList.remove('show');
+        });
+
+        const hasRunningJobs = {{ 'true' if jobs|selectattr('status', 'equalto', 'running')|list else 'false' }};
+        if (hasRunningJobs) {
+            setTimeout(() => location.reload(), 5000);
+        }
+
+        const searchInput = document.getElementById('jobSearch');
+        const tableRows = document.querySelectorAll('.data-table tbody tr');
+
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                const searchTerm = this.value.toLowerCase().trim();
+
+                tableRows.forEach(row => {
+                    const jobId = row.cells[0].textContent.toLowerCase();
+                    const script = row.cells[1].textContent.toLowerCase();
+                    const target = row.cells[2].textContent.toLowerCase();
+                    const status = row.cells[3].textContent.toLowerCase();
+
+                    const match = jobId.includes(searchTerm) || 
+                                  script.includes(searchTerm) || 
+                                  target.includes(searchTerm) || 
+                                  status.includes(searchTerm);
+
+                    if (match) {
+                        row.style.display = '';
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+
+                const visibleRows = Array.from(tableRows).filter(row => row.style.display !== 'none');
+                const tableBody = document.querySelector('.data-table tbody');
+                let noResultsRow = document.getElementById('noResultsRow');
+
+                if (visibleRows.length === 0 && searchTerm !== '') {
+                    if (!noResultsRow) {
+                        noResultsRow = document.createElement('tr');
+                        noResultsRow.id = 'noResultsRow';
+                        noResultsRow.innerHTML = '<td colspan="7" style="padding: 3rem; text-align: center; color: #6b7280;">No entries match your search</td>';
+                        tableBody.appendChild(noResultsRow);
+                    }
+                } else {
+                    if (noResultsRow) {
+                        noResultsRow.remove();
+                    }
+                }
+            });
+        }
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - NetPAC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+
+<body class="login-body">
+
+    <div class="login-background"></div>
+
+    <div class="login-container">
+        
+        <div class="login-header">
+            <h2 class="login-title">NetPAC</h2>
+        </div>
+
+        <div class="login-card">
+            <h2 class="login-card-title">Welcome Back</h2>
+            <p class="login-card-subtitle">Please sign in to continue</p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">
+                            <span class="alert-icon">
+                                {% if category == 'danger' %}{% endif %}
+                            </span>
+                            <span class="alert-text">{{ message }}</span>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST" class="login-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    
+                    <input 
+                        type="text" 
+                        name="username" 
+                        class="form-input" 
+                        placeholder="Username"
+                        required
+                        autocomplete="username"
+                    >
+                </div>
+
+
+                <div class="form-group">
+                    <label class="form-label">Password</label>
+                    <input 
+                        type="password" 
+                        name="password" 
+                        class="form-input" 
+                        placeholder="Password"
+                        required
+                        autocomplete="current-password"
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Authentication Method</label>
+                    <div class="auth-toggle">
+                        <input type="radio" id="authRadius" name="auth_mode" value="radius" checked>
+                        <label for="authRadius" class="auth-option">
+                            <span class="auth-option-text">Radius</span>
+                        </label>
+
+                        <input type="radio" id="authLocal" name="auth_mode" value="local">
+                        <label for="authLocal" class="auth-option">
+                            <span class="auth-option-text">Local</span>
+                        </label>
+                    </div>
+                </div>
+
+                <button type="submit" class="login-button">
+                    <span class="button-text">Sign In</span>
+                    <span class="button-icon">→</span>
+                </button>
+            </form>
+        </div>
+
+        <div class="login-footer">
+            <p>© 2025 NetPAC - Network Python Automation Center.</p>
+            <p>Created by Jan-Phillip Barthel.</p>
+        </div>
+    </div>
+
+</body>
+</html>

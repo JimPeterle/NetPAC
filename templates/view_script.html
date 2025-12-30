@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ filename }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+</head>
+<body class="dashboard-body">
+
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span class="sidebar-title">NetPAC</span>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
+                <span class="sidebar-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link">
+                <span class="sidebar-text">Hosts</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="sidebar-link">
+                <span class="sidebar-text">Groups</span>
+            </a>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link active">
+                <span class="sidebar-text">Scripts</span>
+            </a>
+            <a href="{{ url_for('history') }}" class="sidebar-link">
+                <span class="sidebar-text">History</span>
+            </a>
+        </nav>
+
+        <div class="sidebar-footer">
+            <div class="user-menu">
+                <button class="user-btn" id="userMenuBtn">
+                    <span class="sidebar-text">{{ current_user.id }}</span>
+                </button>
+                <div class="user-dropdown" id="userDropdown">
+                    <a href="{{ url_for('settings') }}">Settings</a>
+                    <a href="{{ url_for('logout') }}">Logout</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <button class="sidebar-toggle" id="sidebarToggle">
+        <span class="toggle-icon">☰</span>
+    </button>
+
+    <div class="main-content" id="mainContent">
+        
+        <div class="page-header">
+            <div class="page-header-content">
+                <h1 class="page-title">{{ filename }}</h1>
+                <p class="page-subtitle">Script details and execution</p>
+            </div>
+            <div class="page-header-actions">
+                <a href="{{ url_for('scripts') }}" class="action-button action-button-secondary">
+                    <span class="button-icon">←</span>
+                    <span>Back</span>
+                </a>
+                <button class="action-button action-button-primary" type="button" onclick="toggleLaunch()">
+                    <span>Launch script</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Script code</h3>
+                <span class="card-badge">Python</span>
+            </div>
+            
+            <div class="card-body" style="padding: 0;">
+                <div class="script-code-viewer">
+                    <pre><code>{{ content }}</code></pre>
+                </div>
+            </div>
+        </div>
+
+        <div id="launchPanel" class="launch-panel">
+            <div class="launch-panel-header">
+                <h3 class="launch-panel-title">Launch script</h3>
+            </div>
+            
+            <form method="POST" action="{{ url_for('run_script', filename=filename) }}" class="launch-form" id="scriptForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <div class="form-group">
+                    <label class="form-label">Target needed? <span style="color: red;">*</span></label>
+                    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                        <button type="button" class="action-button action-button-secondary" onclick="toggleTarget(true)" id="targetYesBtn">
+                            <span>Yes</span>
+                        </button>
+                        <button type="button" class="action-button action-button-secondary" onclick="toggleTarget(false)" id="targetNoBtn">
+                            <span>No</span>
+                        </button>
+                    </div>
+                    <input type="hidden" name="targetRequired" id="targetRequired" required>
+                    <span class="form-hint" id="targetError" style="color: red; display: none;">Please select an option</span>
+                </div>
+
+                <div class="form-group" id="targetInputGroup" style="display: none;">
+                    <label class="form-label">Target</label>
+                    <input type="text" name="target" id="targetInput" class="form-input" placeholder="Group or Hostname">
+                    <span class="form-hint">Add one group or one hostname</span>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Number of variables</label>
+                    <select id="varCount" name="varCount" class="form-input">
+                        <option value="0" selected>No variable</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                    </select>
+                </div>
+
+                <div id="variableInputs"></div>
+
+                <div class="form-actions">
+                    <button type="button" class="action-button action-button-secondary" onclick="toggleLaunch()">Cancel</button>
+                    <button type="submit" class="action-button action-button-success">
+                        <span>Run script</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+
+    </div>
+
+    <script>
+        const sidebar = document.getElementById('sidebar');
+        const mainContent = document.getElementById('mainContent');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        sidebarToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded');
+        });
+
+        const userMenuBtn = document.getElementById('userMenuBtn');
+        const userDropdown = document.getElementById('userDropdown');
+
+        userMenuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdown.classList.toggle('show');
+        });
+
+        document.addEventListener('click', () => {
+            userDropdown.classList.remove('show');
+        });
+
+        function toggleLaunch() {
+            const panel = document.getElementById('launchPanel');
+            panel.classList.toggle('open');
+        }
+
+        function toggleTarget(needsTarget) {
+            const targetInputGroup = document.getElementById('targetInputGroup');
+            const targetInput = document.getElementById('targetInput');
+            const targetYesBtn = document.getElementById('targetYesBtn');
+            const targetNoBtn = document.getElementById('targetNoBtn');
+            const targetRequired = document.getElementById('targetRequired');
+            const targetError = document.getElementById('targetError');
+
+            targetError.style.display = 'none';
+
+            targetRequired.value = needsTarget ? 'yes' : 'no';
+
+            if (needsTarget) {
+                targetInputGroup.style.display = 'block';
+                targetInput.required = true;
+                targetYesBtn.classList.add('action-button-primary');
+                targetYesBtn.classList.remove('action-button-secondary');
+                targetNoBtn.classList.add('action-button-secondary');
+                targetNoBtn.classList.remove('action-button-primary');
+            } else {
+                targetInputGroup.style.display = 'none';
+                targetInput.required = false;
+                targetInput.value = '';
+                targetNoBtn.classList.add('action-button-primary');
+                targetNoBtn.classList.remove('action-button-secondary');
+                targetYesBtn.classList.add('action-button-secondary');
+                targetYesBtn.classList.remove('action-button-primary');
+            }
+        }
+
+        document.getElementById('scriptForm').addEventListener('submit', function(e) {
+            const targetRequired = document.getElementById('targetRequired');
+            const targetError = document.getElementById('targetError');
+
+            if (!targetRequired.value) {
+                e.preventDefault();
+                targetError.style.display = 'block';
+                targetError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return false;
+            }
+        });
+
+        const varCountSelect = document.getElementById('varCount');
+        const variableInputsDiv = document.getElementById('variableInputs');
+
+        varCountSelect.addEventListener('change', function() {
+            const count = parseInt(this.value);
+            variableInputsDiv.innerHTML = '';
+
+            if (count > 0) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'variables-wrapper';
+                
+                for (let i = 1; i <= count; i++) {
+                    const formGroup = document.createElement('div');
+                    formGroup.className = 'form-group';
+                    formGroup.innerHTML = `
+                        <label class="form-label">Variable ${i}</label>
+                        <input type="text" name="variable${i}" class="form-input" placeholder="Input for variable ${i}">
+                    `;
+                    wrapper.appendChild(formGroup);
+                }
+                
+                variableInputsDiv.appendChild(wrapper);
+            }
+        });
+
+        hljs.highlightAll();
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,12 @@
+flask
+flask-login
+flask-bcrypt
+flask-limiter
+flask-wtf
+pyrad
+python-dotenv
+pymysql
+cryptography
+markdown
+reportlab
+gunicorn
