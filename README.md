@@ -11,6 +11,8 @@ All scripts located under **/var/lib/netpac/scripts** are displayed in the GUI a
 Hosts can be created and deleted in the GUI. 
 In the Settings area, you can view the system logs.
 
+The output of the scripts can be exported as PDF.
+
 The following explains the steps required to install NetPAC.
 
 ## Database configuration
