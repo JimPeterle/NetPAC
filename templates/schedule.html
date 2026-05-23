@@ -1,0 +1,452 @@
+{% extends "base.html" %}
+
+{% block title %}Schedule - NetPAC{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Schedule</h1>
+        <p class="page-subtitle">Automated script execution</p>
+    </div>
+    <div class="page-header-actions">
+        <div class="search-container" style="position: relative;">
+            <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="scheduleSearch" class="search-input" placeholder="Search schedules..." style="padding-left: 32px;">
+        </div>
+        <button class="action-button action-button-primary" onclick="document.getElementById('addCronModal').style.display='flex'">
+            <span>+ Add Schedule</span>
+        </button>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="card-header">
+        <h3 class="card-title">Scheduled Jobs</h3>
+        <span class="card-badge">{{ jobs|length }} Jobs</span>
+    </div>
+    
+    <div class="card-body" style="padding: 0;">
+        {% if jobs %}
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Script</th>
+                        <th>Schedule</th>
+                        <th>Target</th>
+                        <th>Credential</th>
+                        <th>Variables</th>
+                        <th>Status</th>
+                        <th style="text-align: right; padding-right: 3rem;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr>
+                        <td>{{ job[1] }}</td>
+                        <td><code style="background: var(--bg-table-head); color: var(--accent); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem;">{{ job[7] }}</code></td>
+                        <td>{{ job[3] if job[3] else '-' }}</td>
+                        <td>
+                            {% if job[8] %}
+                                {% set creds = job[8]|fromjson %}
+                                {% set parts = [] %}
+                                {% if creds.secret_1 %}{% set _ = parts.append(creds.secret_1) %}{% endif %}
+                                {% if creds.secret_2 %}{% set _ = parts.append(creds.secret_2) %}{% endif %}
+                                {% if creds.secret_3 %}{% set _ = parts.append(creds.secret_3) %}{% endif %}
+                                {{ parts|join(', ') if parts else '-' }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if job[4] %}
+                                {% set vars = job[4]|fromjson %}
+                                {% set vparts = [] %}
+                                {% if vars.variable1 %}{% set _ = vparts.append(vars.variable1) %}{% endif %}
+                                {% if vars.variable2 %}{% set _ = vparts.append(vars.variable2) %}{% endif %}
+                                {% if vars.variable3 %}{% set _ = vparts.append(vars.variable3) %}{% endif %}
+                                {{ vparts|join(', ') if vparts else '-' }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if job[5] %}
+                                <span class="status-badge status-success">Active</span>
+                            {% else %}
+                                <span class="status-badge status-error">Inactive</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div style="display: flex; justify-content: flex-end; align-items: center; gap: 0.5rem;">
+                                <form method="POST" action="{{ url_for('toggle_schedule', cron_id=job[0]) }}" style="margin:0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <label class="ios-toggle">
+                                        <input type="checkbox" {% if job[5] %}checked{% endif %} onchange="this.form.submit()">
+                                        <span class="ios-slider"></span>
+                                    </label>
+                                </form>
+
+                                <button type="button" class="action-button action-button-secondary" title="Delete schedule" onclick="confirmDelete({{ job[0] }}, '{{ job[1] }}')">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                        <path d="M10 11v6M14 11v6"/>
+                                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="table-empty-state">
+            <p class="table-empty-title">No schedules yet</p>
+            <p class="table-empty-text">Create your first scheduled task</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+<div id="addCronModal" class="modal" style="display:none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h2>Add Schedule</h2>
+            <button class="modal-close" onclick="document.getElementById('addCronModal').style.display='none'">&times;</button>
+        </div>
+        
+        <form method="POST" action="{{ url_for('add_schedule') }}" class="modal-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            
+            <div class="form-group">
+                <label class="form-label">Script *</label>
+                <div style="position: relative;">
+                    <input type="text" id="scriptSearch" class="form-input" placeholder="Search or select script..." autocomplete="off" readonly
+                        onclick="toggleScriptDropdown()" style="cursor: pointer;">
+                    <input type="hidden" name="script_name" id="scriptNameHidden" required>
+                    <div id="scriptDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 250px; overflow-y: auto; box-shadow: var(--shadow-md);">
+                        <div style="padding: 8px; position: relative;">
+                            <svg style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"/>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                            <input type="text" id="scriptFilter" class="form-input" placeholder="Search..." style="font-size: 0.8rem; padding: 6px 10px 6px 32px;"
+                                oninput="filterScripts(this.value)" onclick="event.stopPropagation()">
+                        </div>
+                        <ul id="scriptList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
+                            {% for script in scripts %}
+                            <li onclick="selectScript('{{ script }}')"
+                                style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
+                                onmouseover="this.style.background='var(--accent-dim)'"
+                                onmouseout="this.style.background=''"
+                                data-value="{{ script }}">
+                                {{ script }}
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Target (Group or Host)</label>
+                <input type="text" name="target" class="form-input" placeholder="Optional">
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Schedule Type *</label>
+                <select name="schedule_type" class="form-input" required onchange="toggleScheduleFields(this.value)">
+                    <option value="">Select...</option>
+                    <option value="hourly">Hourly</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="custom">Custom Expression</option>
+                </select>
+            </div>
+
+            <div id="timeFields" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Time</label>
+                    <input type="text" id="timePicker" name="time" class="form-input" placeholder="HH:MM" readonly>
+                    <input type="hidden" name="hour" id="hourHidden" value="0">
+                    <input type="hidden" name="minute" id="minuteHidden" value="0">
+                </div>
+            </div>
+
+            <div id="weekdayField" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Weekday</label>
+                    <select name="weekday" class="form-input">
+                        <option value="0">Sunday</option>
+                        <option value="1">Monday</option>
+                        <option value="2">Tuesday</option>
+                        <option value="3">Wednesday</option>
+                        <option value="4">Thursday</option>
+                        <option value="5">Friday</option>
+                        <option value="6">Saturday</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="customField" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Cron Expression</label>
+                    <input type="text" name="schedule" class="form-input" placeholder="e.g. 0 */2 * * *">
+                    <small style="color: var(--text-muted);">Format: Minute Hour Day Month Weekday</small>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Secrets</label>
+                <select name="secret_1" class="form-input">
+                    <option value="">None</option>
+                    {% for secret in secrets %}
+                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
+                    {% endfor %}
+                </select>
+                <select name="secret_2" class="form-input" style="margin-top: 0.5rem;">
+                    <option value="">None</option>
+                    {% for secret in secrets %}
+                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
+                    {% endfor %}
+                </select>
+                <select name="secret_3" class="form-input" style="margin-top: 0.5rem;">
+                    <option value="">None</option>
+                    {% for secret in secrets %}
+                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label">Variables</label>
+                <div id="varTableBody"></div>
+                <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add variable
+                </button>
+                <p class="var-max-hint" id="varMaxHint">0 / 3</p>
+            </div>
+
+            <input type="hidden" name="varCount" id="varCountHidden" value="0">
+
+            <div class="modal-footer">
+                <button type="button" class="action-button action-button-secondary" onclick="document.getElementById('addCronModal').style.display='none'">
+                    Cancel
+                </button>
+                <button type="submit" class="action-button action-button-primary">
+                    Create Schedule
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="deleteModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 9999; justify-content: center; align-items: center;">
+<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+    <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+        <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Delete Schedule</h2>
+    </div>
+    <div style="padding: 1.5rem;">
+        <p id="deleteMessage" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+        <p style="color: var(--danger); font-weight: 500; margin: 0;">This action cannot be undone!</p>
+    </div>
+    <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeDeleteModal()">
+                Cancel
+            </button>
+            <form id="deleteForm" method="POST" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-button action-button-danger">
+                    Delete
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+
+    window.onclick = function(event) {
+        const modal = document.getElementById('addCronModal');
+        if (event.target == modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    function confirmDelete(cronId, scriptName) {
+        document.getElementById('deleteMessage').textContent = `Do you really want to delete the schedule "${scriptName}"?`;
+        document.getElementById('deleteForm').action = `/schedule/delete/${cronId}`;
+        document.getElementById('deleteModalOverlay').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModalOverlay').style.display = 'none';
+    }
+
+    document.getElementById('deleteModalOverlay').addEventListener('click', function(event) {
+        if (event.target === this) {
+            closeDeleteModal();
+        }
+    });
+
+    function toggleScheduleFields(value) {
+        document.getElementById('timeFields').style.display = 'none';
+        document.getElementById('weekdayField').style.display = 'none';
+        document.getElementById('customField').style.display = 'none';
+
+        if (value === 'daily') {
+            document.getElementById('timeFields').style.display = 'block';
+        } else if (value === 'weekly') {
+            document.getElementById('timeFields').style.display = 'block';
+            document.getElementById('weekdayField').style.display = 'block';
+        } else if (value === 'custom') {
+            document.getElementById('customField').style.display = 'block';
+        }
+    }
+
+    const MAX_VARS = 3;
+    let varCount = 0;
+
+    function updateHint() {
+        document.getElementById('varMaxHint').textContent = `${varCount} / ${MAX_VARS}`;
+        document.getElementById('varAddBtn').style.display = varCount >= MAX_VARS ? 'none' : 'flex';
+        document.getElementById('varCountHidden').value = varCount;
+    }
+
+    function addVariable() {
+        if (varCount >= MAX_VARS) return;
+        varCount++;
+        const tbody = document.getElementById('varTableBody');
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;';
+        row.innerHTML = `
+            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; width: 20px; text-align: center;">${varCount}</span>
+            <input type="text" name="variable${varCount}" data-field="value" placeholder="var" style="flex: 1; padding: 0.45rem 0.6rem; font-size: 0.875rem; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box;">
+            <button type="button" onclick="removeVariable(this)" style="background: none; border: none; cursor: pointer; color: var(--text-muted);">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        `;
+        tbody.appendChild(row);
+        updateHint();
+    }
+
+    function removeVariable(btn) {
+        btn.closest('div').remove();
+        rebuildNames();
+    }
+
+    function rebuildNames() {
+        const rows = document.querySelectorAll('#varTableBody > div');
+        rows.forEach((row, i) => {
+            row.querySelector('span').textContent = i + 1;
+            row.querySelector('input[data-field="value"]').name = `variable${i + 1}`;
+        });
+        varCount = rows.length;
+        updateHint();
+    }
+
+
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/flatpickr';
+    document.head.appendChild(script);
+
+    script.onload = function() {
+        flatpickr("#timePicker", {
+            enableTime: true,
+            noCalendar: true,
+            dateFormat: "H:i",
+            time_24hr: true,
+            defaultHour: 8,
+            defaultMinute: 0,
+            onChange: function(selectedDates, dateStr) {
+                const parts = dateStr.split(':');
+                document.getElementById('hourHidden').value = parts[0];
+                document.getElementById('minuteHidden').value = parts[1];
+            }
+        });
+    };
+
+    function toggleScriptDropdown() {
+    const dd = document.getElementById('scriptDropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    if (dd.style.display === 'block') {
+        document.getElementById('scriptFilter').focus();
+    }
+    }
+
+    function filterScripts(value) {
+        const filter = value.toLowerCase();
+        document.querySelectorAll('#scriptList li').forEach(li => {
+            li.style.display = li.getAttribute('data-value').toLowerCase().includes(filter) ? '' : 'none';
+        });
+    }
+
+    function selectScript(value) {
+        document.getElementById('scriptSearch').value = value;
+        document.getElementById('scriptNameHidden').value = value;
+        document.getElementById('scriptDropdown').style.display = 'none';
+    }
+
+    document.addEventListener('click', function(e) {
+        const dd = document.getElementById('scriptDropdown');
+        const search = document.getElementById('scriptSearch');
+        if (dd && !dd.contains(e.target) && e.target !== search) {
+            dd.style.display = 'none';
+        }
+    });
+
+    // Schedule Search
+    const scheduleSearch = document.getElementById('scheduleSearch');
+    const scheduleRows = document.querySelectorAll('.data-table tbody tr');
+
+    if (scheduleSearch) {
+        scheduleSearch.addEventListener('input', function() {
+            const searchTerm = this.value.toLowerCase().trim();
+
+            scheduleRows.forEach(row => {
+                const script   = row.cells[0] ? row.cells[0].textContent.toLowerCase() : '';
+                const schedule = row.cells[1] ? row.cells[1].textContent.toLowerCase() : '';
+                const target   = row.cells[2] ? row.cells[2].textContent.toLowerCase() : '';
+                const cred     = row.cells[3] ? row.cells[3].textContent.toLowerCase() : '';
+                const vars     = row.cells[4] ? row.cells[4].textContent.toLowerCase() : '';
+                const status   = row.cells[5] ? row.cells[5].textContent.toLowerCase() : '';
+
+                const match = script.includes(searchTerm) ||
+                              schedule.includes(searchTerm) ||
+                              target.includes(searchTerm) ||
+                              cred.includes(searchTerm) ||
+                              vars.includes(searchTerm) ||
+                              status.includes(searchTerm);
+
+                row.style.display = match ? '' : 'none';
+            });
+
+            // No results row
+            const tableBody = document.querySelector('.data-table tbody');
+            let noResultsRow = document.getElementById('scheduleNoResultsRow');
+            const visibleRows = Array.from(scheduleRows).filter(r => r.style.display !== 'none');
+
+            if (visibleRows.length === 0 && searchTerm !== '') {
+                if (!noResultsRow) {
+                    noResultsRow = document.createElement('tr');
+                    noResultsRow.id = 'scheduleNoResultsRow';
+                    noResultsRow.innerHTML = '<td colspan="7" style="padding:3rem;text-align:center;color:var(--text-muted);">No schedules match your search</td>';
+                    tableBody.appendChild(noResultsRow);
+                }
+            } else if (noResultsRow) {
+                noResultsRow.remove();
+            }
+        });
+    }
+</script>
+{% endblock %}

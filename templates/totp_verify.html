@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Two-Factor Login - NetPAC</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
+</head>
+
+<body class="login-body">
+
+    <div class="login-background"></div>
+
+    <div class="login-container">
+
+        <div class="login-header">
+            <h2 class="login-title">NetPAC</h2>
+        </div>
+
+        <div class="login-card">
+            <h2 class="login-card-title">Two-Factor Login</h2>
+            <p class="login-card-subtitle">Enter the code from your authenticator app</p>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert alert-{{ category }}">
+                            <span class="alert-icon"></span>
+                            <span class="alert-text">{{ message }}</span>
+                        </div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <form method="POST" class="login-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <div class="form-group">
+                    <label class="form-label">Authenticator Code</label>
+                    <input
+                        type="text"
+                        name="code"
+                        class="form-input"
+                        placeholder="000000"
+                        maxlength="6"
+                        autocomplete="one-time-code"
+                        autofocus
+                        required
+                    >
+                </div>
+
+                <button type="submit" class="login-button">
+                    <span class="button-text">Verify</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+            </form>
+
+            <form method="POST" style="margin-top: 0.75rem;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <input type="hidden" name="cancel" value="1"/>
+                <button type="submit" class="login-button" style="background: transparent; color: var(--text-muted, #64748b); border: 1px solid var(--border-color, #e2e8f0); box-shadow: none;">
+                    <span class="button-text">Cancel</span>
+                </button>
+            </form>
+        </div>
+
+        <div class="login-footer">
+            <p>© 2026 NetPAC - Created by Jan-Phillip Barthel.</p>
+        </div>
+    </div>
+
+</body>
+</html>

@@ -1,136 +1,131 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scripts</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
-</head>
-<body class="dashboard-body">
+{% extends "base.html" %}
 
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <span class="sidebar-title">NetPAC</span>
-        </div>
-        
-        <nav class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
-                <span class="sidebar-text">Dashboard</span>
-            </a>
-            <a href="{{ url_for('hosts') }}" class="sidebar-link">
-                <span class="sidebar-text">Hosts</span>
-            </a>
-            <a href="{{ url_for('groups') }}" class="sidebar-link">
-                <span class="sidebar-text">Groups</span>
-            </a>
-            <a href="{{ url_for('scripts') }}" class="sidebar-link active">
-                <span class="sidebar-text">Scripts</span>
-            </a>
-            <a href="{{ url_for('history') }}" class="sidebar-link">
-                <span class="sidebar-text">History</span>
-            </a>
-        </nav>
+{% block title %}Scripts - NetPAC{% endblock %}
 
-        <div class="sidebar-footer">
-            <div class="user-menu">
-                <button class="user-btn" id="userMenuBtn">
-                    <span class="sidebar-text">{{ current_user.id }}</span>
-                </button>
-                <div class="user-dropdown" id="userDropdown">
-                    <a href="{{ url_for('settings') }}">Settings</a>
-                    <a href="{{ url_for('logout') }}">Logout</a>
-                </div>
-            </div>
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Scripts</h1>
+        <p class="page-subtitle">Manage your scripts</p>
+    </div>
+    <div class="page-header-actions">
+        {% if git_config.repo_url %}
+        <form action="{{ url_for('sync_scripts') }}" method="POST" style="display:inline; margin:0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="action-button action-button-secondary"
+                    title="Git Pull: {{ git_config.repo_url }} @ {{ git_config.branch }}">
+                <span>Sync</span>
+            </button>
+        </form>
+        {% endif %}
+        <div class="search-container" style="position: relative;">
+            <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" id="searchInput" class="search-input" placeholder="Search scripts..." style="padding-left: 32px;">
         </div>
     </div>
+</div>
 
-    <button class="sidebar-toggle" id="sidebarToggle">
-        <span class="toggle-icon">☰</span>
-    </button>
-
-    <div class="main-content" id="mainContent">
-        
-        <div class="page-header">
-            <div class="page-header-content">
-                <h1 class="page-title">Scripts</h1>
-                <p class="page-subtitle">Manage your scripts</p>
+<div class="content-card">
+    <div class="card-header">
+        <div>
+            {% if current_path %}
+            <div style="font-size: 0.8rem; color: var(--text-muted, #64748b); margin-bottom: 0.25rem;">
+                <a href="{{ url_for('scripts') }}" style="color: var(--text-muted, #64748b);">Scripts</a>
+                {% set ns = namespace(accumulated='') %}
+                {% for part in current_path.split('/') %}
+                    {% set ns.accumulated = ns.accumulated + '/' + part if ns.accumulated else part %}
+                    <span style="margin: 0 0.25rem;">›</span>
+                    <a href="/scripts/{{ ns.accumulated }}" style="color: var(--text-muted, #64748b);">{{ part }}</a>
+                {% endfor %}
             </div>
-            <div class="page-header-actions">
-                <div class="search-container">
-                    <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search scripts...">
-                </div>
-            </div>
+            {% endif %}
+            <h3 class="card-title">Script list</h3>
         </div>
-
-        <div class="content-card">
-            <div class="card-header">
-                <h3 class="card-title">Script list</h3>
-                <span class="card-badge">{{ scripts|length }} Scripts</span>
-            </div>
-            
-            <div class="card-body">
-                {% if scripts %}
-                    <ul class="script-list" id="scriptList">
-                        {% for script in scripts %}
-                            <li class="script-item">
-                                <a href="{{ url_for('view_script', filename=script) }}" class="script-link">
-                                    <div class="script-info">
-                                        <div class="script-details">
-                                            <span class="script-name">{{ script }}</span>
-                                        </div>
-                                    </div>
-                                    <span class="script-action">
-                                        <span class="external-icon">↗</span>
-                                    </span>
-                                </a>
-                            </li>
-                        {% endfor %}
-                    </ul>
-                {% else %}
-                    <div class="empty-state">
-                        <h3 class="empty-title">No scripts available</h3>
-                        <p class="empty-text">No automation scripts have been added yet</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
+        <span class="card-badge">{{ entries|length }} Entries</span>
     </div>
+    
+    <div class="card-body">
+        {% if entries %}
+            <!-- Normal list -->
+            <ul class="script-list" id="scriptList">
+                {% for entry in entries %}
+                <li class="script-item">
+                    <a href="/scripts/{{ entry.path }}" class="script-link">
+                        <div class="script-info">
+                            <div class="script-details">
+                                <span class="script-name">
+                                    {% if entry.is_dir %}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                    {% else %}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+                                    {% endif %}
+                                    {{ entry.name }}
+                                </span>
+                            </div>
+                        </div>
+                        <span class="script-action"><span class="external-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg></span></span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
 
-    <script>
+            <!-- Search list - recursiv -->
+            {% if all_scripts is defined %}
+            <ul class="script-list" id="allScriptList" style="display: none;">
+                {% for script in all_scripts %}
+                <li class="script-item" data-path="{{ script.path }}">
+                    <a href="/scripts/{{ script.path }}" class="script-link">
+                        <div class="script-info">
+                            <div class="script-details">
+                                <span class="script-name">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+                                    {{ script.path }}
+                                </span>
+                            </div>
+                        </div>
+                        <span class="script-action"><span class="external-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg></span></span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
 
-        const sidebar = document.getElementById('sidebar');
-        const mainContent = document.getElementById('mainContent');
-        const sidebarToggle = document.getElementById('sidebarToggle');
+        {% else %}
+            <div class="empty-state">
+                <h3 class="empty-title">No scripts available</h3>
+                <p class="empty-text">Sync a Git repository to load scripts</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
 
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-        });
+{% endblock %}
 
-        const userMenuBtn = document.getElementById('userMenuBtn');
-        const userDropdown = document.getElementById('userDropdown');
+{% block extra_js %}
+<script>
+    const searchInput = document.getElementById("searchInput");
+    const normalList = document.getElementById("scriptList");
+    const allList = document.getElementById("allScriptList");
+    const allItems = document.querySelectorAll("#allScriptList li");
 
-        userMenuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            userDropdown.classList.toggle('show');
-        });
+    if (normalList) normalList.style.display = "block";
+    if (allList) allList.style.display = "none";
 
-        document.addEventListener('click', () => {
-            userDropdown.classList.remove('show');
-        });
-
-        document.getElementById("searchInput").addEventListener("input", function() {
+    if (searchInput) {
+        searchInput.addEventListener("input", function () {
             const filter = this.value.toLowerCase();
-            const items = document.querySelectorAll("#scriptList li");
-
-            items.forEach(item => {
-                const text = item.innerText.toLowerCase();
-                item.style.display = text.includes(filter) ? "" : "none";
-            });
+            
+            if (filter.length > 0) {
+                if (normalList) normalList.style.display = "none";
+                if (allList) allList.style.display = "block";
+                allItems.forEach(item => {
+                    const path = item.getAttribute("data-path").toLowerCase();
+                    item.style.display = path.includes(filter) ? "" : "none";
+                });
+            } else {
+                if (normalList) normalList.style.display = "block";
+                if (allList) allList.style.display = "none";
+            }
         });
-    </script>
-
-</body>
-</html>
+    }
+</script>
+{% endblock %}

@@ -1,99 +1,50 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ filename }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-</head>
-<body class="dashboard-body">
+{% extends "base.html" %}
 
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <span class="sidebar-title">NetPAC</span>
-        </div>
-        
-        <nav class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
-                <span class="sidebar-text">Dashboard</span>
-            </a>
-            <a href="{{ url_for('hosts') }}" class="sidebar-link">
-                <span class="sidebar-text">Hosts</span>
-            </a>
-            <a href="{{ url_for('groups') }}" class="sidebar-link">
-                <span class="sidebar-text">Groups</span>
-            </a>
-            <a href="{{ url_for('scripts') }}" class="sidebar-link active">
-                <span class="sidebar-text">Scripts</span>
-            </a>
-            <a href="{{ url_for('history') }}" class="sidebar-link">
-                <span class="sidebar-text">History</span>
-            </a>
-        </nav>
+{% block title %}{{ filename }} - NetPAC{% endblock %}
 
-        <div class="sidebar-footer">
-            <div class="user-menu">
-                <button class="user-btn" id="userMenuBtn">
-                    <span class="sidebar-text">{{ current_user.id }}</span>
-                </button>
-                <div class="user-dropdown" id="userDropdown">
-                    <a href="{{ url_for('settings') }}">Settings</a>
-                    <a href="{{ url_for('logout') }}">Logout</a>
-                </div>
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">{{ filename }}</h1>
+        <p class="page-subtitle">Script details and execution</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="{{ url_for('scripts') }}" class="action-button action-button-secondary">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            <span>Back</span>
+        </a>
+        {% if filename.endswith('.py') %}
+        <button class="action-button action-button-primary" type="button" onclick="toggleLaunch()">
+            <span>Launch script</span>
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="card-body" style="padding: 0;">
+        <div id="viewMode">
+            <div class="script-code-viewer" style="background-color: #1e1e1e; border-radius: 6px; overflow: hidden;">
+                <pre style="background-color: #1e1e1e; margin: 0; padding: 1rem;"><code class="language-python" style="background-color: #1e1e1e; color: #d4d4d4; font-family: 'Courier New', 'Consolas', 'Monaco', monospace; font-size: 14px; line-height: 1.5;">{{ content }}</code></pre>
             </div>
         </div>
     </div>
+</div>
 
-    <button class="sidebar-toggle" id="sidebarToggle">
-        <span class="toggle-icon">☰</span>
-    </button>
+{% if filename.endswith('.py') %}
+<div id="launchPanel" class="launch-panel">
+    <div class="launch-panel-header">
+        <h3 class="launch-panel-title">Launch script</h3>
+    </div>
+    
+    <form method="POST" action="{{ url_for('run_script', subpath=filename) }}" class="launch-form" id="scriptForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
-    <div class="main-content" id="mainContent">
-        
-        <div class="page-header">
-            <div class="page-header-content">
-                <h1 class="page-title">{{ filename }}</h1>
-                <p class="page-subtitle">Script details and execution</p>
-            </div>
-            <div class="page-header-actions">
-                <a href="{{ url_for('scripts') }}" class="action-button action-button-secondary">
-                    <span class="button-icon">←</span>
-                    <span>Back</span>
-                </a>
-                <button class="action-button action-button-primary" type="button" onclick="toggleLaunch()">
-                    <span>Launch script</span>
-                </button>
-            </div>
-        </div>
-
-        <div class="content-card">
-            <div class="card-header">
-                <h3 class="card-title">Script code</h3>
-                <span class="card-badge">Python</span>
-            </div>
-            
-            <div class="card-body" style="padding: 0;">
-                <div class="script-code-viewer">
-                    <pre><code>{{ content }}</code></pre>
-                </div>
-            </div>
-        </div>
-
-        <div id="launchPanel" class="launch-panel">
-            <div class="launch-panel-header">
-                <h3 class="launch-panel-title">Launch script</h3>
-            </div>
-            
-            <form method="POST" action="{{ url_for('run_script', filename=filename) }}" class="launch-form" id="scriptForm">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-
+        <div class="top-row">
+            <div>
                 <div class="form-group">
                     <label class="form-label">Target needed? <span style="color: red;">*</span></label>
-                    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                    <div style="display: flex; gap: 0.75rem; margin-bottom: 0.75rem;">
                         <button type="button" class="action-button action-button-secondary" onclick="toggleTarget(true)" id="targetYesBtn">
                             <span>Yes</span>
                         </button>
@@ -104,132 +55,156 @@
                     <input type="hidden" name="targetRequired" id="targetRequired" required>
                     <span class="form-hint" id="targetError" style="color: red; display: none;">Please select an option</span>
                 </div>
-
                 <div class="form-group" id="targetInputGroup" style="display: none;">
                     <label class="form-label">Target</label>
                     <input type="text" name="target" id="targetInput" class="form-input" placeholder="Group or Hostname">
-                    <span class="form-hint">Add one group or one hostname</span>
+                    <span class="form-hint">One group or hostname</span>
                 </div>
+            </div>
 
-                <div class="form-group">
-                    <label class="form-label">Number of variables</label>
-                    <select id="varCount" name="varCount" class="form-input">
-                        <option value="0" selected>No variable</option>
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3">3</option>
-                    </select>
-                </div>
-
-                <div id="variableInputs"></div>
-
-                <div class="form-actions">
-                    <button type="button" class="action-button action-button-secondary" onclick="toggleLaunch()">Cancel</button>
-                    <button type="submit" class="action-button action-button-success">
-                        <span>Run script</span>
-                    </button>
-                </div>
-            </form>
+            <div class="form-group">
+                <label class="form-label">Secrets</label>
+                <select name="secret_1" class="form-input">
+                    <option value="">None</option>
+                    {% for secret in secrets %}
+                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
+                    {% endfor %}
+                </select>
+                <select name="secret_2" class="form-input" style="margin-top: 0.5rem;">
+                    <option value="">None</option>
+                    {% for secret in secrets %}
+                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
+                    {% endfor %}
+                </select>
+                <select name="secret_3" class="form-input" style="margin-top: 0.5rem;">
+                    <option value="">None</option>
+                    {% for secret in secrets %}
+                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
+                    {% endfor %}
+                </select>
+            </div>
         </div>
 
-    </div>
+        <div class="form-group">
+            <label class="form-label">Variables</label>
+            <div id="varTableBody"></div>
+            <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add variable
+            </button>
+            <p class="var-max-hint" id="varMaxHint">0 / 3</p>
+        </div>
 
-    <script>
-        const sidebar = document.getElementById('sidebar');
-        const mainContent = document.getElementById('mainContent');
-        const sidebarToggle = document.getElementById('sidebarToggle');
+        <input type="hidden" name="varCount" id="varCountHidden" value="0">
 
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-        });
+        <div class="form-actions">
+            <button type="button" class="action-button action-button-secondary" onclick="toggleLaunch()">Cancel</button>
+            <button type="submit" class="action-button action-button-success">
+                <span>Run script</span>
+            </button>
+        </div>
+    </form>
+</div>
+{% endif %}
+{% endblock %}
 
-        const userMenuBtn = document.getElementById('userMenuBtn');
-        const userDropdown = document.getElementById('userDropdown');
+{% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
 
-        userMenuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            userDropdown.classList.toggle('show');
-        });
+{% if filename.endswith('.py') %}
+<script>
 
-        document.addEventListener('click', () => {
-            userDropdown.classList.remove('show');
-        });
+const MAX_VARS = 3;
+let varCount = 0;
 
-        function toggleLaunch() {
-            const panel = document.getElementById('launchPanel');
-            panel.classList.toggle('open');
-        }
+function toggleLaunch() {
+    const panel = document.getElementById('launchPanel');
+    if (panel) panel.classList.toggle('open');
+}
 
-        function toggleTarget(needsTarget) {
-            const targetInputGroup = document.getElementById('targetInputGroup');
-            const targetInput = document.getElementById('targetInput');
-            const targetYesBtn = document.getElementById('targetYesBtn');
-            const targetNoBtn = document.getElementById('targetNoBtn');
-            const targetRequired = document.getElementById('targetRequired');
-            const targetError = document.getElementById('targetError');
+function toggleTarget(needsTarget) {
+    const targetInputGroup = document.getElementById('targetInputGroup');
+    const targetInput       = document.getElementById('targetInput');
+    const targetYesBtn      = document.getElementById('targetYesBtn');
+    const targetNoBtn       = document.getElementById('targetNoBtn');
+    const targetRequired    = document.getElementById('targetRequired');
+    const targetError       = document.getElementById('targetError');
 
-            targetError.style.display = 'none';
+    targetError.style.display = 'none';
+    targetRequired.value = needsTarget ? 'yes' : 'no';
 
-            targetRequired.value = needsTarget ? 'yes' : 'no';
+    if (needsTarget) {
+        targetInputGroup.style.display = 'block';
+        targetInput.required = true;
+        targetYesBtn.classList.replace('action-button-secondary', 'action-button-primary');
+        targetNoBtn.classList.replace('action-button-primary', 'action-button-secondary');
+    } else {
+        targetInputGroup.style.display = 'none';
+        targetInput.required = false;
+        targetInput.value = '';
+        targetNoBtn.classList.replace('action-button-secondary', 'action-button-primary');
+        targetYesBtn.classList.replace('action-button-primary', 'action-button-secondary');
+    }
+}
 
-            if (needsTarget) {
-                targetInputGroup.style.display = 'block';
-                targetInput.required = true;
-                targetYesBtn.classList.add('action-button-primary');
-                targetYesBtn.classList.remove('action-button-secondary');
-                targetNoBtn.classList.add('action-button-secondary');
-                targetNoBtn.classList.remove('action-button-primary');
-            } else {
-                targetInputGroup.style.display = 'none';
-                targetInput.required = false;
-                targetInput.value = '';
-                targetNoBtn.classList.add('action-button-primary');
-                targetNoBtn.classList.remove('action-button-secondary');
-                targetYesBtn.classList.add('action-button-secondary');
-                targetYesBtn.classList.remove('action-button-primary');
-            }
-        }
+function updateHint() {
+    document.getElementById('varMaxHint').textContent = `${varCount} / ${MAX_VARS}`;
+    document.getElementById('varAddBtn').style.display = varCount >= MAX_VARS ? 'none' : 'flex';
+    document.getElementById('varCountHidden').value = varCount;
+}
 
-        document.getElementById('scriptForm').addEventListener('submit', function(e) {
-            const targetRequired = document.getElementById('targetRequired');
-            const targetError = document.getElementById('targetError');
+function addVariable() {
+    if (varCount >= MAX_VARS) return;
+    varCount++;
+    const tbody = document.getElementById('varTableBody');
+    const row = document.createElement('div');
+    row.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;';
+    row.innerHTML = `
+        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; width: 20px; text-align: center;">${varCount}</span>
+        <input type="text" name="variable${varCount}" data-field="value" placeholder="var" style="flex: 1; padding: 0.45rem 0.6rem; font-size: 0.875rem; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box;">
+        <button type="button" onclick="removeVariable(this)" style="background: none; border: none; cursor: pointer; color: var(--text-muted);">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+    `;
+    tbody.appendChild(row);
+    updateHint();
+}
 
-            if (!targetRequired.value) {
-                e.preventDefault();
-                targetError.style.display = 'block';
-                targetError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                return false;
-            }
-        });
+function removeVariable(btn) {
+    btn.closest('div').remove();
+    rebuildNames();
+}
 
-        const varCountSelect = document.getElementById('varCount');
-        const variableInputsDiv = document.getElementById('variableInputs');
+function rebuildNames() {
+    const rows = document.querySelectorAll('#varTableBody > div');
+    rows.forEach((row, i) => {
+        row.querySelector('span').textContent = i + 1;
+        row.querySelector('input[data-field="value"]').name = `variable${i + 1}`;
+    });
+    varCount = rows.length;
+    updateHint();
+}
 
-        varCountSelect.addEventListener('change', function() {
-            const count = parseInt(this.value);
-            variableInputsDiv.innerHTML = '';
+document.getElementById('scriptForm').addEventListener('submit', function(e) {
+    const targetRequired = document.getElementById('targetRequired');
+    const targetError    = document.getElementById('targetError');
 
-            if (count > 0) {
-                const wrapper = document.createElement('div');
-                wrapper.className = 'variables-wrapper';
-                
-                for (let i = 1; i <= count; i++) {
-                    const formGroup = document.createElement('div');
-                    formGroup.className = 'form-group';
-                    formGroup.innerHTML = `
-                        <label class="form-label">Variable ${i}</label>
-                        <input type="text" name="variable${i}" class="form-input" placeholder="Input for variable ${i}">
-                    `;
-                    wrapper.appendChild(formGroup);
-                }
-                
-                variableInputsDiv.appendChild(wrapper);
-            }
-        });
+    if (!targetRequired.value) {
+        e.preventDefault();
+        targetError.style.display = 'block';
+        targetError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return false;
+    }
+});
 
-        hljs.highlightAll();
-    </script>
+document.addEventListener('DOMContentLoaded', function() {
+    if (typeof hljs === 'undefined') return;
+    document.querySelectorAll('pre code').forEach((block) => {
+        hljs.highlightElement(block);
+    });
+});
 
-</body>
-</html>
+</script>
+{% endif %}
+{% endblock %}

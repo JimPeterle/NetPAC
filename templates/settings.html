@@ -1,213 +1,270 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Settings</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
-    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
-</head>
-<body class="dashboard-body">
+{% extends "base.html" %}
 
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <span class="sidebar-title">NetPAC</span>
-        </div>
-        
-        <nav class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
-                <span class="sidebar-text">Dashboard</span>
-            </a>
-            <a href="{{ url_for('hosts') }}" class="sidebar-link">
-                <span class="sidebar-text">Hosts</span>
-            </a>
-            <a href="{{ url_for('groups') }}" class="sidebar-link">
-                <span class="sidebar-text">Groups</span>
-            </a>
-            <a href="{{ url_for('scripts') }}" class="sidebar-link">
-                <span class="sidebar-text">Scripts</span>
-            </a>
-            <a href="{{ url_for('history') }}" class="sidebar-link">
-                <span class="sidebar-text">History</span>
-            </a>
-        </nav>
+{% block title %}Settings - NetPAC{% endblock %}
 
-        <div class="sidebar-footer">
-            <div class="user-menu">
-                <button class="user-btn" id="userMenuBtn">
-                    <span class="sidebar-text">{{ current_user.id }}</span>
-                </button>
-                <div class="user-dropdown" id="userDropdown">
-                    <a href="{{ url_for('settings') }}" class="active-dropdown">Settings</a>
-                    <a href="{{ url_for('logout') }}">Logout</a>
-                </div>
-            </div>
-        </div>
+{% block extra_css %}
+<script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Settings</h1>
+        <p class="page-subtitle">Manage system settings and updates</p>
     </div>
+</div>
 
-    <button class="sidebar-toggle" id="sidebarToggle">
-        <span class="toggle-icon">☰</span>
-    </button>
-
-    <div class="main-content" id="mainContent">
-        
-        <div class="page-header">
-            <div class="page-header-content">
-                <h1 class="page-title">Settings</h1>
-                <p class="page-subtitle">Manage system settings and updates</p>
+{% if user_method == 'local' %}
+<details class="content-card" style="margin-top: 1.5rem;">
+    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+        <h3 class="card-title">Change Password of local user - {{ current_user.id }}</h3>
+        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </summary>
+    <div class="card-body" style="padding: 30px;">
+        <form method="POST" action="{{ url_for('change_password') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Current Password</label>
+                <input type="password" name="current_password" class="form-input" required>
             </div>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">New Password</label>
+                <input type="password" name="new_password" class="form-input" required>
+                <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
+            </div>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Confirm New Password</label>
+                <input type="password" name="confirm_password" class="form-input" required>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="action-button action-button-primary">Change Password</button>
+            </div>
+        </form>
+    </div>
+</details>
+{% endif %}
+
+{% if current_user.id == 'admin' %}
+<details class="content-card" style="margin-top: 1.5rem;">
+    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+        <h3 class="card-title">Add local user</h3>
+        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </summary>
+    <div class="card-body" style="padding: 30px;">
+        <form method="POST" action="{{ url_for('add_user') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Username</label>
+                <input type="text" name="username" class="form-input" required>
+            </div>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Password</label>
+                <input type="password" name="password" class="form-input" required>
+                <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="action-button action-button-primary">Add User</button>
+            </div>
+        </form>
+    </div>
+</details>
+{% endif %}
+
+{% if current_user.id == 'admin' %}
+<details class="content-card" style="margin-top: 1.5rem;">
+    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+        <h3 class="card-title">Delete local user</h3>
+        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </summary>
+    <div class="card-body" style="padding: 30px;">
+        {% if users %}
+        <form method="POST" action="{{ url_for('delete_user') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <select name="username" class="form-input" id="userSelect" onchange="toggleDeleteBtn(this.value)" required>
+                    <option value="">Select user...</option>
+                    {% for user in users %}
+                    <option value="{{ user[0] }}">{{ user[0] }}</option>
+                    {% endfor %}
+                </select>
+                <div class="form-actions">
+                    <button type="button" id="deleteUserBtn" class="action-button action-button-primary" 
+                            onclick="openDeleteModal(document.getElementById('userSelect').value)"
+                            disabled style="opacity: 0.5; cursor: not-allowed;">
+                        Delete User
+                    </button>
+                </div>
+            </div>
+        </form>
+        {% else %}
+        <p style="color: var(--text-muted);">No other users available</p>
+        {% endif %}
+    </div>
+</details>
+{% endif %}
+
+<div id="deleteModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Delete user</h2>
         </div>
-
-        <div class="content-card">
-            <div class="card-header">
-                <h3 class="card-title">System update</h3>
-            </div>
-            
-            <div class="card-body" style="padding: 30px;">
-                <div class="settings-section">
-                    <div class="settings-info">
-                        <h4 class="settings-title">Update system</h4>
-                        <p class="settings-description">
-                            Update the required libraries in the Python venv. For a complete update of NetPAC, run update_git.sh in the CLI. This can be found in the app directory.
-                        </p>
-                    </div>
-                    
-                    <form action="{{ url_for('settings') }}" method="POST" id="updateForm">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                        <button type="submit" id="updateButton" class="action-button action-button-primary">
-                            <span>Update system</span>
-                        </button>
-                    </form>
-                </div>
-
-                <div id="statusMessage" class="status-message">
-                    <div class="loading-spinner"></div>
-                    <h3 class="status-title">Update is running</h3>
-                    <div class="status-timer" id="timer">00:00</div>
-                    <p class="status-text">Please wait while the system is being updated...</p>
-                </div>
-
-                {% if output %}
-                <div class="output-card">
-                    <div class="output-header">
-                        <span class="output-title">Update output</span>
-                    </div>
-                    <div class="output-content">
-                        <pre id="terminalOutput">{{ output }}</pre>
-                    </div>
-                </div>
-
-                <script>
-
-                    const ansi_up = new AnsiUp();
-                    const element = document.getElementById('terminalOutput');
-                    const text = element.textContent;
-                    element.innerHTML = ansi_up.ansi_to_html(text);
-                </script>
-                {% endif %}
-            </div>
+        <div style="padding: 1.5rem;">
+            <p id="deleteMessage" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <p style="color: var(--danger); font-weight: 500; margin: 0;">This action cannot be undone!</p>
         </div>
-
-        <div class="content-card">
-            <div class="card-header">
-                <h3 class="card-title">System logs</h3>
-            </div>
-
-                    {% if logs %}
-                    <div class="logs-list">
-                        {% for log in logs %}
-                        <div class="log-list-item" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px;">
-                            <div class="log-info" style="flex: 1;">
-                                <div style="font-weight: 600; margin-bottom: 5px;">{{ log['name'] }}</div>
-                                <div style="font-size: 13px; color: #6c757d;">
-                                    Size: {{ "%.2f"|format(log['size'] / 1024) }} KB | 
-                                    Modified: {{ log['modified'].strftime('%Y-%m-%d %H:%M:%S') }}
-                                </div>
-                            </div>
-                            <a href="{{ url_for('view_log', filename=log['name']) }}" class="action-button action-button-primary" style="margin-left: 15px;">
-                                <span>View log</span>
-                            </a>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% else %}
-                    <p style="color: #6c757d; text-align: center; padding: 20px;">No logs available</p>
-                    {% endif %}
-                </div>
-            </div>
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeDeleteModal()">
+                Cancel
+            </button>
+            <form id="deleteForm" method="POST" action="{{ url_for('delete_user') }}" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-button action-button-danger">
+                    Delete
+                </button>
+            </form>
         </div>
     </div>
 </div>
+
+{% if user_method == 'radius' %}
+<div class="content-card">
+    <div class="card-header">
+        <h3 class="card-title">Password changes are only possible for local users</h3>
     </div>
+</div>
+{% endif %}
 
-    <script>
-        let timerInterval;
-        let seconds = 0;
+<details class="content-card" style="margin-top: 1.5rem;">
+    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+        <h3 class="card-title">Git repository</h3>
+        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </summary>
+    <div class="card-body" style="padding: 30px;">
+        <div class="settings-section">
+            <div class="settings-info">
+                <h4 class="settings-title">Repository configuration</h4>
+                <p class="settings-description">
+                    Specify the GitLab repository from which the scripts will be loaded via sync.
+                    The personal access token is stored in encrypted form.
+                </p>
+            </div>
+        </div>
 
-        const sidebar = document.getElementById('sidebar');
-        const mainContent = document.getElementById('mainContent');
-        const sidebarToggle = document.getElementById('sidebarToggle');
+        <form action="{{ url_for('save_git_config') }}" method="POST" style="margin-top: 20px;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-        });
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Repository URL</label>
+                <input type="text" name="repo_url" class="form-input"
+                    placeholder="https://gitlab.com/org/repo.git"
+                    value="{{ git_config.repo_url }}" required>
+                <span class="form-hint">Only HTTPS-URLs</span>
+            </div>
 
-        const userMenuBtn = document.getElementById('userMenuBtn');
-        const userDropdown = document.getElementById('userDropdown');
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Branch</label>
+                <input type="text" name="branch" class="form-input"
+                    placeholder="main"
+                    value="{{ git_config.branch }}">
+            </div>
 
-        userMenuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            userDropdown.classList.toggle('show');
-        });
+            <div class="form-group" style="margin-bottom: 20px;">
+                <label class="form-label">Personal access token</label>
+                <input type="password" name="access_token" class="form-input"
+                    placeholder="{% if git_config.token_encrypted %}Token saved – leave blank to keep{% else %}glpat-xxxxxxxxxxxxxxxxxxxx{% endif %}">
+                <span class="form-hint">
+                    {% if git_config.token_encrypted %}
+                        ✓ Token is saved – fill this in only if you want to change it
+                    {% else %}
+                        GitLab → Settings → Access Tokens → Scope: read_repository
+                    {% endif %}
+                </span>
+            </div>
 
-        document.addEventListener('click', () => {
-            userDropdown.classList.remove('show');
-        });
+            <button type="submit" class="action-button action-button-primary">
+                <span>Save</span>
+            </button>
+        </form>
 
-        function startTimer() {
-            seconds = 0;
-            updateTimerDisplay();
-            timerInterval = setInterval(() => {
-                seconds++;
-                updateTimerDisplay();
-            }, 1000);
+        {% if git_config.repo_url %}
+        <div style="margin-top: 16px; padding: 12px 16px; background: var(--success-dim); border: 1px solid var(--success); border-radius: 8px; font-size: 14px; color: var(--success);">
+            Active: <strong>{{ git_config.repo_url }}</strong> @ <strong>{{ git_config.branch }}</strong>
+        </div>
+        {% endif %}
+    </div>
+</details>
+
+<details open class="content-card" style="margin-top: 1.5rem;">
+    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+        <h3 class="card-title">System logs</h3>
+        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </summary>
+    <div class="card-body" style="padding: 15px;">
+        {% if logs %}
+        <div class="logs-list">
+            {% for log in logs %}
+            <div class="log-list-item" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: var(--bg-table-head); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px;">
+                <div class="log-info" style="flex: 1;">
+                    <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent);">{{ log['name'] }}</div>
+                    <div style="font-size: 13px; color: var(--text-muted);">
+                        Size: {{ "%.2f"|format(log['size'] / 1024) }} KB | 
+                        Modified: {{ log['modified'].strftime('%Y-%m-%d %H:%M:%S') }}
+                    </div>
+                </div>
+                <a href="{{ url_for('view_log', filename=log['name']) }}" class="action-button action-button-primary" style="margin-left: 15px;">
+                    <span>View log</span>
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p style="color: var(--text-muted); text-align: center; padding: 20px;">No logs available</p>
+        {% endif %}
+    </div>
+</details>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function openDeleteModal(username) {
+        if (!username) return;
+        
+        document.getElementById('deleteMessage').textContent = `Do you really want to delete the user "${username}"?`;
+        
+        const form = document.getElementById('deleteForm');
+        const existing = form.querySelector('input[name="username"]');
+        if (existing) existing.remove();
+        
+        const usernameInput = document.createElement('input');
+        usernameInput.type = 'hidden';
+        usernameInput.name = 'username';
+        usernameInput.value = username;
+        form.appendChild(usernameInput);
+        
+        document.getElementById('deleteModalOverlay').style.display = 'flex';
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModalOverlay').style.display = 'none';
+    }
+
+    document.getElementById('deleteModalOverlay').addEventListener('click', function(event) {
+        if (event.target === this) {
+            closeDeleteModal();
         }
+    });
 
-        function stopTimer() {
-            if (timerInterval) {
-                clearInterval(timerInterval);
-            }
+    function toggleDeleteBtn(value) {
+        const btn = document.getElementById('deleteUserBtn');
+        if (value) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+            btn.style.cursor = 'pointer';
+        } else {
+            btn.disabled = true;
+            btn.style.opacity = '0.5';
+            btn.style.cursor = 'not-allowed';
         }
-
-        function updateTimerDisplay() {
-            const minutes = Math.floor(seconds / 60);
-            const secs = seconds % 60;
-            const display = `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-            document.getElementById('timer').textContent = display;
-        }
-
-        function showLoading() {
-            const statusMessage = document.getElementById('statusMessage');
-            statusMessage.classList.add('active');
-            startTimer();
-        }
-
-        function hideLoading() {
-            const statusMessage = document.getElementById('statusMessage');
-            statusMessage.classList.remove('active');
-            stopTimer();
-        }
-
-        document.getElementById('updateForm').addEventListener('submit', function(e) {
-            showLoading();
-        });
-
-        window.addEventListener('load', function() {
-            hideLoading();
-        });
-    </script>
-
-</body>
-</html>
+    }
+</script>
+{% endblock %}
