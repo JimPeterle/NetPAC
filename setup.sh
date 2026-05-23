@@ -40,14 +40,33 @@ print_warning() {
 }
 
 # ===================================
-# CONFIGURATION – ADJUST HERE!
+# MAIN
 # ===================================
 
-HOSTNAME=""
-PATHCERT=""
-PATHPRIVATKEY=""
-# 2 x CPU-Cores + 1
-WORKER="9"
+APP_DIR="$(pwd)"
+APP_USER="$USER"
+APP_GROUP="$(id -gn)"
+
+# ===================================
+# CONFIGURATION FROM SECRET.ENV
+# ===================================
+if [ ! -f "$APP_DIR/secret.env" ]; then
+    print_error "secret.env not found!"
+    print_warning "Copy secret_examples.env to secret.env and fill in your values"
+    exit 1
+fi
+
+load_dotenv() {
+    export $(grep -v '^#' "$1" | xargs)
+}
+
+load_dotenv "$APP_DIR/secret.env"
+
+
+PATHCERT="${PATHCERT}"
+PATHPRIVATEKEY="${PATHPRIVATEKEY}"
+DOMAIN="${DOMAIN}"
+WORKER="${WORKER}"
 
 # ===================================
 # CHECK USER INPUT
@@ -68,13 +87,7 @@ if [ -z "$PATHPRIVATKEY" ]; then
     exit 1
 fi
 
-# ===================================
-# MAIN
-# ===================================
 
-APP_DIR="$(pwd)"        # Current directory
-APP_USER="$USER"        # Current user
-APP_GROUP="$(id -gn)"   # Primary group
 
 # ===================================
 # 1. CHECK PREREQUISITES
