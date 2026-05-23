@@ -6,7 +6,6 @@
 #
 # Installs and configures:
 # - Required directories
-# - Python virtual environment
 # - Gunicorn
 # - Nginx
 # - Systemd services
@@ -44,15 +43,17 @@ print_warning() {
 # CONFIGURATION – ADJUST HERE!
 # ===================================
 
-DOMAIN=""
-PATHCERT=""
-PATHPRIVATKEY=""
+HOSTNAME="192.168.178.10"
+PATHCERT="/etc/ssl/certs/netpac.pem"
+PATHPRIVATKEY="/etc/ssl/private/netpac_private.key"
+# 2 x CPU-Cores+ 1
+WORKER="9"
 
 # ===================================
 # CHECK USER INPUT
 # ===================================
 
-if [ -z "$DOMAIN" ]; then 
+if [ -z "$HOSTNAME" ]; then 
     print_error "DOMAIN is not set"
     exit 1
 fi
@@ -95,7 +96,7 @@ fi
 
 if ! command -v python3 &> /dev/null; then
     print_error "Python 3 not found!"
-    echo "Install with: sudo apt install python3 python3-venv python3-pip"
+    echo "Install with: sudo apt install python3"
     exit 1
 fi
 
@@ -137,12 +138,22 @@ if [ ! -d "/var/lib/netpac/scripts" ]; then
     print_status "Created Script directory"
 fi
 
+if [ ! -d "/var/lib/netpac/scripts/git" ]; then
+    sudo mkdir -p /var/lib/netpac/scripts/git
+    print_status "Created script folder for git scripts"
+fi
+
+if [ ! -d "/var/lib/netpac/scripts/local" ]; then
+    sudo mkdir -p /var/lib/netpac/scripts/local
+    print_status "Created script for local scripts"
+fi
+
 if ! getent group netpacscript > /dev/null; then
     sudo groupadd netpacscript
 fi
 
-sudo chown netpac:netpacscript /var/lib/netpac/scripts
-sudo chmod 770 /var/lib/netpac/scripts
+sudo chown -R netpac:netpacscript /var/lib/netpac/scripts
+sudo chmod -R 770 /var/lib/netpac/scripts
 
 if ! id -nG netpac | grep -qw netpacscript; then
     sudo usermod -aG netpacscript netpac
@@ -166,37 +177,32 @@ else
 fi
 
 # ===================================
-# 5. PYTHON VIRTUAL ENVIRONMENT
-# ===================================
-
-echo ""
-echo -e "${YELLOW}Setting up Python virtual environment...${NC}"
-
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
-    print_status "Virtual environment created"
-else
-    print_warning "Virtual environment already exists"
-fi
-
-source venv/bin/activate
-print_status "Virtual environment activated"
-
-# ===================================
 # 6. INSTALL DEPENDENCIES
 # ===================================
 
 echo ""
-echo -e "${YELLOW}Installing Python dependencies in virtual environment...${NC}"
+echo -e "${YELLOW}Install the required packages${NC}"
 
-if [ -f "requirements.txt" ]; then
-    pip3 install --upgrade pip
-    pip3 install -r requirements.txt
-    print_status "Dependencies installed"
-else
-    print_error "requirements.txt not found!"
-    exit 1
-fi
+sudo apt update
+sudo apt install python3-flask -y
+sudo apt install python3-flask-login -y
+sudo apt install python3-flask-bcrypt -y
+sudo apt install python3-flask-limiter -y
+sudo apt install python3-flaskext.wtf -y
+sudo apt install python3-pyrad -y
+sudo apt install python3-dotenv -y
+sudo apt install python3-pymysql -y
+sudo apt install python3-cryptography -y
+sudo apt install python3-markdown -y
+sudo apt install python3-gunicorn -y
+sudo apt install python3-pyotp -y
+sudo apt install python3-qrcode -y
+sudo apt install python3-pil -y
+sudo apt install python3-apscheduler -y
+sudo apt install python3-sqlalchemy -y
+
+
+echo "${YELLOW}Finished installing${NC}"
 
 # ===================================
 # 7. CREATE GUNICORN CONFIG
@@ -212,7 +218,7 @@ dir_path = os.path.dirname(os.path.realpath(__file__))
 
 # Gunicorn configuration
 bind = "127.0.0.1:8443"
-workers = 4
+workers = $WORKER
 worker_class = "sync"
 timeout = 300
 keepalive = 5
@@ -252,11 +258,9 @@ Type=notify
 User=$APP_USER
 Group=$APP_GROUP
 WorkingDirectory=$APP_DIR
-Environment="PATH=$APP_DIR/venv/bin"
+Environment="PATH=$APP_DIR"
 
-ExecStart=$APP_DIR/venv/bin/gunicorn \\
-    -c $APP_DIR/gunicorn_config.py \\
-    netpac:app
+ExecStart=/usr/bin/python3 -m gunicorn -c $APP_DIR/gunicorn_config.py netpac:app
 
 Restart=always
 RestartSec=10
@@ -300,15 +304,12 @@ fi
 echo ""
 echo -e "${YELLOW}Checking NGINX permission for /home/netpac...${NC}"
 
-# Hole die aktuellen Berechtigungen (z.B. 750)
 PERMS=$(stat -c "%a" /home/netpac)
 
-# Extrahiere das letzte Digit (others)
 OTHER_PERMS=${PERMS: -1}
 
-# Prüfe ob others execute hat (1, 3, 5, 7)
 if [ $((OTHER_PERMS & 1)) -eq 0 ]; then
-    chmod o+x /home/netpac
+    sudo chmod o+x /home/netpac
     print_status "Execute permission granted for others on /home/netpac"
 else
     print_status "Execute permission already set on /home/netpac"
@@ -330,14 +331,14 @@ upstream netpac_backend {
 # Redirect HTTP to HTTPS
 server {
     listen 80;
-    server_name $DOMAIN;
+    server_name $HOSTNAME;
     return 301 https://\$server_name\$request_uri;
 }
 
 # HTTPS Server
 server {
     listen 443 ssl http2;
-    server_name $DOMAIN;
+    server_name $HOSTNAME;
 
     # SSL certificates
     ssl_certificate $PATHCERT;
@@ -446,7 +447,21 @@ else
 fi
 
 # ===================================
-# 14. SUMMARY
+# 14. SECRET.ENV PERMISSIONS
+# ===================================
+
+echo ""
+echo -e "${YELLOW}Securing secret.env...${NC}"
+
+if [ -f "$APP_DIR/secret.env" ]; then
+    chmod 600 "$APP_DIR/secret.env"
+    print_status "secret.env permissions set to 600"
+else
+    print_warning "secret.env not found - create it and run: chmod 600 secret.env"
+fi
+
+# ===================================
+# 15. SUMMARY
 # ===================================
 
 echo ""
@@ -459,7 +474,7 @@ echo "  App directory: $APP_DIR"
 echo "  App user: $APP_USER"
 echo "  App local port: 8443"
 echo "  App NGINX port: 443"
-echo "  Domain: $DOMAIN"
+echo "  Domain: $HOSTNAME"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
 echo "  Check status: sudo systemctl status netpac nginx"
@@ -472,6 +487,6 @@ echo "  Gunicorn: tail -f /var/log/netpac/gunicorn_error.log"
 echo "  Nginx: sudo tail -f /var/log/nginx/netpac_error.log"
 echo ""
 echo -e "${YELLOW}Final step:${NC}"
-echo "  Enter the page via: https://$DOMAIN"
+echo "  Enter the page via: https://$HOSTNAME"
 echo ""
 echo -e "${GREEN}Good luck!${NC}"
