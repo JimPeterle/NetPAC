@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Health - NetPAC{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Health</h1>
+        <p class="page-subtitle">System status overview</p>
+    </div>
+    <div class="page-header-actions">
+        <button class="action-button action-button-secondary" onclick="location.reload()">
+            <span>Refresh</span>
+        </button>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="card-header">
+        <h3 class="card-title">Overall Status</h3>
+        {% if overall == 'ok' %}
+            <span class="status-badge status-success">✓ All systems operational</span>
+        {% else %}
+            <span class="status-badge status-error">✗ Issues detected</span>
+        {% endif %}
+    </div>
+</div>
+
+<div class="content-card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <h3 class="card-title">System Checks</h3>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>Status</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for name, check in checks.items() %}
+                    <tr>
+                        <td>
+                            {% if name == 'mariadb' %}MariaDB
+                            {% elif name == 'sql-size' %}SQL-Database size
+                            {% elif name == 'scheduler' %}APScheduler
+                            {% elif name == 'scripts_dir' %}Scripts Directory
+                            {% elif name == 'encryption' %}Encryption
+                            {% else %}{{ name }}
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if check.status == 'ok' %}
+                                <span class="status-badge status-success">✓ OK</span>
+                            {% else %}
+                                <span class="status-badge status-error">✗ Error</span>
+                            {% endif %}
+                        </td>
+                        <td style="color: var(--text-muted); font-size: 0.875rem;">
+                            {% if name == 'scheduler' and check.status == 'ok' %}
+                                {{ check.jobs }} active jobs
+                            {% elif check.message is defined %}
+                                {{ check.message }}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

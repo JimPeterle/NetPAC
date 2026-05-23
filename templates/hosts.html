@@ -1,184 +1,209 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hosts</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
-</head>
-<body class="dashboard-body">
+{% extends "base.html" %}
 
+{% block title %}Hosts - NetPAC{% endblock %}
 
-    <div class="sidebar" id="sidebar">
-        <div class="sidebar-header">
-            <span class="sidebar-title">NetPAC</span>
-        </div>
-        
-        <nav class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="sidebar-link">
-                <span class="sidebar-text">Dashboard</span>
-            </a>
-            <a href="{{ url_for('hosts') }}" class="sidebar-link active">
-                <span class="sidebar-text">Hosts</span>
-            </a>
-            <a href="{{ url_for('groups') }}" class="sidebar-link">
-                <span class="sidebar-text">Groups</span>
-            </a>
-            <a href="{{ url_for('scripts') }}" class="sidebar-link">
-                <span class="sidebar-text">Scripts</span>
-            </a>
-            <a href="{{ url_for('history') }}" class="sidebar-link">
-                <span class="sidebar-text">History</span>
-            </a>
-        </nav>
+{% block content %}
 
-        <div class="sidebar-footer">
-            <div class="user-menu">
-                <button class="user-btn" id="userMenuBtn">
-                    <span class="sidebar-text">{{ current_user.id }}</span>
-                </button>
-                <div class="user-dropdown" id="userDropdown">
-                    <a href="{{ url_for('settings') }}">Settings</a>
-                    <a href="{{ url_for('logout') }}">Logout</a>
-                </div>
-            </div>
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Hosts</h1>
+        <p class="page-subtitle">Manage your host systems</p>
+    </div>
+    <div class="page-header-actions">
+        <button class="action-button action-button-primary" onclick="togglePanel()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Add Host</span>
+        </button>
+        <div class="search-container" style="position: relative;">
+            <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" id="searchInput" class="search-input" placeholder="Search hosts..." style="padding-left: 32px;">
         </div>
     </div>
+</div>
 
+<div id="panel" class="slide-panel">
+    <div class="panel-header">
+        <h3 class="panel-title">Add new host</h3>
+    </div>
+    <form action="{{ url_for('add_host') }}" method="POST" class="panel-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
-    <button class="sidebar-toggle" id="sidebarToggle">
-        <span class="toggle-icon">☰</span>
-    </button>
-
-
-    <div class="main-content" id="mainContent">
-
-        <div class="page-header">
-            <div class="page-header-content">
-                <h1 class="page-title">Hosts</h1>
-                <p class="page-subtitle">Manage your host systems</p>
-            </div>
-            <div class="page-header-actions">
-                <button class="action-button action-button-primary" onclick="togglePanel()">
-                    <span class="button-icon">➕</span>
-                    <span>Add Host</span>
-                </button>
-                <div class="search-container">
-                    <input type="text" id="searchInput" class="search-input" placeholder="🔍 Search hosts...">
-                </div>
-            </div>
+        <div class="form-group">
+            <label class="form-label">Hostname</label>
+            <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" required>
         </div>
 
+        <div class="form-group">
+            <label class="form-label">Groups</label>
+            <input type="text" name="Group" class="form-input" placeholder="e.g C9200,Access" required>
+        </div>
 
-        <div id="panel" class="slide-panel">
-            <div class="panel-header">
-                <h3 class="panel-title">➕ Add new host</h3>
-            </div>
-            <form action="{{ url_for('add_host') }}" method="POST" class="panel-form">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                <div class="form-group">
-                    <label class="form-label">Hostname</label>
-                    <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" required>
+        <div class="form-group">
+            <label class="form-label">Description</label>
+            <input type="text" name="Description" class="form-input" placeholder="Maybe the DNS name as information">
+        </div>
+
+        <div class="form-actions">
+            <button type="button" class="action-button action-button-secondary" onclick="togglePanel()">Cancel</button>
+            <button type="submit" class="action-button action-button-primary">Add</button>
+        </div>
+    </form>
+</div>
+
+<div class="content-card">
+    <div class="card-header">
+        <h3 class="card-title">Hostname - Groups - Description</h3>
+        <span class="card-badge">{{ hosts|length }} Hosts</span>
+    </div>
+
+    <div class="card-body">
+        {% if hosts %}
+        <ul class="host-list" id="hostList">
+            {% for row in hosts %}
+            <li class="host-item">
+                <div class="host-info">
+                    <span class="host-name">{{ row[0] }}</span>
+                    
+                    {% if host_groups[row[0]] %}
+                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ host_groups[row[0]] }}</span>
+                    {% endif %}
+
+                    {% if row[1] %}
+                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ row[1] }}</span>
+                    {% endif %}
                 </div>
 
-                <div class="form-group">
-                    <label class="form-label">First group</label>
-                    <input type="text" name="Group" class="form-input" placeholder="e.g C9200" required>
+                <div class="host-buttons" style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button type="button" onclick="toggleEdit('edit-{{ loop.index }}')" class="action-button action-button-secondary" title="Edit host">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                    </button>
+                    <button type="button" class="action-button action-button-secondary" title="Delete host" onclick="confirmDelete('{{ row[0] }}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                            <path d="M10 11v6M14 11v6"/>
+                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                    </button>
                 </div>
 
-                <div class="form-group">
-                    <label class="form-label">Second group</label>
-                    <input type="text" name="Group2" class="form-input" placeholder="e.g Datacenter" required>
-                </div>
+                <div id="edit-{{ loop.index }}" style="display: none; width: 100%; margin-top: 0.75rem;">
+                    <form action="{{ url_for('update_host') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <input type="hidden" name="Hostname" value="{{ row[0] }}"/>
 
-                <div class="form-actions">
-                    <button type="button" class="action-button action-button-secondary" onclick="togglePanel()">Cancel</button>
-                    <button type="submit" class="action-button action-button-primary">Add</button>
+                        <div class="form-group">
+                            <label class="form-label">Hostname</label>
+                            <input type="text" value="{{ row[0] }}" class="form-input" disabled style="opacity: 0.5; cursor: not-allowed;">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Groups</label>
+                            <input type="text" name="Group" class="form-input" value="{{ host_groups[row[0]] }}" required>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Description</label>
+                            <input type="text" name="Description" class="form-input" value="{{ row[1] if row[1] else '' }}">
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="action-button action-button-secondary" onclick="toggleEdit('edit-{{ loop.index }}')">Cancel</button>
+                            <button type="submit" class="action-button action-button-primary">Update</button>
+                        </div>
+                    </form>
                 </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="empty-state">
+            <h3 class="empty-title">No host available</h3>
+            <p class="empty-text">Add your first host</p>
+            <button class="action-button action-button-primary" onclick="togglePanel()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Add first host</span>
+            </button>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div id="deleteModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Delete Host</h2>
+        </div>
+
+        <div style="padding: 1.5rem;">
+            <p id="deleteMessage" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <p style="color: var(--danger); font-weight: 500; margin: 0;">This action cannot be undone!</p>
+        </div>
+
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeDeleteModal()">
+                Cancel
+            </button>
+            <form id="deleteForm" action="{{ url_for('delete_host') }}" method="POST" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" id="deleteHostname" name="hostname" value="">
+                <button type="submit" class="action-button action-button-danger">
+                    Delete
+                </button>
             </form>
         </div>
-
-        <div class="content-card">
-            <div class="card-header">
-                <h3 class="card-title">Host list</h3>
-                <span class="card-badge">{{ hosts|length }} Hosts</span>
-            </div>
-            
-            <div class="card-body">
-                {% if hosts %}
-                    <ul class="host-list" id="hostList">
-                        {% for row in hosts %}
-                            <li class="host-item">
-                                <div class="host-info">
-                                    <span class="host-name">{{ row[0] }}</span>
-                                </div>
-                                <form action="{{ url_for('delete_host') }}" method="POST" style="display:inline;">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                                    <input type="hidden" name="hostname" value="{{ row[0] }}">
-                                    <button type="submit" class="delete-btn" title="Delete host">
-                                        <img src="{{ url_for('static', filename='icons/delete_button.png') }}" width="20" height="20" alt="Delete">
-                                    </button>
-                                </form>
-                            </li>
-                        {% endfor %}
-                    </ul>
-                {% else %}
-                    <div class="empty-state">
-                        <h3 class="empty-title">No host available </h3>
-                        <p class="empty-text">Add your first host</p>
-                        <button class="action-button action-button-primary" onclick="togglePanel()">
-                            <span class="button-icon">➕</span>
-                            <span>Add first host</span>
-                        </button>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
     </div>
+</div>
 
-    <script>
+{% endblock %}
 
-        const sidebar = document.getElementById('sidebar');
-        const mainContent = document.getElementById('mainContent');
-        const sidebarToggle = document.getElementById('sidebarToggle');
+{% block extra_js %}
+<script>
+    function togglePanel() {
+        document.getElementById("panel").classList.toggle("open");
+    }
 
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
-        });
+    function toggleEdit(id) {
+        const el = document.getElementById(id);
+        const isOpen = el.style.display === 'block';
+        el.style.display = isOpen ? 'none' : 'block';
+        
+        const listItem = el.closest('li');
+        const buttons = listItem.querySelector('.host-buttons');
+        const hostInfo = listItem.querySelector('.host-info');
+        
+        buttons.style.display = isOpen ? 'flex' : 'none';
+        hostInfo.style.display = isOpen ? 'flex' : 'none';
+    }
 
+    function confirmDelete(hostname) {
+        document.getElementById('deleteMessage').textContent = `Do you really want to delete the host "${hostname}"?`;
+        document.getElementById('deleteHostname').value = hostname;
+        document.getElementById('deleteModalOverlay').style.display = 'flex';
+    }
 
-        const userMenuBtn = document.getElementById('userMenuBtn');
-        const userDropdown = document.getElementById('userDropdown');
+    function closeDeleteModal() {
+        document.getElementById('deleteModalOverlay').style.display = 'none';
+    }
 
-        userMenuBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            userDropdown.classList.toggle('show');
-        });
-
-        document.addEventListener('click', () => {
-            userDropdown.classList.remove('show');
-        });
-
-
-        function togglePanel() {
-            const panel = document.getElementById("panel");
-            panel.classList.toggle("open");
+    document.getElementById('deleteModalOverlay').addEventListener('click', function(event) {
+        if (event.target === this) {
+            closeDeleteModal();
         }
+    });
 
+    const searchInput = document.getElementById("searchInput");
+    const items = document.querySelectorAll("#hostList li");
 
-        document.getElementById("searchInput").addEventListener("input", function() {
+    if (searchInput) {
+        searchInput.addEventListener("input", function () {
             const filter = this.value.toLowerCase();
-            const items = document.querySelectorAll("#hostList li");
-
             items.forEach(item => {
-                const text = item.innerText.toLowerCase();
-                item.style.display = text.includes(filter) ? "" : "none";
+                item.style.display = item.innerText.toLowerCase().includes(filter) ? "" : "none";
             });
         });
-    </script>
-
-</body>
-</html>
+    }
+</script>
+{% endblock %}
