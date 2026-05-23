@@ -171,7 +171,6 @@ radius_nas = os.getenv("RADIUS_NAS")
 db_user = os.getenv("DB_USER")
 db_pw = os.getenv("DB_PW")
 db_ip = os.getenv("DB_IP")
-db_database = os.getenv("DB_DATABASE")
 db_port = int(os.getenv("DB_PORT"))
 
 
@@ -227,7 +226,7 @@ def get_db():
         user=db_user,
         password=db_pw,
         host=db_ip,
-        database=db_database,
+        database="netpac_db",
         port=db_port,
 )
 
