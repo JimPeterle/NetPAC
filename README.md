@@ -1,19 +1,40 @@
 # NetPAC - Network Automation Platform
 
-NetPAC is an network management platform, you can create an inventory of hosts and groups and use this inventory for Python scripts.
+NetPAC is a network management platform. You can create an inventory of 
+hosts and groups and use this inventory for Python scripts.
 
-For login, you can use radius or a local user created in the database.
+For login, you can use RADIUS or a local user. All users are required to 
+set up two-factor authentication (TOTP) on first login.
 
-To update the installed Python modules, you can perform an update under Settings. This will update all modules in the venv. If you want to update NetPAC completely, there is a Bash script called update_git.sh that downloads the latest version from GitHub and updates the venv at the same time. However, this can only be executed via the CLI; it is not yet integrated into the GUI.
+For local login you can use for first startup the user **admin** with password **admin**, after login and totp verification please change the default password under Settings -> Change Password of local user. 
+If you logged in with the local admin user, you can add more local user. 
 
-All scripts located under **/var/lib/netpac/scripts** are displayed in the GUI and can also be executed there. It is recommended to simply set up the folder as a local Git and then integrate it using VS Code, for example. This eliminates the need for commands on the CLI. 
+For Radius login please specify the needed parameter in the secret.env.
 
-Hosts can be created and deleted in the GUI. 
-In the Settings area, you can view the system logs.
+Before running setup.sh, make sure your SSL certificate and private key 
+are in place and specify the needed parameter in the secret.env.
 
-The output of the scripts can be exported as PDF.
+All scripts located under **/var/lib/netpac/scripts** are displayed in the 
+GUI and can be executed there. Scripts can also be synced directly from 
+a Git repository via the built-in Git Sync feature in the UI.
+
+Credentials can be stored encrypted in the Secrets section and are 
+injected into scripts at runtime as environment variables.
+
+Scripts can be scheduled with cron expressions (hourly, daily, weekly, 
+or custom) via the Scheduler. Each schedule supports targets, variables, 
+and secrets.
+
+Hosts can be created, edited, and deleted in the GUI and assigned to 
+multiple groups.
+
+The output of scripts can be exported as TXT. System logs can be viewed 
+directly in the Settings area.
+
+The UI supports a dark and light mode.
 
 The following explains the steps required to install NetPAC.
+
 
 ## Database configuration
 
@@ -157,16 +178,10 @@ To create an ENCRYPTION_KEY used to encrypt passwords in the database, run the f
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-In the section “CONFIGURATION – ADJUST HERE!”, you must add your path for the certificate and domain.
-```Bash
-vim setup.sh
-```
-
 When everything is ready, the final step can be carried out.
 ```Bash
 bash setup.sh
 ```
-
 
 ## Additional information
 
@@ -175,7 +190,7 @@ For all users who need to create scripts:
 sudo usermod -aG netpacscript <user>
 ```
 
-If you want do remov netpac do this steps as netpac user:
+If you want to remove netpac do these steps as netpac user:
 ``` Bash
 bash uninstall.sh
 ```

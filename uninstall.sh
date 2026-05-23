@@ -21,12 +21,28 @@ echo -e "${YELLOW}You will be asked before each step.${NC}"
 echo ""
 
 # ===================================
-# CONFIGURATION
+# MAIN
 # ===================================
-
-PATHCERT=""
-PATHPRIVATKEY=""
 APP_DIR="$(pwd)"
+
+# ===================================
+# CONFIGURATION FROM SECRET.ENV
+# ===================================
+if [ ! -f "$APP_DIR/secret.env" ]; then
+    print_error "secret.env not found!"
+    print_warning "Copy secret_examples.env to secret.env and fill in your values"
+    exit 1
+fi
+
+load_dotenv() {
+    export $(grep -v '^#' "$1" | xargs)
+}
+
+load_dotenv "$APP_DIR/secret.env"
+
+PATHCERT="${PATHCERT}"
+PATHPRIVATEKEY="${PATHPRIVATEKEY}"
+
 
 # ===================================
 # FUNCTIONS
