@@ -213,6 +213,7 @@ sudo apt install python3-qrcode -y
 sudo apt install python3-pil -y
 sudo apt install python3-apscheduler -y
 sudo apt install python3-sqlalchemy -y
+sudo apt install python3-cryptography -y
 
 
 echo "${YELLOW}Finished installing${NC}"
