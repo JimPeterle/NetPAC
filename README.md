@@ -168,7 +168,7 @@ git clone https://github.com/JimPeterle/NetPAC.git
 cd NetPAC
 ```
 
-The secret_examples.env file serves as a template.
+Before the setup, fill the secret.env file with your variables.
 ```Bash
 vim secret.env
 ```
