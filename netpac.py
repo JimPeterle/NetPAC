@@ -41,7 +41,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 # --------------------
 dir_path = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_PASSWORD = "admin"
-
+db_database = "netpac_db"
 
 # --------------------
 #   Initialize Logger 
@@ -226,7 +226,7 @@ def get_db():
         user=db_user,
         password=db_pw,
         host=db_ip,
-        database="netpac_db",
+        database=db_database,
         port=db_port,
 )
 
