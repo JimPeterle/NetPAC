@@ -175,6 +175,8 @@ vim secret.env
 
 To create an ENCRYPTION_KEY used to encrypt passwords in the database, run the following command and store the key in secret.env.
 ```Bash
+sudo apt install python3-cryptography -y
+
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
