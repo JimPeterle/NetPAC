@@ -151,7 +151,7 @@ fi
 echo ""
 echo -e "${YELLOW}Step 4: Remove SSL certificates${NC}"
 
-if confirm "Remove SSL certificates ($PATHCERT and $PATHPRIVATKEY)?"; then
+if confirm "Remove SSL certificates ($PATHCERT and $PATHPRIVATEKEY)?"; then
     if [ -f "$PATHCERT" ]; then
         sudo rm "$PATHCERT"
         print_status "Certificate removed: $PATHCERT"
