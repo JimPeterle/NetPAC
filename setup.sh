@@ -335,7 +335,7 @@ server {
 
     # SSL certificates
     ssl_certificate $PATHCERT;
-    ssl_certificate_key $PATHPRIVATKEY;
+    ssl_certificate_key $PATHPRIVATEKEY;
 
     # SSL configuration
     ssl_protocols TLSv1.2 TLSv1.3;
