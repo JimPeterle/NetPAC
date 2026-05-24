@@ -69,27 +69,6 @@ DOMAIN="${DOMAIN}"
 WORKER="${WORKER}"
 
 # ===================================
-# CHECK USER INPUT
-# ===================================
-
-if [ -z "$HOSTNAME" ]; then 
-    print_error "DOMAIN is not set"
-    exit 1
-fi
-
-if [ -z "$PATHCERT" ]; then
-    print_error "PATHCERT is not set"
-    exit 1
-fi
-
-if [ -z "$PATHPRIVATKEY" ]; then
-    print_error "PATHPRIVATKEY is not set"
-    exit 1
-fi
-
-
-
-# ===================================
 # 1. CHECK PREREQUISITES
 # ===================================
 
