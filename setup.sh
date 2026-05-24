@@ -65,7 +65,7 @@ load_dotenv "$APP_DIR/secret.env"
 
 PATHCERT="${PATHCERT}"
 PATHPRIVATEKEY="${PATHPRIVATEKEY}"
-DOMAIN="${DOMAIN}"
+HOSTNAME="${HOSTNAME}"
 WORKER="${WORKER}"
 
 # ===================================
