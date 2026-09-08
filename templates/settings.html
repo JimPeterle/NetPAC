@@ -14,94 +14,286 @@
     </div>
 </div>
 
-{% if user_method == 'local' %}
-<details class="content-card" style="margin-top: 1.5rem;">
-    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-        <h3 class="card-title">Change Password of local user - {{ current_user.id }}</h3>
-        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
-    </summary>
-    <div class="card-body" style="padding: 30px;">
-        <form method="POST" action="{{ url_for('change_password') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">Current Password</label>
-                <input type="password" name="current_password" class="form-input" required>
-            </div>
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">New Password</label>
-                <input type="password" name="new_password" class="form-input" required>
-                <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
-            </div>
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">Confirm New Password</label>
-                <input type="password" name="confirm_password" class="form-input" required>
-            </div>
-            <div class="form-actions">
-                <button type="submit" class="action-button action-button-primary">Change Password</button>
-            </div>
-        </form>
-    </div>
-</details>
-{% endif %}
+<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border);">
+    <button type="button" id="tabBtnUser" class="action-button {{ 'action-button-primary' if active_tab == 'user' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'user' else '0.6' }};" onclick="switchSettingsTab('user')">
+        User
+    </button>
+    <button type="button" id="tabBtnGit" class="action-button {{ 'action-button-primary' if active_tab == 'git' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'git' else '0.6' }};" onclick="switchSettingsTab('git')">
+        Git
+    </button>
+    <button type="button" id="tabBtnLogs" class="action-button {{ 'action-button-primary' if active_tab == 'logs' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'logs' else '0.6' }};" onclick="switchSettingsTab('logs')">
+        Logs
+    </button>
+    <button type="button" id="tabBtnBackup" class="action-button {{ 'action-button-primary' if active_tab == 'backup' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'backup' else '0.6' }};" onclick="switchSettingsTab('backup')">
+        Backup
+    </button>
+</div>
 
-{% if current_user.id == 'admin' %}
-<details class="content-card" style="margin-top: 1.5rem;">
-    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-        <h3 class="card-title">Add local user</h3>
-        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
-    </summary>
-    <div class="card-body" style="padding: 30px;">
-        <form method="POST" action="{{ url_for('add_user') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">Username</label>
-                <input type="text" name="username" class="form-input" required>
-            </div>
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">Password</label>
-                <input type="password" name="password" class="form-input" required>
-                <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
-            </div>
-            <div class="form-actions">
-                <button type="submit" class="action-button action-button-primary">Add User</button>
-            </div>
-        </form>
-    </div>
-</details>
-{% endif %}
-
-{% if current_user.id == 'admin' %}
-<details class="content-card" style="margin-top: 1.5rem;">
-    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-        <h3 class="card-title">Delete local user</h3>
-        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
-    </summary>
-    <div class="card-body" style="padding: 30px;">
-        {% if users %}
-        <form method="POST" action="{{ url_for('delete_user') }}">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-            <div class="form-group" style="margin-bottom: 16px;">
-                <select name="username" class="form-input" id="userSelect" onchange="toggleDeleteBtn(this.value)" required>
-                    <option value="">Select user...</option>
-                    {% for user in users %}
-                    <option value="{{ user[0] }}">{{ user[0] }}</option>
-                    {% endfor %}
-                </select>
+<div id="tabUser" style="{{ 'display: none;' if active_tab != 'user' else '' }}">
+    {% if user_method == 'local' %}
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">Change Password of local user - {{ current_user.id }}</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            <form method="POST" action="{{ url_for('change_password') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Current Password</label>
+                    <input type="password" name="current_password" class="form-input" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">New Password</label>
+                    <input type="password" name="new_password" class="form-input" required>
+                    <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
+                </div>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Confirm New Password</label>
+                    <input type="password" name="confirm_password" class="form-input" required>
+                </div>
                 <div class="form-actions">
-                    <button type="button" id="deleteUserBtn" class="action-button action-button-primary" 
-                            onclick="openDeleteModal(document.getElementById('userSelect').value)"
-                            disabled style="opacity: 0.5; cursor: not-allowed;">
-                        Delete User
-                    </button>
+                    <button type="submit" class="action-button action-button-primary">Change Password</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if user_method == 'radius' %}
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">Password changes are only possible for local users</h3>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if current_user.id == 'admin' %}
+    <div class="content-card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h3 class="card-title">Add local user</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            <form method="POST" action="{{ url_for('add_user') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-input" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-input" required>
+                    <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="action-button action-button-primary">Add User</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="content-card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h3 class="card-title">Delete local user</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            {% if users %}
+            <form method="POST" action="{{ url_for('delete_user') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <select name="username" class="form-input" id="userSelect" onchange="toggleDeleteBtn(this.value)" required>
+                        <option value="">Select user...</option>
+                        {% for user in users %}
+                        <option value="{{ user[0] }}">{{ user[0] }}</option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-actions">
+                        <button type="button" id="deleteUserBtn" class="action-button action-button-primary" 
+                                onclick="openDeleteModal(document.getElementById('userSelect').value)"
+                                disabled style="opacity: 0.5; cursor: not-allowed;">
+                            Delete User
+                        </button>
+                    </div>
+                </div>
+            </form>
+            {% else %}
+            <p style="color: var(--text-muted);">No other users available</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<div id="tabGit" style="{{ 'display: none;' if active_tab != 'git' else '' }}">
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">Git repository</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            <div class="settings-section">
+                <div class="settings-info">
+                    <h4 class="settings-title">Repository configuration</h4>
+                    <p class="settings-description">
+                        Specify the GitLab repository from which the scripts will be loaded via sync.
+                        The personal access token is stored in encrypted form.
+                    </p>
                 </div>
             </div>
-        </form>
-        {% else %}
-        <p style="color: var(--text-muted);">No other users available</p>
-        {% endif %}
+
+            <form action="{{ url_for('save_git_config') }}" method="POST" style="margin-top: 20px;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Repository URL</label>
+                    <input type="text" name="repo_url" class="form-input"
+                        placeholder="https://gitlab.com/org/repo.git"
+                        value="{{ git_config.repo_url }}" required>
+                    <span class="form-hint">Only HTTPS-URLs</span>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Branch</label>
+                    <input type="text" name="branch" class="form-input"
+                        placeholder="main"
+                        value="{{ git_config.branch }}">
+                </div>
+
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="form-label">Personal access token</label>
+                    <input type="password" name="access_token" class="form-input"
+                        placeholder="{% if git_config.token_encrypted %}Token saved – leave blank to keep{% else %}glpat-xxxxxxxxxxxxxxxxxxxx{% endif %}">
+                    <span class="form-hint">
+                        {% if git_config.token_encrypted %}
+                            ✓ Token is saved – fill this in only if you want to change it
+                        {% else %}
+                            GitLab → Settings → Access Tokens → Scope: read_repository
+                        {% endif %}
+                    </span>
+                </div>
+
+                <button type="submit" class="action-button action-button-primary">
+                    <span>Save</span>
+                </button>
+            </form>
+
+            {% if git_config.repo_url %}
+            <div style="margin-top: 16px; padding: 12px 16px; background: var(--success-dim); border: 1px solid var(--success); border-radius: 8px; font-size: 14px; color: var(--success);">
+                Active: <strong>{{ git_config.repo_url }}</strong> @ <strong>{{ git_config.branch }}</strong>
+            </div>
+            {% endif %}
+        </div>
     </div>
-</details>
-{% endif %}
+</div>
+
+<div id="tabLogs" style="{{ 'display: none;' if active_tab != 'logs' else '' }}">
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">System logs</h3>
+        </div>
+        <div class="card-body" style="padding: 15px;">
+            {% if logs %}
+            <div class="logs-list">
+                {% for log in logs %}
+                <div class="log-list-item" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: var(--bg-table-head); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px;">
+                    <div class="log-info" style="flex: 1;">
+                        <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent);">{{ log['name'] }}</div>
+                        <div style="font-size: 13px; color: var(--text-muted);">
+                            Size: {{ "%.2f"|format(log['size'] / 1024) }} KB | 
+                            Modified: {{ log['modified'].strftime('%Y-%m-%d %H:%M:%S') }}
+                        </div>
+                    </div>
+                    <a href="{{ url_for('view_log', filename=log['name']) }}" class="action-button action-button-primary" style="margin-left: 15px;">
+                        <span>View log</span>
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); text-align: center; padding: 20px;">No logs available</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div id="tabBackup" style="{{ 'display: none;' if active_tab != 'backup' else '' }}">
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">Create Backup</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            <p class="settings-description" style="margin-bottom: 20px;">
+                Backups are stored on the server under <code>/home/netpac/bin/netpac_backups/</code>.
+            </p>
+            <form method="POST" action="{{ url_for('create_backup') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="form-label">Backup Type</label>
+                    <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; flex: 1;">
+                            <input type="radio" name="backup_type" value="hosts" checked style="accent-color: var(--accent);">
+                            <div>
+                                <div style="font-weight: 600;">Hosts &amp; Groups only</div>
+                                <div style="font-size: 0.8rem; color: var(--text-muted);">hosts, host_groups, host_group_membership</div>
+                            </div>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; flex: 1;">
+                            <input type="radio" name="backup_type" value="full" style="accent-color: var(--accent);">
+                            <div>
+                                <div style="font-weight: 600;">Full Database</div>
+                                <div style="font-size: 0.8rem; color: var(--text-muted);">All tables — complete backup</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                <button type="submit" class="action-button action-button-primary">Create Backup</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="content-card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h3 class="card-title">Existing Backups</h3>
+            <span class="card-badge">{{ backups|length }} Backups</span>
+        </div>
+        <div class="card-body" style="padding: 15px;">
+            {% if backups %}
+            <div class="logs-list">
+                {% for backup in backups %}
+                <div class="log-list-item" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: var(--bg-table-head); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px;">
+                    <div class="log-info" style="flex: 1;">
+                        <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent);">
+                            {{ backup['name'] }}
+                            <span style="background: var(--bg-card); color: var(--text-muted); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ backup['type'] }}</span>
+                        </div>
+                        <div style="font-size: 13px; color: var(--text-muted);">
+                            Size: {{ "%.2f"|format(backup['size'] / 1024) }} KB | 
+                            Created: {{ backup['modified'].strftime('%d-%m-%Y %H:%M:%S') }}
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem; margin-left: 15px;">
+                        <a href="{{ url_for('download_backup', filename=backup['name']) }}" class="action-button action-button-secondary">
+                            <span>Download</span>
+                        </a>
+                        <button type="button" class="action-button action-button-danger" title="Restore this backup" onclick="openRestoreModal('{{ backup['name'] }}')">
+                            <span>Restore</span>
+                        </button>
+                        <button type="button" class="action-button action-button-secondary" title="Delete backup" onclick="confirmDeleteBackup('{{ backup['name'] }}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11v6M14 11v6"/>
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color: var(--text-muted); text-align: center; padding: 20px;">No backups available</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
 
 <div id="deleteModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
     <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
@@ -126,106 +318,92 @@
     </div>
 </div>
 
-{% if user_method == 'radius' %}
-<div class="content-card">
-    <div class="card-header">
-        <h3 class="card-title">Password changes are only possible for local users</h3>
+<div id="deleteBackupModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Delete Backup</h2>
+        </div>
+        <div style="padding: 1.5rem;">
+            <p id="deleteBackupMessage" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <p style="color: var(--danger); font-weight: 500; margin: 0;">This action cannot be undone!</p>
+        </div>
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeDeleteBackupModal()">Cancel</button>
+            <form id="deleteBackupForm" method="POST" action="{{ url_for('delete_backup') }}" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="filename" id="deleteBackupFilename" value="">
+                <button type="submit" class="action-button action-button-danger">Delete</button>
+            </form>
+        </div>
     </div>
 </div>
-{% endif %}
 
-<details class="content-card" style="margin-top: 1.5rem;">
-    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-        <h3 class="card-title">Git repository</h3>
-        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
-    </summary>
-    <div class="card-body" style="padding: 30px;">
-        <div class="settings-section">
-            <div class="settings-info">
-                <h4 class="settings-title">Repository configuration</h4>
-                <p class="settings-description">
-                    Specify the GitLab repository from which the scripts will be loaded via sync.
-                    The personal access token is stored in encrypted form.
+<div id="restoreModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--danger);">⚠️ Restore Backup</h2>
+        </div>
+        <form id="restoreForm" method="POST" action="{{ url_for('restore_backup') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="filename" id="restoreFilename" value="">
+            <div style="padding: 1.5rem;">
+                <p style="margin-bottom: 1rem; color: var(--text-secondary);">
+                    You are about to restore <strong id="restoreFilenameLabel"></strong>.
                 </p>
-            </div>
-        </div>
+                <p style="color: var(--danger); font-weight: 600; margin-bottom: 1.5rem;">
+                    This action is IRREVERSIBLE. All current data in the affected tables will be permanently deleted and replaced with the backup content. A safety backup of the current state will be created automatically before proceeding.
+                </p>
 
-        <form action="{{ url_for('save_git_config') }}" method="POST" style="margin-top: 20px;">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">Repository URL</label>
-                <input type="text" name="repo_url" class="form-input"
-                    placeholder="https://gitlab.com/org/repo.git"
-                    value="{{ git_config.repo_url }}" required>
-                <span class="form-hint">Only HTTPS-URLs</span>
-            </div>
-
-            <div class="form-group" style="margin-bottom: 16px;">
-                <label class="form-label">Branch</label>
-                <input type="text" name="branch" class="form-input"
-                    placeholder="main"
-                    value="{{ git_config.branch }}">
-            </div>
-
-            <div class="form-group" style="margin-bottom: 20px;">
-                <label class="form-label">Personal access token</label>
-                <input type="password" name="access_token" class="form-input"
-                    placeholder="{% if git_config.token_encrypted %}Token saved – leave blank to keep{% else %}glpat-xxxxxxxxxxxxxxxxxxxx{% endif %}">
-                <span class="form-hint">
-                    {% if git_config.token_encrypted %}
-                        ✓ Token is saved – fill this in only if you want to change it
-                    {% else %}
-                        GitLab → Settings → Access Tokens → Scope: read_repository
-                    {% endif %}
-                </span>
-            </div>
-
-            <button type="submit" class="action-button action-button-primary">
-                <span>Save</span>
-            </button>
-        </form>
-
-        {% if git_config.repo_url %}
-        <div style="margin-top: 16px; padding: 12px 16px; background: var(--success-dim); border: 1px solid var(--success); border-radius: 8px; font-size: 14px; color: var(--success);">
-            Active: <strong>{{ git_config.repo_url }}</strong> @ <strong>{{ git_config.branch }}</strong>
-        </div>
-        {% endif %}
-    </div>
-</details>
-
-<details open class="content-card" style="margin-top: 1.5rem;">
-    <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
-        <h3 class="card-title">System logs</h3>
-        <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
-    </summary>
-    <div class="card-body" style="padding: 15px;">
-        {% if logs %}
-        <div class="logs-list">
-            {% for log in logs %}
-            <div class="log-list-item" style="display: flex; justify-content: space-between; align-items: center; padding: 15px; background: var(--bg-table-head); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px;">
-                <div class="log-info" style="flex: 1;">
-                    <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent);">{{ log['name'] }}</div>
-                    <div style="font-size: 13px; color: var(--text-muted);">
-                        Size: {{ "%.2f"|format(log['size'] / 1024) }} KB | 
-                        Modified: {{ log['modified'].strftime('%Y-%m-%d %H:%M:%S') }}
-                    </div>
+                <div class="form-group" style="margin-bottom: 1rem;">
+                    <label class="form-label">Confirm your password</label>
+                    <input type="password" name="confirm_password" class="form-input" required autocomplete="current-password">
                 </div>
-                <a href="{{ url_for('view_log', filename=log['name']) }}" class="action-button action-button-primary" style="margin-left: 15px;">
-                    <span>View log</span>
-                </a>
+
+                <div class="form-group">
+                    <label class="form-label">Confirm your TOTP code</label>
+                    <input type="text" name="confirm_totp" class="form-input" required inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+                </div>
             </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p style="color: var(--text-muted); text-align: center; padding: 20px;">No logs available</p>
-        {% endif %}
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="closeRestoreModal()">Cancel</button>
+                <button type="submit" class="action-button action-button-danger">Restore Now</button>
+            </div>
+        </form>
     </div>
-</details>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
+    function switchSettingsTab(tab) {
+        const tabs = { user: 'tabUser', git: 'tabGit', logs: 'tabLogs', backup: 'tabBackup' };
+
+        Object.entries(tabs).forEach(([key, id]) => {
+            const el = document.getElementById(id);
+            if (key === tab) {
+                el.style.display = 'block';
+                anime({
+                    targets: el,
+                    opacity: [0, 1],
+                    translateY: [8, 0],
+                    duration: 250,
+                    easing: 'easeOutQuad'
+                });
+            } else {
+                el.style.display = 'none';
+            }
+        });
+
+        ['User', 'Git', 'Logs', 'Backup'].forEach(name => {
+            const btn = document.getElementById(`tabBtn${name}`);
+            const isActive = name.toLowerCase() === tab;
+            btn.classList.toggle('action-button-primary', isActive);
+            btn.classList.toggle('action-button-secondary', !isActive);
+            btn.style.opacity = isActive ? '1' : '0.6';
+        });
+    }
+
     function openDeleteModal(username) {
         if (!username) return;
         
@@ -241,7 +419,7 @@
         usernameInput.value = username;
         form.appendChild(usernameInput);
         
-        document.getElementById('deleteModalOverlay').style.display = 'flex';
+        openModalAnimated('deleteModalOverlay');
     }
 
     function closeDeleteModal() {
@@ -266,5 +444,33 @@
             btn.style.cursor = 'not-allowed';
         }
     }
+
+    function confirmDeleteBackup(filename) {
+        document.getElementById('deleteBackupMessage').textContent = `Do you really want to delete the backup "${filename}"?`;
+        document.getElementById('deleteBackupFilename').value = filename;
+        openModalAnimated('deleteBackupModalOverlay');
+    }
+
+    function closeDeleteBackupModal() {
+        document.getElementById('deleteBackupModalOverlay').style.display = 'none';
+    }
+
+    document.getElementById('deleteBackupModalOverlay').addEventListener('click', function(e) {
+        if (e.target === this) closeDeleteBackupModal();
+    });
+
+    function openRestoreModal(filename) {
+        document.getElementById('restoreFilenameLabel').textContent = filename;
+        document.getElementById('restoreFilename').value = filename;
+        openModalAnimated('restoreModalOverlay');
+    }
+
+    function closeRestoreModal() {
+        document.getElementById('restoreModalOverlay').style.display = 'none';
+    }
+
+    document.getElementById('restoreModalOverlay').addEventListener('click', function(e) {
+        if (e.target === this) closeRestoreModal();
+    });
 </script>
 {% endblock %}

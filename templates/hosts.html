@@ -10,7 +10,7 @@
         <p class="page-subtitle">Manage your host systems</p>
     </div>
     <div class="page-header-actions">
-        <button class="action-button action-button-primary" onclick="togglePanel()">
+        <button class="action-button action-button-primary" onclick="openModalAnimated('addHostModal')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span>Add Host</span>
         </button>
@@ -20,38 +20,15 @@
     </div>
 </div>
 
-<div id="panel" class="slide-panel">
-    <div class="panel-header">
-        <h3 class="panel-title">Add new host</h3>
-    </div>
-    <form action="{{ url_for('add_host') }}" method="POST" class="panel-form">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-
-        <div class="form-group">
-            <label class="form-label">Hostname</label>
-            <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" required>
-        </div>
-
-        <div class="form-group">
-            <label class="form-label">Groups</label>
-            <input type="text" name="Group" class="form-input" placeholder="e.g C9200,Access" required>
-        </div>
-
-        <div class="form-group">
-            <label class="form-label">Description</label>
-            <input type="text" name="Description" class="form-input" placeholder="Maybe the DNS name as information">
-        </div>
-
-        <div class="form-actions">
-            <button type="button" class="action-button action-button-secondary" onclick="togglePanel()">Cancel</button>
-            <button type="submit" class="action-button action-button-primary">Add</button>
-        </div>
-    </form>
-</div>
-
 <div class="content-card">
     <div class="card-header">
-        <h3 class="card-title">Hostname - Groups - Description</h3>
+        <h3 class="card-title">
+            {% if filtered_group is defined and filtered_group %}
+                Hosts in group "{{ filtered_group }}"
+            {% else %}
+                Hostname - Groups - Description
+            {% endif %}
+        </h3>
         <span class="card-badge">{{ hosts|length }} Hosts</span>
     </div>
 
@@ -61,25 +38,25 @@
             {% for row in hosts %}
             <li class="host-item">
                 <div class="host-info">
-                    <span class="host-name">{{ row[0] }}</span>
+                    <span class="host-name">{{ row[1] }}</span>
                     
-                    {% if host_groups[row[0]] %}
-                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ host_groups[row[0]] }}</span>
+                    {% if host_groups[row[1]] %}
+                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ host_groups[row[1]] }}</span>
                     {% endif %}
 
-                    {% if row[1] %}
-                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ row[1] }}</span>
+                    {% if row[2] %}
+                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ row[2] }}</span>
                     {% endif %}
                 </div>
 
                 <div class="host-buttons" style="display: flex; gap: 0.5rem; align-items: center;">
-                    <button type="button" onclick="toggleEdit('edit-{{ loop.index }}')" class="action-button action-button-secondary" title="Edit host">
+                    <button type="button" onclick="openEditHostModal({{ loop.index }})" class="action-button action-button-secondary" title="Edit host">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                         </svg>
                     </button>
-                    <button type="button" class="action-button action-button-secondary" title="Delete host" onclick="confirmDelete('{{ row[0] }}')">
+                    <button type="button" class="action-button action-button-secondary" title="Delete host" onclick="confirmDelete('{{ row[1] }}')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"/>
                             <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -89,32 +66,11 @@
                     </button>
                 </div>
 
-                <div id="edit-{{ loop.index }}" style="display: none; width: 100%; margin-top: 0.75rem;">
-                    <form action="{{ url_for('update_host') }}" method="POST">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                        <input type="hidden" name="Hostname" value="{{ row[0] }}"/>
-
-                        <div class="form-group">
-                            <label class="form-label">Hostname</label>
-                            <input type="text" value="{{ row[0] }}" class="form-input" disabled style="opacity: 0.5; cursor: not-allowed;">
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Groups</label>
-                            <input type="text" name="Group" class="form-input" value="{{ host_groups[row[0]] }}" required>
-                        </div>
-
-                        <div class="form-group">
-                            <label class="form-label">Description</label>
-                            <input type="text" name="Description" class="form-input" value="{{ row[1] if row[1] else '' }}">
-                        </div>
-
-                        <div class="form-actions">
-                            <button type="button" class="action-button action-button-secondary" onclick="toggleEdit('edit-{{ loop.index }}')">Cancel</button>
-                            <button type="submit" class="action-button action-button-primary">Update</button>
-                        </div>
-                    </form>
-                </div>
+                <template id="editData-{{ loop.index }}">
+                    <span data-hostname="{{ row[1] }}" data-description="{{ row[2] if row[2] else '' }}"
+                          {% for g in available_groups %}data-group-{{ g[0] }}="{{ 'checked' if g[1] in (host_groups[row[1]].split(',') if host_groups[row[1]] else []) else '' }}"{% endfor %}>
+                    </span>
+                </template>
             </li>
             {% endfor %}
         </ul>
@@ -122,12 +78,103 @@
         <div class="empty-state">
             <h3 class="empty-title">No host available</h3>
             <p class="empty-text">Add your first host</p>
-            <button class="action-button action-button-primary" onclick="togglePanel()">
+            <button class="action-button action-button-primary" onclick="openModalAnimated('addHostModal')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 <span>Add first host</span>
             </button>
         </div>
         {% endif %}
+    </div>
+</div>
+
+<div id="addHostModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); max-height: 85vh; overflow-y: auto;">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Add Host</h2>
+        </div>
+        <form action="{{ url_for('add_host') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div style="padding: 1.5rem;">
+                <div class="form-group">
+                    <label class="form-label">Hostname</label>
+                    <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" required autofocus>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Groups</label>
+                    {% if available_groups %}
+                    <div style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                        {% for g in available_groups %}
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" name="group_ids" value="{{ g[0] }}" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
+                            {{ g[1] }}
+                            {% if g[2] %}
+                            <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px;">ansible</span>
+                            {% endif %}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="form-hint">No groups exist yet. <a href="{{ url_for('groups') }}">Create one first</a>.</p>
+                    {% endif %}
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="Description" class="form-input" placeholder="Maybe the DNS name as information">
+                </div>
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="document.getElementById('addHostModal').style.display='none'">Cancel</button>
+                <button type="submit" class="action-button action-button-primary">Add</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="editHostModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); max-height: 85vh; overflow-y: auto;">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Edit Host: <span id="editHostnameLabel"></span></h2>
+        </div>
+        <form id="editHostForm" action="{{ url_for('update_host') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <input type="hidden" name="OriginalHostname" id="editOriginalHostname">
+            <div style="padding: 1.5rem;">
+                <div class="form-group">
+                    <label class="form-label">Hostname</label>
+                    <input type="text" name="Hostname" id="editHostnameInput" class="form-input" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Groups</label>
+                    {% if available_groups %}
+                    <div id="editGroupCheckboxes" style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                        {% for g in available_groups %}
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" name="group_ids" value="{{ g[0] }}" data-group-name="{{ g[1] }}" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
+                            {{ g[1] }}
+                            {% if g[2] %}
+                            <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px;">ansible</span>
+                            {% endif %}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="form-hint">No groups exist yet.</p>
+                    {% endif %}
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="Description" id="editDescriptionInput" class="form-input">
+                </div>
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="closeEditHostModal()">Cancel</button>
+                <button type="submit" class="action-button action-button-primary">Update</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -161,27 +208,43 @@
 
 {% block extra_js %}
 <script>
-    function togglePanel() {
-        document.getElementById("panel").classList.toggle("open");
+    function openEditHostModal(index) {
+        const template = document.getElementById(`editData-${index}`);
+        const data = template.content.querySelector('span');
+
+        const hostname = data.getAttribute('data-hostname');
+        const description = data.getAttribute('data-description');
+
+        document.getElementById('editHostnameLabel').textContent = hostname;
+        document.getElementById('editOriginalHostname').value = hostname;
+        document.getElementById('editHostnameInput').value = hostname;
+        document.getElementById('editDescriptionInput').value = description;
+
+        document.querySelectorAll('#editGroupCheckboxes input[type="checkbox"]').forEach(cb => {
+            const groupName = cb.getAttribute('data-group-name');
+            const attrValue = data.getAttribute(`data-group-${cb.value}`);
+            cb.checked = attrValue === 'checked';
+        });
+
+        openModalAnimated('editHostModal');
     }
 
-    function toggleEdit(id) {
-        const el = document.getElementById(id);
-        const isOpen = el.style.display === 'block';
-        el.style.display = isOpen ? 'none' : 'block';
-        
-        const listItem = el.closest('li');
-        const buttons = listItem.querySelector('.host-buttons');
-        const hostInfo = listItem.querySelector('.host-info');
-        
-        buttons.style.display = isOpen ? 'flex' : 'none';
-        hostInfo.style.display = isOpen ? 'flex' : 'none';
+    function closeEditHostModal() {
+        document.getElementById('editHostModal').style.display = 'none';
     }
+
+    document.getElementById('editHostModal').addEventListener('click', function(e) {
+        if (e.target === this) closeEditHostModal();
+    });
+
+    document.getElementById('addHostModal').addEventListener('click', function(e) {
+        if (e.target === this) this.style.display = 'none';
+    });
 
     function confirmDelete(hostname) {
         document.getElementById('deleteMessage').textContent = `Do you really want to delete the host "${hostname}"?`;
         document.getElementById('deleteHostname').value = hostname;
-        document.getElementById('deleteModalOverlay').style.display = 'flex';
+        openModalAnimated('deleteModalOverlay');
     }
 
     function closeDeleteModal() {

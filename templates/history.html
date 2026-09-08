@@ -7,22 +7,28 @@
 <div class="page-header">
     <div class="page-header-content">
         <h1 class="page-title">History</h1>
-        <p class="page-subtitle">Script execution history</p>
+        <p class="page-subtitle" id="historySubtitle">{{ 'Playbook execution history' if mode == 'ansible' else 'Script execution history' }}</p>
     </div>
     <div class="page-header-actions">
         <button class="action-button action-button-secondary" onclick="location.reload()">
             <span>Refresh</span>
         </button>
-        <div class="search-container" style="position: relative;" style="margin-bottom: 0;">
-            <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" id="jobSearch" class="search-input" placeholder="Search history..." style="padding-left: 32px;">
-        </div>
+        <form method="GET" action="{{ url_for('history') }}" style="margin: 0;">
+            <input type="hidden" name="mode" value="{{ mode }}">
+            <div class="search-container" style="margin-bottom: 0;">
+                <div style="position: relative;">
+                    <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <input type="text" name="search" value="{{ search }}" class="search-input" placeholder="Search history..." style="padding-left: 32px;" onchange="this.form.submit()">
+                </div>
+            </div>
+        </form>
     </div>
 </div>
 
 <div class="content-card">
     <div class="card-header">
-        <h3 class="card-title">Execution History</h3>
-        <span class="card-badge">{{ jobs|length }} Entries</span>
+        <h3 class="card-title" id="historyCardTitle">{{ 'Playbook History' if mode == 'ansible' else 'Script History' }}</h3>
+        <span class="card-badge" id="historyBadge">{{ total_jobs }} Entries</span>
     </div>
 
     <div class="card-body" style="padding: 0;">
@@ -32,7 +38,7 @@
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Script</th>
+                        <th>{{ 'Playbook' if mode == 'ansible' else 'Script' }}</th>
                         <th>Target</th>
                         <th>Status</th>
                         <th>Started</th>
@@ -42,7 +48,7 @@
                 </thead>
                 <tbody>
                     {% for job in jobs %}
-                    <tr>
+                    <tr data-jobtype="{{ job.job_type }}">
                         <td>#{{ job.job_id }}</td>
                         <td>{{ job.script_name }}</td>
                         <td>{{ job.target if job.target else '-' }}</td>
@@ -77,10 +83,30 @@
                 </tbody>
             </table>
         </div>
+
+        <div class="pagination" style="display: flex; justify-content: center; align-items: center; gap: 0.75rem; padding: 1.25rem;">
+            {% if page > 1 %}
+            <a href="{{ url_for('history', page=1, search=search, mode=mode) }}" class="action-button action-button-secondary">« First</a>
+            <a href="{{ url_for('history', page=page-1, search=search, mode=mode) }}" class="action-button action-button-secondary">‹ Prev</a>
+            {% endif %}
+
+            <span style="color: var(--text-muted); font-size: 0.85rem;">Page {{ page }} of {{ total_pages }}</span>
+
+            {% if page < total_pages %}
+            <a href="{{ url_for('history', page=page+1, search=search, mode=mode) }}" class="action-button action-button-secondary">Next ›</a>
+            <a href="{{ url_for('history', page=total_pages, search=search, mode=mode) }}" class="action-button action-button-secondary">Last »</a>
+            {% endif %}
+        </div>
         {% else %}
         <div class="table-empty-state">
             <p class="table-empty-title">No history yet</p>
-            <p class="table-empty-text">Run a script to see it here</p>
+            <p class="table-empty-text">
+                {% if search %}
+                    No entries match "{{ search }}"
+                {% else %}
+                    Run a script or playbook to see it here
+                {% endif %}
+            </p>
         </div>
         {% endif %}
     </div>
@@ -95,47 +121,24 @@
         setTimeout(() => location.reload(), 5000);
     }
 
-    const searchInput = document.getElementById('jobSearch');
-    const tableRows = document.querySelectorAll('.data-table tbody tr');
+    window.setMode = function(mode) {
+        localStorage.setItem('netpac-mode', mode);
+        if (mode !== '{{ mode }}') {
+            const url = new URL(window.location.href);
+            url.searchParams.set('mode', mode);
+            url.searchParams.set('page', '1');
+            window.location.href = url.toString();
+        }
+    };
 
-    if (searchInput) {
-        searchInput.addEventListener('input', function() {
-            const searchTerm = this.value.toLowerCase().trim();
+    {% if search == "" and page == 1 %}
+    anime({
+        targets: '.data-table tbody tr:first-child',
+        backgroundColor: ['rgba(0,255,157,0.15)', 'rgba(0,0,0,0)'],
+        duration: 1500,
+        easing: 'easeOutQuad'
+    });
+    {% endif %}
 
-            tableRows.forEach(row => {
-                const jobId = row.cells[0].textContent.toLowerCase();
-                const script = row.cells[1].textContent.toLowerCase();
-                const target = row.cells[2].textContent.toLowerCase();
-                const status = row.cells[3].textContent.toLowerCase();
-                const started_at = row.cells[4].textContent.toLowerCase();
-
-                const match =
-                    jobId.includes(searchTerm) ||
-                    script.includes(searchTerm) ||
-                    target.includes(searchTerm) ||
-                    status.includes(searchTerm) ||
-                    started_at.includes(searchTerm);
-                    
-
-                row.style.display = match ? '' : 'none';
-            });
-
-            const visibleRows = Array.from(tableRows).filter(r => r.style.display !== 'none');
-            const tableBody = document.querySelector('.data-table tbody');
-            let noResultsRow = document.getElementById('noResultsRow');
-
-            if (visibleRows.length === 0 && searchTerm !== '') {
-                if (!noResultsRow) {
-                    noResultsRow = document.createElement('tr');
-                    noResultsRow.id = 'noResultsRow';
-                    noResultsRow.innerHTML =
-                        '<td colspan="7" style="padding:3rem;text-align:center;color:#6b7280;">No entries match your search</td>';
-                    tableBody.appendChild(noResultsRow);
-                }
-            } else if (noResultsRow) {
-                noResultsRow.remove();
-            }
-        });
-    }
 </script>
 {% endblock %}

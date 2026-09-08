@@ -16,7 +16,6 @@
             <p class="stat-number">{{ all_hosts }}</p>
         </div>
     </div>
-
     <div class="stat-card stat-card-groups">
         <div class="stat-content">
             <h3 class="stat-title">Total groups</h3>
@@ -25,16 +24,323 @@
     </div>
 </div>
 
-<div class="dashboard-markdown-block markdown-body">
-    {{ md | safe }}
+<div class="mode-python">
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Jobs — Last 7 Days</h3>
+            </div>
+            <div class="card-body" style="height: 220px;">
+                <canvas id="pythonJobsChart"></canvas>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Success Rate</h3>
+            </div>
+            <div class="card-body" style="display: flex; align-items: center; justify-content: center; height: 220px;">
+                <canvas id="pythonDonutChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Top 5 scripts</h3>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                {% if top_scripts %}
+                <table class="data-table">
+                    <tbody>
+                        {% for script in top_scripts %}
+                        <tr>
+                            <td style="color: var(--accent); font-size: 0.85rem;">{{ script[0] }}</td>
+                            <td style="text-align: right; color: var(--text-muted); font-size: 0.85rem;">{{ script[1] }} runs</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state"><p class="empty-text">No data yet</p></div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Last 5 failed scripts</h3>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                {% set python_failed = last_failed | selectattr('3', 'ne', 'ansible') | list %}
+                {% if python_failed %}
+                <table class="data-table">
+                    <tbody>
+                        {% for job in python_failed %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('history_detail', job_id=job[0]) }}" style="color: var(--danger); font-size: 0.85rem;">{{ job[1] }}</a>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">{{ job[2].strftime('%Y-%m-%d %H:%M') if job[2] else '-' }}</div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state"><p class="empty-text" style="color: var(--success);">No failed jobs</p></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <details class="content-card" style="margin-top: 1.5rem;">
+        <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+            <h3 class="card-title">Instructions</h3>
+            <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+        </summary>
+        <div class="card-body dashboard-markdown-block markdown-body" style="padding: 20px;">
+            {{ md_python | safe }}
+        </div>
+    </details>
+</div>
+
+<div class="mode-ansible">
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Playbook Jobs — Last 7 Days</h3>
+            </div>
+            <div class="card-body" style="height: 220px;">
+                <canvas id="ansibleJobsChart"></canvas>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Success rate</h3>
+            </div>
+            <div class="card-body" style="display: flex; align-items: center; justify-content: center; height: 220px;">
+                <canvas id="ansibleDonutChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 1.5rem;">
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Top 5 Playbooks</h3>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                {% if top_playbooks %}
+                <table class="data-table">
+                    <tbody>
+                        {% for pb in top_playbooks %}
+                        <tr>
+                            <td style="color: var(--accent); font-size: 0.85rem;">{{ pb[0] }}</td>
+                            <td style="text-align: right; color: var(--text-muted); font-size: 0.85rem;">{{ pb[1] }} runs</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state"><p class="empty-text">No data yet</p></div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="card-header">
+                <h3 class="card-title">Last 5 failed playbooks</h3>
+            </div>
+            <div class="card-body" style="padding: 0;">
+                {% set ansible_failed = last_failed | selectattr('3', 'equalto', 'ansible') | list %}
+                {% if ansible_failed %}
+                <table class="data-table">
+                    <tbody>
+                        {% for job in ansible_failed %}
+                        <tr>
+                            <td>
+                                <a href="{{ url_for('history_detail', job_id=job[0]) }}" style="color: var(--danger); font-size: 0.85rem;">{{ job[1] }}</a>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">{{ job[2].strftime('%Y-%m-%d %H:%M') if job[2] else '-' }}</div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state"><p class="empty-text" style="color: var(--success);">No failed playbooks</p></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <details class="content-card" style="margin-top: 1.5rem;">
+        <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
+            <h3 class="card-title">Instructions</h3>
+            <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+        </summary>
+        <div class="card-body dashboard-markdown-block markdown-body" style="padding: 20px;">
+            {{ md_ansible | safe }}
+        </div>
+    </details>
 </div>
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script>
-    document.querySelectorAll('pre code').forEach(block => {
-        block.removeAttribute('data-highlighted');
-        hljs.highlightElement(block);
+const days = {{ days | tojson }};
+const jobsPerDay = {{ jobs_per_day | tojson }};
+const stats = {{ stats | tojson }};
+
+const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00ff9d';
+const textMuted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#6b7fa8';
+const danger = getComputedStyle(document.documentElement).getPropertyValue('--danger').trim() || '#ef4444';
+const warning = getComputedStyle(document.documentElement).getPropertyValue('--warning').trim() || '#f59e0b';
+const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#1e2a3a';
+
+Chart.defaults.color = textMuted;
+Chart.defaults.borderColor = border;
+
+anime({
+    targets: '.stat-number',
+    innerHTML: (el) => [0, parseInt(el.innerHTML)],
+    round: 1,
+    duration: 1200,
+    easing: 'easeOutExpo'
+});
+
+const pythonCtx = document.getElementById('pythonJobsChart');
+if (pythonCtx) {
+    new Chart(pythonCtx, {
+        type: 'bar',
+        data: {
+            labels: days.map(d => d.slice(5)),
+            datasets: [{
+                label: 'Jobs',
+                data: days.map(d => jobsPerDay[d]?.python || 0),
+                backgroundColor: accent + '99',
+                borderColor: accent,
+                borderWidth: 1,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, ticks: { stepSize: 1 } }
+            }
+        }
     });
+}
+
+const pythonDonutCtx = document.getElementById('pythonDonutChart');
+if (pythonDonutCtx) {
+    const p = stats.python;
+    const total = p.completed + p.failed + p.timeout;
+    new Chart(pythonDonutCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Completed', 'Failed', 'Timeout'],
+            datasets: [{
+                data: [p.completed, p.failed, p.timeout],
+                backgroundColor: [accent + 'cc', danger + 'cc', warning + 'cc'],
+                borderColor: [accent, danger, warning],
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, padding: 16 } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const val = ctx.parsed;
+                            const pct = total > 0 ? Math.round(val / total * 100) : 0;
+                            return ` ${ctx.label}: ${val} (${pct}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+const ansibleCtx = document.getElementById('ansibleJobsChart');
+if (ansibleCtx) {
+    new Chart(ansibleCtx, {
+        type: 'bar',
+        data: {
+            labels: days.map(d => d.slice(5)),
+            datasets: [{
+                label: 'Playbook Jobs',
+                data: days.map(d => jobsPerDay[d]?.ansible || 0),
+                backgroundColor: accent + '99',
+                borderColor: accent,
+                borderWidth: 1,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, ticks: { stepSize: 1 } }
+            }
+        }
+    });
+}
+
+const ansibleDonutCtx = document.getElementById('ansibleDonutChart');
+if (ansibleDonutCtx) {
+    const a = stats.ansible;
+    const total = a.completed + a.failed + a.timeout;
+    new Chart(ansibleDonutCtx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Completed', 'Failed', 'Timeout'],
+            datasets: [{
+                data: [a.completed, a.failed, a.timeout],
+                backgroundColor: [accent + 'cc', danger + 'cc', warning + 'cc'],
+                borderColor: [accent, danger, warning],
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, padding: 16 } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const val = ctx.parsed;
+                            const pct = total > 0 ? Math.round(val / total * 100) : 0;
+                            return ` ${ctx.label}: ${val} (${pct}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+document.querySelectorAll('pre code').forEach(block => {
+    block.removeAttribute('data-highlighted');
+    hljs.highlightElement(block);
+});
 </script>
 {% endblock %}

@@ -45,7 +45,6 @@
     
     <div class="card-body">
         {% if entries %}
-            <!-- Normal list -->
             <ul class="script-list" id="scriptList">
                 {% for entry in entries %}
                 <li class="script-item">
@@ -68,7 +67,6 @@
                 {% endfor %}
             </ul>
 
-            <!-- Search list - recursiv -->
             {% if all_scripts is defined %}
             <ul class="script-list" id="allScriptList" style="display: none;">
                 {% for script in all_scripts %}

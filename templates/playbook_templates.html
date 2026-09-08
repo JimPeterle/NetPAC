@@ -1,0 +1,375 @@
+{% extends "base.html" %}
+
+{% block title %}Playbook Templates - NetPAC{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Playbook Templates</h1>
+        <p class="page-subtitle">Saved job templates for quick launch</p>
+    </div>
+    <div class="page-header-actions">
+        <button class="action-button action-button-primary" onclick="openModalAnimated('createModal')">
+            + New Template
+        </button>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="card-header">
+        <h3 class="card-title">Templates</h3>
+        <span class="card-badge">{{ templates|length }} Templates</span>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        {% if templates %}
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Playbook</th>
+                        <th>Target</th>
+                        <th>Secrets</th>
+                        <th>Created by</th>
+                        <th style="text-align: right; padding-right: 3rem;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in templates %}
+                    <tr>
+                        <td>
+                            <div style="font-weight: 600; color: var(--text-primary);">{{ t.name }}</div>
+                            {% if t.description %}
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">{{ t.description }}</div>
+                            {% endif %}
+                        </td>
+                        <td><code style="background: var(--bg-table-head); color: var(--accent); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem;">{{ t.playbook_path }}</code></td>
+                        <td>{{ t.target if t.target else '-' }}</td>
+                        <td>
+                            {% if t.secret_1 %}<div style="font-size: 0.8rem;">{{ t.secret_1 }}</div>{% endif %}
+                            {% if t.secret_2 %}<div style="font-size: 0.8rem;">{{ t.secret_2 }}</div>{% endif %}
+                            {% if t.secret_3 %}<div style="font-size: 0.8rem;">{{ t.secret_3 }}</div>{% endif %}
+                            {% if not t.secret_1 and not t.secret_2 and not t.secret_3 %}-{% endif %}
+                        </td>
+                        <td style="color: var(--text-muted); font-size: 0.85rem;">{{ t.created_by }}</td>
+                        <td style="text-align: right;">
+                            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                                <form method="POST" action="{{ url_for('launch_playbook_template', template_id=t.template_id) }}" style="margin: 0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="action-button action-button-success" style="font-size: 0.8rem; padding: 0.4rem 0.9rem;">
+                                        Launch
+                                    </button>
+                                </form>
+                                <button class="action-button action-button-secondary" style="font-size: 0.8rem; padding: 0.4rem 0.9rem;"
+                                        data-id="{{ t.template_id }}"
+                                        data-name="{{ t.name }}"
+                                        data-description="{{ t.description or '' }}"
+                                        data-playbook="{{ t.playbook_path }}"
+                                        data-target="{{ t.target or '' }}"
+                                        data-extravars="{{ t.extra_vars or '' }}"
+                                        data-secret1="{{ t.secret_1 or '' }}"
+                                        data-secret2="{{ t.secret_2 or '' }}"
+                                        data-secret3="{{ t.secret_3 or '' }}"
+                                        onclick="openEditModal(this)">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                </button>
+                                <button class="action-button action-button-danger" style="font-size: 0.8rem; padding: 0.4rem 0.9rem;"
+                                        onclick="openDeleteModal({{ t.template_id }}, '{{ t.name }}')">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <h3 class="empty-title">No templates yet</h3>
+            <p class="empty-text">Create a template to quickly launch Ansible Playbooks</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div id="createModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center; overflow-y: auto;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 600px; width: 90%; margin: 2rem auto; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">New Template</h2>
+        </div>
+        <form method="POST" action="{{ url_for('create_playbook_template') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+
+                <div class="form-group">
+                    <label class="form-label">Name *</label>
+                    <input type="text" name="name" class="form-input" placeholder="Deploy Config" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" class="form-input" placeholder="Optional description">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Playbook *</label>
+                    <div style="position: relative;">
+                        <input type="text" id="playbookSearch" class="form-input" placeholder="Search or select playbook..." autocomplete="off" readonly style="cursor: pointer;" onclick="togglePlaybookDropdown()">
+                        <input type="hidden" name="playbook_path" id="playbookPathHidden" required>
+                        <div id="playbookDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 200px; overflow-y: auto; box-shadow: var(--shadow-md);">
+                            <div style="padding: 8px; position: relative;">
+                                <svg style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                <input type="text" id="playbookFilter" class="form-input" placeholder="Search..." style="font-size: 0.8rem; padding: 6px 10px 6px 32px;" oninput="filterPlaybooks(this.value)" onclick="event.stopPropagation()">
+                            </div>
+                            <ul id="playbookList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
+                                {% for pb in playbooks %}
+                                <li onclick="selectPlaybook('{{ pb }}')"
+                                    style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
+                                    onmouseover="this.style.background='var(--accent-dim)'"
+                                    onmouseout="this.style.background=''"
+                                    data-value="{{ pb }}">
+                                    {{ pb }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Target</label>
+                    <input type="text" name="target" class="form-input" placeholder="Group or Hostname">
+                    <span class="form-hint">Leave empty if not needed</span>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Survey Variables (Extra Vars)</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">One variable per line — format: Key=Value</span>
+                    <textarea name="extra_vars" class="form-input" rows="4" placeholder="Version=12&#10;Env=prod" style="font-family: inherit; resize: vertical;"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Secrets</label>
+                    <select name="secret_1" class="form-input">
+                        <option value="">None</option>
+                        {% for s in secrets %}
+                        <option value="{{ s.name }}">{{ s.name }} ({{ s.username }})</option>
+                        {% endfor %}
+                    </select>
+                    <select name="secret_2" class="form-input" style="margin-top: 0.5rem;">
+                        <option value="">None</option>
+                        {% for s in secrets %}
+                        <option value="{{ s.name }}">{{ s.name }} ({{ s.username }})</option>
+                        {% endfor %}
+                    </select>
+                    <select name="secret_3" class="form-input" style="margin-top: 0.5rem;">
+                        <option value="">None</option>
+                        {% for s in secrets %}
+                        <option value="{{ s.name }}">{{ s.name }} ({{ s.username }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="document.getElementById('createModal').style.display='none'">Cancel</button>
+                <button type="submit" class="action-button action-button-primary">Create Template</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="deleteModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Delete Template</h2>
+        </div>
+        <div style="padding: 1.5rem;">
+            <p id="deleteMessage" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <p style="color: var(--danger); font-weight: 500; margin: 0;">This action cannot be undone!</p>
+        </div>
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeDeleteModal()">Cancel</button>
+            <form id="deleteForm" method="POST" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-button action-button-danger">Delete</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div id="editModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center; overflow-y: auto;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 600px; width: 90%; margin: 2rem auto; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Edit Template</h2>
+        </div>
+        <form id="editForm" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
+                <div class="form-group">
+                    <label class="form-label">Name *</label>
+                    <input type="text" name="name" id="editName" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" id="editDescription" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Playbook *</label>
+                    <div style="position: relative;">
+                        <input type="text" id="editPlaybookSearch" class="form-input" autocomplete="off" readonly style="cursor: pointer;" onclick="toggleEditPlaybookDropdown()">
+                        <input type="hidden" name="playbook_path" id="editPlaybookPathHidden" required>
+                        <div id="editPlaybookDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 200px; overflow-y: auto; box-shadow: var(--shadow-md);">
+                            <div style="padding: 8px; position: relative;">
+                                <svg style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                                <input type="text" id="editPlaybookFilter" class="form-input" placeholder="Search..." style="font-size: 0.8rem; padding: 6px 10px 6px 32px;" oninput="filterEditPlaybooks(this.value)" onclick="event.stopPropagation()">
+                            </div>
+                            <ul id="editPlaybookList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
+                                {% for pb in playbooks %}
+                                <li onclick="selectEditPlaybook('{{ pb }}')"
+                                    style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
+                                    onmouseover="this.style.background='var(--accent-dim)'"
+                                    onmouseout="this.style.background=''"
+                                    data-value="{{ pb }}">
+                                    {{ pb }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Target</label>
+                    <input type="text" name="target" id="editTarget" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Survey Variables</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">One variable per line — format: Key=Value</span>
+                    <textarea name="extra_vars" id="editExtraVars" class="form-input" rows="4" style="font-family: inherit; resize: vertical;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Secrets</label>
+                    <select name="secret_1" id="editSecret1" class="form-input">
+                        <option value="">None</option>
+                        {% for s in secrets %}
+                        <option value="{{ s.name }}">{{ s.name }} ({{ s.username }})</option>
+                        {% endfor %}
+                    </select>
+                    <select name="secret_2" id="editSecret2" class="form-input" style="margin-top: 0.5rem;">
+                        <option value="">None</option>
+                        {% for s in secrets %}
+                        <option value="{{ s.name }}">{{ s.name }} ({{ s.username }})</option>
+                        {% endfor %}
+                    </select>
+                    <select name="secret_3" id="editSecret3" class="form-input" style="margin-top: 0.5rem;">
+                        <option value="">None</option>
+                        {% for s in secrets %}
+                        <option value="{{ s.name }}">{{ s.name }} ({{ s.username }})</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="closeEditModal()">Cancel</button>
+                <button type="submit" class="action-button action-button-primary">Save Changes</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+
+function togglePlaybookDropdown() {
+    const dd = document.getElementById('playbookDropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    if (dd.style.display === 'block') {
+        document.getElementById('playbookFilter').focus();
+    }
+}
+
+function filterPlaybooks(value) {
+    const filter = value.toLowerCase();
+    document.querySelectorAll('#playbookList li').forEach(li => {
+        li.style.display = li.getAttribute('data-value').toLowerCase().includes(filter) ? '' : 'none';
+    });
+}
+
+function selectPlaybook(value) {
+    document.getElementById('playbookSearch').value = value;
+    document.getElementById('playbookPathHidden').value = value;
+    document.getElementById('playbookDropdown').style.display = 'none';
+}
+
+document.addEventListener('click', function(e) {
+    const dd = document.getElementById('playbookDropdown');
+    const search = document.getElementById('playbookSearch');
+    if (dd && !dd.contains(e.target) && e.target !== search) {
+        dd.style.display = 'none';
+    }
+});
+
+function openDeleteModal(templateId, name) {
+    document.getElementById('deleteMessage').textContent = `Do you really want to delete the template "${name}"?`;
+    const form = document.getElementById('deleteForm');
+    form.action = `/playbook_templates/delete/${templateId}`;
+    openModalAnimated('deleteModalOverlay');
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteModalOverlay').style.display = 'none';
+}
+
+document.getElementById('deleteModalOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeDeleteModal();
+});
+
+document.getElementById('createModal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+
+function openEditModal(btn) {
+    const d = btn.dataset;
+    document.getElementById('editForm').action = `/playbook_templates/edit/${d.id}`;
+    document.getElementById('editName').value = d.name;
+    document.getElementById('editDescription').value = d.description;
+    document.getElementById('editPlaybookSearch').value = d.playbook;
+    document.getElementById('editPlaybookPathHidden').value = d.playbook;
+    document.getElementById('editTarget').value = d.target;
+    document.getElementById('editExtraVars').value = d.extravars;
+    document.getElementById('editSecret1').value = d.secret1;
+    document.getElementById('editSecret2').value = d.secret2;
+    document.getElementById('editSecret3').value = d.secret3;
+    openModalAnimated('editModalOverlay');
+}
+
+function closeEditModal() {
+    document.getElementById('editModalOverlay').style.display = 'none';
+}
+
+document.getElementById('editModalOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeEditModal();
+});
+
+function toggleEditPlaybookDropdown() {
+    const dd = document.getElementById('editPlaybookDropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+    if (dd.style.display === 'block') document.getElementById('editPlaybookFilter').focus();
+}
+
+function filterEditPlaybooks(value) {
+    const filter = value.toLowerCase();
+    document.querySelectorAll('#editPlaybookList li').forEach(li => {
+        li.style.display = li.getAttribute('data-value').toLowerCase().includes(filter) ? '' : 'none';
+    });
+}
+
+function selectEditPlaybook(value) {
+    document.getElementById('editPlaybookSearch').value = value;
+    document.getElementById('editPlaybookPathHidden').value = value;
+    document.getElementById('editPlaybookDropdown').style.display = 'none';
+}
+</script>
+{% endblock %}

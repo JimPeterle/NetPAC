@@ -10,14 +10,14 @@
 <div class="page-header">
     <div class="page-header-content">
         <h1 class="page-title">Schedule</h1>
-        <p class="page-subtitle">Automated script execution</p>
+        <p class="page-subtitle">Automated script and playbook execution</p>
     </div>
     <div class="page-header-actions">
         <div class="search-container" style="position: relative;">
             <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" id="scheduleSearch" class="search-input" placeholder="Search schedules..." style="padding-left: 32px;">
         </div>
-        <button class="action-button action-button-primary" onclick="document.getElementById('addCronModal').style.display='flex'">
+        <button class="action-button action-button-primary" onclick="openModalAnimated('addCronModal')">
             <span>+ Add Schedule</span>
         </button>
     </div>
@@ -35,7 +35,8 @@
             <table class="data-table">
                 <thead>
                     <tr>
-                        <th>Script</th>
+                        <th>Type</th>
+                        <th>Script / Playbook</th>
                         <th>Schedule</th>
                         <th>Target</th>
                         <th>Credential</th>
@@ -46,7 +47,15 @@
                 </thead>
                 <tbody>
                     {% for job in jobs %}
+                    {% set jtype = job[10] if job|length > 10 and job[10] else 'python' %}
                     <tr>
+                        <td>
+                            {% if jtype == 'ansible' %}
+                            <span class="status-badge" style="background: var(--accent-dim); color: var(--accent);">Ansible</span>
+                            {% else %}
+                            <span class="status-badge" style="background: var(--bg-table-head); color: var(--text-muted);">Python</span>
+                            {% endif %}
+                        </td>
                         <td>{{ job[1] }}</td>
                         <td><code style="background: var(--bg-table-head); color: var(--accent); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem;">{{ job[7] }}</code></td>
                         <td>{{ job[3] if job[3] else '-' }}</td>
@@ -65,11 +74,16 @@
                         <td>
                             {% if job[4] %}
                                 {% set vars = job[4]|fromjson %}
-                                {% set vparts = [] %}
-                                {% if vars.variable1 %}{% set _ = vparts.append(vars.variable1) %}{% endif %}
-                                {% if vars.variable2 %}{% set _ = vparts.append(vars.variable2) %}{% endif %}
-                                {% if vars.variable3 %}{% set _ = vparts.append(vars.variable3) %}{% endif %}
-                                {{ vparts|join(', ') if vparts else '-' }}
+                                {% if jtype == 'ansible' %}
+                                    {% set evars = vars.extra_vars if vars.extra_vars else {} %}
+                                    {{ evars.items()|map('join', '=')|join(', ') if evars else '-' }}
+                                {% else %}
+                                    {% set vparts = [] %}
+                                    {% if vars.variable1 %}{% set _ = vparts.append(vars.variable1) %}{% endif %}
+                                    {% if vars.variable2 %}{% set _ = vparts.append(vars.variable2) %}{% endif %}
+                                    {% if vars.variable3 %}{% set _ = vparts.append(vars.variable3) %}{% endif %}
+                                    {{ vparts|join(', ') if vparts else '-' }}
+                                {% endif %}
                             {% else %}
                                 -
                             {% endif %}
@@ -123,40 +137,109 @@
         
         <form method="POST" action="{{ url_for('add_schedule') }}" class="modal-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            
+            <input type="hidden" name="job_type" id="jobTypeHidden" value="python">
+
             <div class="form-group">
-                <label class="form-label">Script *</label>
-                <div style="position: relative;">
-                    <input type="text" id="scriptSearch" class="form-input" placeholder="Search or select script..." autocomplete="off" readonly
-                        onclick="toggleScriptDropdown()" style="cursor: pointer;">
-                    <input type="hidden" name="script_name" id="scriptNameHidden" required>
-                    <div id="scriptDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 250px; overflow-y: auto; box-shadow: var(--shadow-md);">
-                        <div style="padding: 8px; position: relative;">
-                            <svg style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"/>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                            </svg>
-                            <input type="text" id="scriptFilter" class="form-input" placeholder="Search..." style="font-size: 0.8rem; padding: 6px 10px 6px 32px;"
-                                oninput="filterScripts(this.value)" onclick="event.stopPropagation()">
+                <label class="form-label">Job Type *</label>
+                <div style="display: flex; gap: 0.75rem;">
+                    <button type="button" class="action-button action-button-primary" id="typePythonBtn" onclick="switchJobType('python')">
+                        <span>Python Script</span>
+                    </button>
+                    <button type="button" class="action-button action-button-secondary" id="typeAnsibleBtn" onclick="switchJobType('ansible')">
+                        <span>Ansible Playbook</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="pythonFields">
+                <div class="form-group">
+                    <label class="form-label">Script *</label>
+                    <div style="position: relative;">
+                        <input type="text" id="scriptSearch" class="form-input" placeholder="Search or select script..." autocomplete="off" readonly
+                            onclick="toggleScriptDropdown()" style="cursor: pointer;">
+                        <input type="hidden" name="script_name_python" id="scriptNameHidden" required>
+                        <div id="scriptDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 250px; overflow-y: auto; box-shadow: var(--shadow-md);">
+                            <div style="padding: 8px; position: relative;">
+                                <svg style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"/>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                </svg>
+                                <input type="text" id="scriptFilter" class="form-input" placeholder="Search..." style="font-size: 0.8rem; padding: 6px 10px 6px 32px;"
+                                    oninput="filterScripts(this.value)" onclick="event.stopPropagation()">
+                            </div>
+                            <ul id="scriptList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
+                                {% for script in scripts %}
+                                <li onclick="selectScript('{{ script }}')"
+                                    style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
+                                    onmouseover="this.style.background='var(--accent-dim)'"
+                                    onmouseout="this.style.background=''"
+                                    data-value="{{ script }}">
+                                    {{ script }}
+                                </li>
+                                {% endfor %}
+                            </ul>
                         </div>
-                        <ul id="scriptList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
-                            {% for script in scripts %}
-                            <li onclick="selectScript('{{ script }}')"
-                                style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
-                                onmouseover="this.style.background='var(--accent-dim)'"
-                                onmouseout="this.style.background=''"
-                                data-value="{{ script }}">
-                                {{ script }}
-                            </li>
-                            {% endfor %}
-                        </ul>
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Variables</label>
+                    <div id="varTableBody"></div>
+                    <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Add variable
+                    </button>
+                    <p class="var-max-hint" id="varMaxHint">0 / 10</p>
+                </div>
+                <input type="hidden" name="varCount" id="varCountHidden" value="0">
+
+                <div class="form-group" style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;">
+                    <input type="checkbox" name="use_venv" id="useVenvSchedule" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
+                    <label for="useVenvSchedule" class="form-label" style="margin: 0; cursor: pointer;">Run in virtual environment (venv)</label>
+                </div>
+            </div>
+
+            <div id="ansibleFields" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Playbook *</label>
+                    <div style="position: relative;">
+                        <input type="text" id="playbookSearch" class="form-input" placeholder="Search or select playbook..." autocomplete="off" readonly
+                            onclick="togglePlaybookDropdown()" style="cursor: pointer;">
+                        <input type="hidden" name="script_name_ansible" id="playbookNameHidden">
+                        <div id="playbookDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 250px; overflow-y: auto; box-shadow: var(--shadow-md);">
+                            <div style="padding: 8px; position: relative;">
+                                <svg style="position: absolute; left: 16px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"/>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                </svg>
+                                <input type="text" id="playbookFilter" class="form-input" placeholder="Search..." style="font-size: 0.8rem; padding: 6px 10px 6px 32px;"
+                                    oninput="filterPlaybooks(this.value)" onclick="event.stopPropagation()">
+                            </div>
+                            <ul id="playbookList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
+                                {% for pb in playbooks %}
+                                <li onclick="selectPlaybook('{{ pb }}')"
+                                    style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
+                                    onmouseover="this.style.background='var(--accent-dim)'"
+                                    onmouseout="this.style.background=''"
+                                    data-value="{{ pb }}">
+                                    {{ pb }}
+                                </li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Extra Vars (Survey Variables)</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">One variable per line — format: Key=Value</span>
+                    <textarea name="extra_vars_raw" class="form-input" rows="4" placeholder="Version=12&#10;Env=prod" style="font-family: inherit; resize: vertical;"></textarea>
                 </div>
             </div>
 
             <div class="form-group">
-                <label class="form-label">Target (Group or Host)</label>
-                <input type="text" name="target" class="form-input" placeholder="Optional">
+                <label class="form-label">Target (Group or Host, comma-separated)</label>
+                <input type="text" name="target" class="form-input" placeholder="Optional — leave empty for local execution">
             </div>
 
             <div class="form-group">
@@ -224,18 +307,6 @@
                 </select>
             </div>
 
-            <div class="form-group">
-                <label class="form-label">Variables</label>
-                <div id="varTableBody"></div>
-                <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Add variable
-                </button>
-                <p class="var-max-hint" id="varMaxHint">0 / 3</p>
-            </div>
-
-            <input type="hidden" name="varCount" id="varCountHidden" value="0">
-
             <div class="modal-footer">
                 <button type="button" class="action-button action-button-secondary" onclick="document.getElementById('addCronModal').style.display='none'">
                     Cancel
@@ -286,7 +357,7 @@
     function confirmDelete(cronId, scriptName) {
         document.getElementById('deleteMessage').textContent = `Do you really want to delete the schedule "${scriptName}"?`;
         document.getElementById('deleteForm').action = `/schedule/delete/${cronId}`;
-        document.getElementById('deleteModalOverlay').style.display = 'flex';
+        openModalAnimated('deleteModalOverlay');
     }
 
     function closeDeleteModal() {
@@ -298,6 +369,30 @@
             closeDeleteModal();
         }
     });
+
+    function switchJobType(type) {
+        document.getElementById('jobTypeHidden').value = type;
+        const pyBtn = document.getElementById('typePythonBtn');
+        const ansBtn = document.getElementById('typeAnsibleBtn');
+        const pyFields = document.getElementById('pythonFields');
+        const ansFields = document.getElementById('ansibleFields');
+
+        if (type === 'python') {
+            pyFields.style.display = 'block';
+            ansFields.style.display = 'none';
+            pyBtn.classList.replace('action-button-secondary', 'action-button-primary');
+            ansBtn.classList.replace('action-button-primary', 'action-button-secondary');
+            document.getElementById('scriptNameHidden').required = true;
+            document.getElementById('playbookNameHidden').required = false;
+        } else {
+            pyFields.style.display = 'none';
+            ansFields.style.display = 'block';
+            ansBtn.classList.replace('action-button-secondary', 'action-button-primary');
+            pyBtn.classList.replace('action-button-primary', 'action-button-secondary');
+            document.getElementById('scriptNameHidden').required = false;
+            document.getElementById('playbookNameHidden').required = true;
+        }
+    }
 
     function toggleScheduleFields(value) {
         document.getElementById('timeFields').style.display = 'none';
@@ -314,7 +409,7 @@
         }
     }
 
-    const MAX_VARS = 3;
+    const MAX_VARS = 10;
     let varCount = 0;
 
     function updateHint() {
@@ -356,11 +451,11 @@
     }
 
 
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/flatpickr';
-    document.head.appendChild(script);
+    const flatpickrScript = document.createElement('script');
+    flatpickrScript.src = 'https://cdn.jsdelivr.net/npm/flatpickr';
+    document.head.appendChild(flatpickrScript);
 
-    script.onload = function() {
+    flatpickrScript.onload = function() {
         flatpickr("#timePicker", {
             enableTime: true,
             noCalendar: true,
@@ -377,11 +472,11 @@
     };
 
     function toggleScriptDropdown() {
-    const dd = document.getElementById('scriptDropdown');
-    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
-    if (dd.style.display === 'block') {
-        document.getElementById('scriptFilter').focus();
-    }
+        const dd = document.getElementById('scriptDropdown');
+        dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+        if (dd.style.display === 'block') {
+            document.getElementById('scriptFilter').focus();
+        }
     }
 
     function filterScripts(value) {
@@ -397,15 +492,62 @@
         document.getElementById('scriptDropdown').style.display = 'none';
     }
 
+    function togglePlaybookDropdown() {
+        const dd = document.getElementById('playbookDropdown');
+        dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+        if (dd.style.display === 'block') {
+            document.getElementById('playbookFilter').focus();
+        }
+    }
+
+    function filterPlaybooks(value) {
+        const filter = value.toLowerCase();
+        document.querySelectorAll('#playbookList li').forEach(li => {
+            li.style.display = li.getAttribute('data-value').toLowerCase().includes(filter) ? '' : 'none';
+        });
+    }
+
+    function selectPlaybook(value) {
+        document.getElementById('playbookSearch').value = value;
+        document.getElementById('playbookNameHidden').value = value;
+        document.getElementById('playbookDropdown').style.display = 'none';
+    }
+
     document.addEventListener('click', function(e) {
         const dd = document.getElementById('scriptDropdown');
         const search = document.getElementById('scriptSearch');
         if (dd && !dd.contains(e.target) && e.target !== search) {
             dd.style.display = 'none';
         }
+        const pdd = document.getElementById('playbookDropdown');
+        const psearch = document.getElementById('playbookSearch');
+        if (pdd && !pdd.contains(e.target) && e.target !== psearch) {
+            pdd.style.display = 'none';
+        }
     });
 
-    // Schedule Search
+    document.querySelector('#addCronModal form').addEventListener('submit', function(e) {
+        const jobType = document.getElementById('jobTypeHidden').value;
+        const finalName = jobType === 'ansible'
+            ? document.getElementById('playbookNameHidden').value
+            : document.getElementById('scriptNameHidden').value;
+
+        if (!finalName) {
+            e.preventDefault();
+            alert(jobType === 'ansible' ? 'Please select a playbook' : 'Please select a script');
+            return false;
+        }
+
+        let hidden = this.querySelector('input[name="script_name"]');
+        if (!hidden) {
+            hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'script_name';
+            this.appendChild(hidden);
+        }
+        hidden.value = finalName;
+    });
+
     const scheduleSearch = document.getElementById('scheduleSearch');
     const scheduleRows = document.querySelectorAll('.data-table tbody tr');
 
@@ -414,24 +556,10 @@
             const searchTerm = this.value.toLowerCase().trim();
 
             scheduleRows.forEach(row => {
-                const script   = row.cells[0] ? row.cells[0].textContent.toLowerCase() : '';
-                const schedule = row.cells[1] ? row.cells[1].textContent.toLowerCase() : '';
-                const target   = row.cells[2] ? row.cells[2].textContent.toLowerCase() : '';
-                const cred     = row.cells[3] ? row.cells[3].textContent.toLowerCase() : '';
-                const vars     = row.cells[4] ? row.cells[4].textContent.toLowerCase() : '';
-                const status   = row.cells[5] ? row.cells[5].textContent.toLowerCase() : '';
-
-                const match = script.includes(searchTerm) ||
-                              schedule.includes(searchTerm) ||
-                              target.includes(searchTerm) ||
-                              cred.includes(searchTerm) ||
-                              vars.includes(searchTerm) ||
-                              status.includes(searchTerm);
-
+                const match = row.innerText.toLowerCase().includes(searchTerm);
                 row.style.display = match ? '' : 'none';
             });
 
-            // No results row
             const tableBody = document.querySelector('.data-table tbody');
             let noResultsRow = document.getElementById('scheduleNoResultsRow');
             const visibleRows = Array.from(scheduleRows).filter(r => r.style.display !== 'none');
@@ -440,7 +568,7 @@
                 if (!noResultsRow) {
                     noResultsRow = document.createElement('tr');
                     noResultsRow.id = 'scheduleNoResultsRow';
-                    noResultsRow.innerHTML = '<td colspan="7" style="padding:3rem;text-align:center;color:var(--text-muted);">No schedules match your search</td>';
+                    noResultsRow.innerHTML = '<td colspan="8" style="padding:3rem;text-align:center;color:var(--text-muted);">No schedules match your search</td>';
                     tableBody.appendChild(noResultsRow);
                 }
             } else if (noResultsRow) {

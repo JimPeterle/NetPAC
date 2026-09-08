@@ -6,18 +6,33 @@
 <div class="page-header">
     <div class="page-header-content">
         <h1 class="page-title">{{ filename }}</h1>
-        <p class="page-subtitle">Script details and execution</p>
+        <p class="page-subtitle">Ansible Playbook</p>
     </div>
     <div class="page-header-actions">
-        <a href="{{ url_for('scripts') }}" class="action-button action-button-secondary">
+        
+        <button class="action-button action-button-primary" type="button" onclick="toggleLaunch()">
+            <span>Run Playbook</span>
+        </button>
+        
+        <form method="POST" action="{{ url_for('playbook_graph', subpath=filename) }}" style="display: inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="action-button action-button-secondary">
+                Graph
+            </button>
+        </form>
+
+        <form method="POST" action="{{ url_for('playbook_syntax_check', subpath=filename) }}" style="display: inline; margin: 0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="action-button action-button-secondary">
+                Syntax Check
+            </button>
+        </form>
+
+        <a href="{{ url_for('browse_playbooks') }}" class="action-button action-button-secondary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
             <span>Back</span>
         </a>
-        {% if filename.endswith('.py') %}
-        <button class="action-button action-button-primary" type="button" onclick="toggleLaunch()">
-            <span>Launch script</span>
-        </button>
-        {% endif %}
+        
     </div>
 </div>
 
@@ -26,19 +41,18 @@
         <div id="viewMode">
             <div class="code-container">
                 <pre class="line-numbers">{% for line in content.split('\n') %}{{ loop.index }}
-{% endfor %}</pre><pre class="code-content"><code class="language-python">{{ content | safe }}</code></pre>
+{% endfor %}</pre><pre class="code-content"><code class="language-yaml">{{ content | safe }}</code></pre>
             </div>
         </div>
     </div>
 </div>
 
-{% if filename.endswith('.py') %}
 <div id="launchPanel" class="launch-panel">
     <div class="launch-panel-header">
-        <h3 class="launch-panel-title">Launch script</h3>
+        <h3 class="launch-panel-title">Run Playbook</h3>
     </div>
-    
-    <form method="POST" action="{{ url_for('run_script', subpath=filename) }}" class="launch-form" id="scriptForm">
+
+    <form method="POST" action="{{ url_for('run_playbook', subpath=filename) }}" class="launch-form" id="playbookForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
         <div class="top-row">
@@ -87,43 +101,23 @@
         </div>
 
         <div class="form-group">
-            <label class="form-label">Variables</label>
-            <div id="varTableBody"></div>
-            <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Add variable
-            </button>
-            <p class="var-max-hint" id="varMaxHint">0 / 3</p>
-        </div>
-
-        <input type="hidden" name="varCount" id="varCountHidden" value="0">
-
-        <div class="form-group" style="display: flex; align-items: center; gap: 0.75rem;">
-            <input type="checkbox" name="use_venv" id="useVenv" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
-            <label for="useVenv" class="form-label" style="margin: 0; cursor: pointer;">Run in virtual environment (venv)</label>
+            <label class="form-label">Survey Variables (Extra Vars)</label>
+            <span class="form-hint" style="margin-bottom: 8px; display: block;">One variable per line — format: Key=Value</span>
+            <textarea name="extra_vars_raw" class="form-input" rows="6" placeholder="Version=12&#10;Env=prod&#10;Host=192.168.1.1" style="font-family: inherit; resize: vertical;"></textarea>
         </div>
 
         <div class="form-actions">
             <button type="button" class="action-button action-button-secondary" onclick="toggleLaunch()">Cancel</button>
             <button type="submit" class="action-button action-button-success">
-                <span>Run script</span>
+                <span>Run Playbook</span>
             </button>
         </div>
     </form>
 </div>
-{% endif %}
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-
-{% if filename.endswith('.py') %}
 <script>
-
-const MAX_VARS = 10;
-let varCount = 0;
-
 function toggleLaunch() {
     const panel = document.getElementById('launchPanel');
     if (panel) panel.classList.toggle('open');
@@ -154,45 +148,8 @@ function toggleTarget(needsTarget) {
     }
 }
 
-function updateHint() {
-    document.getElementById('varMaxHint').textContent = `${varCount} / ${MAX_VARS}`;
-    document.getElementById('varAddBtn').style.display = varCount >= MAX_VARS ? 'none' : 'flex';
-    document.getElementById('varCountHidden').value = varCount;
-}
 
-function addVariable() {
-    if (varCount >= MAX_VARS) return;
-    varCount++;
-    const tbody = document.getElementById('varTableBody');
-    const row = document.createElement('div');
-    row.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;';
-    row.innerHTML = `
-        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; width: 20px; text-align: center;">${varCount}</span>
-        <input type="text" name="variable${varCount}" data-field="value" placeholder="var" style="flex: 1; padding: 0.45rem 0.6rem; font-size: 0.875rem; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box;">
-        <button type="button" onclick="removeVariable(this)" style="background: none; border: none; cursor: pointer; color: var(--text-muted);">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-    `;
-    tbody.appendChild(row);
-    updateHint();
-}
-
-function removeVariable(btn) {
-    btn.closest('div').remove();
-    rebuildNames();
-}
-
-function rebuildNames() {
-    const rows = document.querySelectorAll('#varTableBody > div');
-    rows.forEach((row, i) => {
-        row.querySelector('span').textContent = i + 1;
-        row.querySelector('input[data-field="value"]').name = `variable${i + 1}`;
-    });
-    varCount = rows.length;
-    updateHint();
-}
-
-document.getElementById('scriptForm').addEventListener('submit', function(e) {
+document.getElementById('playbookForm').addEventListener('submit', function(e) {
     const targetRequired = document.getElementById('targetRequired');
     const targetError    = document.getElementById('targetError');
 
@@ -203,14 +160,5 @@ document.getElementById('scriptForm').addEventListener('submit', function(e) {
         return false;
     }
 });
-
-document.addEventListener('DOMContentLoaded', function() {
-    if (typeof hljs === 'undefined') return;
-    document.querySelectorAll('pre code').forEach((block) => {
-        hljs.highlightElement(block);
-    });
-});
-
 </script>
-{% endif %}
 {% endblock %}

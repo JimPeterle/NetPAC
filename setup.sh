@@ -65,11 +65,32 @@ load_dotenv "$APP_DIR/secret.env"
 
 PATHCERT="${PATHCERT}"
 PATHPRIVATEKEY="${PATHPRIVATEKEY}"
-HOSTNAME="${HOSTNAME}"
+DOMAIN="${DOMAIN}"
 WORKER="${WORKER}"
 
 # ===================================
-# 1. CHECK PREREQUISITES
+# CHECK USER INPUT
+# ===================================
+
+if [ -z "$HOSTNAME" ]; then 
+    print_error "DOMAIN is not set"
+    exit 1
+fi
+
+if [ -z "$PATHCERT" ]; then
+    print_error "PATHCERT is not set"
+    exit 1
+fi
+
+if [ -z "$PATHPRIVATKEY" ]; then
+    print_error "PATHPRIVATKEY is not set"
+    exit 1
+fi
+
+
+
+# ===================================
+# CHECK PREREQUISITES
 # ===================================
 
 echo -e "${YELLOW}Checking prerequisites...${NC}"
@@ -87,8 +108,8 @@ if [ ! -f "netpac.py" ]; then
 fi
 
 if ! command -v python3 &> /dev/null; then
-    print_error "Python 3 not found!"
-    echo "Install with: sudo apt install python3"
+    print_error "Python 3 not found! It will be installed now"
+    sudo apt install python3
     exit 1
 fi
 
@@ -96,7 +117,7 @@ print_status "Python detected: $(python3 --version)"
 print_status "Working directory: $APP_DIR"
 
 # ===================================
-# 2. CREATE LOG DIRECTORY
+# CREATE LOG DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking log directory...${NC}"
@@ -120,7 +141,7 @@ fi
 print_status "Finish all for logs directory"
 
 # ===================================
-# 3. CREATE SCRIPT DIRECTORY
+# CREATE SCRIPT DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking script directory...${NC}"
@@ -128,11 +149,6 @@ echo -e "${YELLOW}Checking script directory...${NC}"
 if [ ! -d "/var/lib/netpac/scripts" ]; then
     sudo mkdir -p /var/lib/netpac/scripts
     print_status "Created Script directory"
-fi
-
-if [ ! -d "/var/lib/netpac/scripts/git" ]; then
-    sudo mkdir -p /var/lib/netpac/scripts/git
-    print_status "Created script folder for git scripts"
 fi
 
 if [ ! -d "/var/lib/netpac/scripts/local" ]; then
@@ -154,7 +170,46 @@ fi
 print_status "Finish all for script directory"
 
 # ===================================
-# 4. CHECK GIT REPOSITORY
+# CREATE PLAYBOOK DIRECTORY
+# ===================================
+
+echo -e "${YELLOW}Checking playbook directory...${NC}"
+
+if [ ! -d "/var/lib/netpac/playbooks" ]; then
+    sudo mkdir -p /var/lib/netpac/playbooks
+    print_status "Created playbooks directory"
+fi
+
+if [ ! -d "/var/lib/netpac/playbooks/local" ]; then
+    sudo mkdir -p /var/lib/netpac/playbooks/local
+    print_status "Created playbooks/local directory"
+fi
+
+sudo chown -R netpac:netpacscript /var/lib/netpac/playbooks
+sudo chmod -R 770 /var/lib/netpac/playbooks
+
+print_status "Finish all for playbooks directory"
+
+# ===================================
+# CREATE GIT DIRECTORY
+# ===================================
+
+echo -e "${YELLOW}Checking git directory...${NC}"
+
+if [ ! -d "/var/lib/netpac/git" ]; then
+    sudo mkdir -p /var/lib/netpac/git
+    sudo chown netpac:netpacscript /var/lib/netpac/git
+    sudo chmod 770 /var/lib/netpac/git
+    print_status "Created folder for git scripts"
+fi
+
+sudo chown -R netpac:netpacscript /var/lib/netpac/git
+sudo chmod -R 770 /var/lib/netpac/git
+
+print_status "Finish all for git directory"
+
+# ===================================
+# CHECK GIT REPOSITORY
 # ===================================
 
 echo ""
@@ -169,11 +224,26 @@ else
 fi
 
 # ===================================
-# 6. INSTALL DEPENDENCIES
+# Backup DB
+# ===================================
+
+sudo -u netpac tee $APP_DIR/db_secrets.cnf > /dev/null << EOF
+[client]
+user=${DB_USER}
+password=${DB_PW}
+host=${DB_IP}
+port=${DB_PORT}
+EOF
+
+sudo chmod 600 $APP_DIR/db_secrets.cnf
+sudo chown netpac:netpac $APP_DIR/db_secrets.cnf
+
+# ===================================
+# INSTALL DEPENDENCIES
 # ===================================
 
 echo ""
-echo -e "${YELLOW}Install the required packages${NC}"
+echo -e "${YELLOW}Install the required packages for Python${NC}"
 
 sudo apt update
 sudo apt install python3-flask -y
@@ -192,11 +262,88 @@ sudo apt install python3-qrcode -y
 sudo apt install python3-pil -y
 sudo apt install python3-apscheduler -y
 sudo apt install python3-sqlalchemy -y
+sudo apt install python3-venv -y
+
+echo ""
+echo -e "${YELLOW}Install the required packages for Python${NC}"
+
+sudo apt install ansible -y
 
 echo "${YELLOW}Finished installing${NC}"
 
 # ===================================
-# 7. CREATE GUNICORN CONFIG
+# PYTHON VENV
+# ===================================
+echo -e "${YELLOW}Creating Python virtual environment...${NC}"
+
+if [ ! -d "$APP_DIR/venv" ]; then
+    python3 -m venv "$APP_DIR/venv"
+    print_status "Virtual environment created at $APP_DIR/venv"
+else
+    print_status "Virtual environment already exists"
+fi
+
+sudo chown -R netpac:netpac "$APP_DIR/venv"
+
+# ===================================
+# CREATE GRAPH FOLDER
+# ===================================
+
+if [ ! -d "/var/lib/netpac/graphs" ]; then
+    sudo mkdir -p /var/lib/netpac/graphs
+    sudo chown netpac:netpacscript /var/lib/netpac/graphs
+    sudo chmod 770 /var/lib/netpac/graphs
+    print_status "Created graphs directory"
+fi
+
+# ===================================
+# GRAPHVIZ (optional)
+# ===================================
+GRAPHVIZ_AVAILABLE=false
+
+if command -v dot &> /dev/null; then
+    print_status "graphviz already installed"
+    GRAPHVIZ_AVAILABLE=true
+else
+    read -p "Install graphviz with apt(required for Playbook Graph feature)? (y/n) " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        sudo apt install graphviz -y
+        print_status "graphviz installed"
+        GRAPHVIZ_AVAILABLE=true
+    else
+        print_warning "graphviz skipped — install later with: sudo apt install graphviz -y"
+        print_warning "ansible-playbook-grapher will be skipped too"
+    fi
+fi
+
+# ===================================
+# ANSIBLE PLAYBOOK GRAPHER (optional)
+# ===================================
+if [ "$GRAPHVIZ_AVAILABLE" = true ]; then
+    if command -v ansible-playbook-grapher &> /dev/null; then
+        print_status "ansible-playbook-grapher already installed"
+    else
+        read -p "Install ansible-playbook-grapher with pip inside venv? (y/n) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            source $APP_DIR/venv/bin/activate
+            pip install ansible-playbook-grapher
+            print_status "ansible-playbook-grapher installed in venv"
+            deactivate
+        else
+            echo "..................................................."
+            print_warning "ansible-playbook-grapher skipped — install later with:"
+            print_warning "source $APP_DIR/venv/bin/activate"
+            print_warning "pip install ansible-playbook-grapher"
+            print_warning "or Web-Interface -> Python -> Environment"
+            echo "..................................................."
+        fi
+    fi
+fi
+
+# ===================================
+# CREATE GUNICORN CONFIG
 # ===================================
 
 echo ""
@@ -233,7 +380,7 @@ EOF
 print_status "Gunicorn configuration created"
 
 # ===================================
-# 8. CREATE SYSTEMD SERVICE
+# CREATE SYSTEMD SERVICE
 # ===================================
 
 echo ""
@@ -242,14 +389,14 @@ echo -e "${YELLOW}Creating systemd service...${NC}"
 sudo tee /etc/systemd/system/netpac.service > /dev/null << EOF
 [Unit]
 Description=NetPAC Application (Gunicorn)
-After=network.target
+After=network.target mariadb.service
 
 [Service]
 Type=notify
 User=$APP_USER
 Group=$APP_GROUP
 WorkingDirectory=$APP_DIR
-Environment="PATH=$APP_DIR"
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$APP_DIR
 
 ExecStart=/usr/bin/python3 -m gunicorn -c $APP_DIR/gunicorn_config.py netpac:app
 
@@ -265,8 +412,28 @@ EOF
 
 print_status "Systemd service created"
 
+echo ""
+echo -e "${YELLOW}Creating systemd service for scheduler...${NC}"
+
+sudo tee /etc/systemd/system/netpac-scheduler.service > /dev/null << EOF
+[Unit]
+Description=NetPAC Scheduler
+After=network.target mariadb.service
+
+[Service]
+User=netpac
+WorkingDirectory=/home/netpac/bin/NetPAC
+ExecStart=/usr/bin/python3 /home/netpac/bin/NetPAC/netpac_scheduler.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+print_status "Systemd service created for scheduler"
+
 # ===================================
-# 9. INSTALL NGINX (IF REQUIRED)
+# INSTALL NGINX (IF REQUIRED)
 # ===================================
 
 echo ""
@@ -289,7 +456,7 @@ else
 fi
 
 # ===================================
-# 10. NGINX permission for /home/netpac
+# NGINX permission for /home/netpac
 # ===================================
 
 echo ""
@@ -308,7 +475,7 @@ fi
 
 
 # ===================================
-# 11. CREATE NGINX CONFIG
+# CREATE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -333,7 +500,7 @@ server {
 
     # SSL certificates
     ssl_certificate $PATHCERT;
-    ssl_certificate_key $PATHPRIVATEKEY;
+    ssl_certificate_key $PATHPRIVATKEY;
 
     # SSL configuration
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -383,7 +550,7 @@ EOF
 print_status "Nginx configuration created"
 
 # ===================================
-# 12. ENABLE NGINX CONFIG
+# ENABLE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -410,7 +577,7 @@ else
 fi
 
 # ===================================
-# 13. START SERVICES
+# START SERVICES
 # ===================================
 
 echo ""
@@ -438,7 +605,7 @@ else
 fi
 
 # ===================================
-# 14. SECRET.ENV PERMISSIONS
+# SECRET.ENV PERMISSIONS
 # ===================================
 
 echo ""
@@ -452,7 +619,7 @@ else
 fi
 
 # ===================================
-# 15. SUMMARY
+# SUMMARY
 # ===================================
 
 echo ""

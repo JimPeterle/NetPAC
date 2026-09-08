@@ -1,6 +1,11 @@
-# Instructions
+## Script directory
+Store your local Python scripts here:
 
-The scripts should be stored here: /var/lib/netpac/script
+**/var/lib/netpac/scripts/local**
+
+Remote Scripts over git, they will be stored here. Please don't put here any local Scripts:
+
+**/var/lib/netpac/git**
 
 ## Inventory
 

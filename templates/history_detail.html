@@ -9,7 +9,7 @@
     </div>
     <div class="page-header-actions">
         <a href="{{ url_for('history') }}" class="action-button action-button-secondary">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            <span class="button-icon">←</span>
             <span>Back to History</span>
         </a>
         {% if job.status == 'running' %}
@@ -17,28 +17,69 @@
             <span>Refresh</span>
         </button>
         {% endif %}
-        {% if job.status == 'completed' %}
-        <a href="{{ url_for('export_history_txt', job_id=job.job_id) }}" class="action-button action-button-danger">
-            <span>Output export</span>
-        </a>
-        {% endif %}
     </div>
 </div>
 
-<div class="content-card">
+<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border);">
+    <button type="button" id="tabBtnOutput" class="action-button action-button-primary" style="border-radius: 8px 8px 0 0; border-bottom: none;" onclick="switchTab('output')">
+        Output
+    </button>
+    <button type="button" id="tabBtnDetails" class="action-button action-button-secondary" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: 0.6;" onclick="switchTab('details')">
+        Details
+    </button>
+</div>
+
+<div id="tabOutput" class="content-card">
+    <div class="card-header">
+        <h3 class="card-title">{{ 'Playbook Output' if job.job_type == 'ansible' else 'Script Output' }}</h3>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <span id="statusBadge">
+                {% if job.status == 'running' %}
+                    <span class="status-badge status-running">Running</span>
+                {% elif job.status == 'completed' %}
+                    <span class="status-badge status-success">✓ Completed</span>
+                {% elif job.status == 'failed' %}
+                    <span class="status-badge status-error">✗ Failed</span>
+                {% elif job.status == 'timeout' %}
+                    <span class="status-badge status-warning">⏱ Timeout</span>
+                {% endif %}
+            </span>
+            {% if job.status in ['completed', 'failed'] %}
+            <a href="{{ url_for('export_history_txt', job_id=job.job_id) }}" class="action-button action-button-danger" style="font-size: 0.8rem; padding: 0.4rem 0.9rem;">
+                Output export
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="card-body" style="padding: 0;">
+        <div class="script-code-viewer">
+            <pre id="liveOutputPre" style="{% if not job.output %}display:none;{% endif %}"><code id="liveOutputCode">{{ job.output or '' }}</code></pre>
+
+            <div id="noOutputPlaceholder" style="{% if job.output %}display:none;{% endif %} padding: 3rem; text-align: center; color: #6b7280;">
+                {% if job.status == 'running' %}
+                <p style="font-size: 1.125rem; margin-bottom: 0.5rem; font-weight: 500;">{{ 'Playbook is running...' if job.job_type == 'ansible' else 'Script is running...' }}</p>
+                <p style="font-size: 0.875rem;">Output will appear here shortly</p>
+                {% else %}
+                <p style="font-size: 1.125rem; margin-bottom: 0.5rem;">No output available</p>
+                {% endif %}
+            </div>
+
+            {% if job.status == 'running' %}
+            <div id="liveIndicator" style="padding: 1rem; text-align: center; color: #6b7280; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                <span id="liveIndicatorDot" style="width: 8px; height: 8px; border-radius: 50%; background: var(--accent); display: inline-block;"></span>
+                <em>Live output — refreshing...</em>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div id="tabDetails" class="content-card" style="display: none;">
     <div class="card-header">
         <h3 class="card-title">Execution Information</h3>
-        {% if job.status == 'running' %}
-            <span class="status-badge status-running">Running</span>
-        {% elif job.status == 'completed' %}
-            <span class="status-badge status-success">✓ Completed</span>
-        {% elif job.status == 'failed' %}
-            <span class="status-badge status-error">✗ Failed</span>
-        {% elif job.status == 'timeout' %}
-            <span class="status-badge status-warning"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> Timeout</span>
-        {% endif %}
     </div>
-    
+
     <div class="card-body">
         <div class="job-info-grid">
             <div class="job-info-row">
@@ -47,7 +88,7 @@
                     <span class="job-info-value">#{{ job.job_id }}</span>
                 </div>
                 <div class="job-info-col">
-                    <span class="job-info-label">Script</span>
+                    <span class="job-info-label">{{ 'Playbook' if job.job_type == 'ansible' else 'Script' }}</span>
                     <span class="job-info-value">{{ job.script_name }}</span>
                 </div>
                 <div class="job-info-col">
@@ -97,18 +138,28 @@
                 <div class="job-info-col">
                     <span class="job-info-label">Variables</span>
                     <span class="job-info-value job-info-variables">
-                        {% if job.variables and job.variables.varCount != '0' %}
-                            {% if job.variables.variable1 %}
-                            <div><span class="var-label">Var 1:</span> {{ job.variables.variable1 }}</div>
-                            {% endif %}
-                            {% if job.variables.variable2 %}
-                            <div><span class="var-label">Var 2:</span> {{ job.variables.variable2 }}</div>
-                            {% endif %}
-                            {% if job.variables.variable3 %}
-                            <div><span class="var-label">Var 3:</span> {{ job.variables.variable3 }}</div>
+                        {% if job.job_type == 'ansible' %}
+                            {% if job.variables and job.variables.extra_vars %}
+                                {% for key, value in job.variables.extra_vars.items() %}
+                                <div><span class="var-label">{{ key }}={{ value }}</span></div>
+                                {% endfor %}
+                            {% else %}
+                                <div><span class="var-label">No variables defined</span></div>
                             {% endif %}
                         {% else %}
-                            <div><span class="var-label">No variables defined</span></div>
+                            {% if job.variables and job.variables.varCount != '0' %}
+                                {% if job.variables.variable1 %}
+                                <div><span class="var-label">Var 1:</span> {{ job.variables.variable1 }}</div>
+                                {% endif %}
+                                {% if job.variables.variable2 %}
+                                <div><span class="var-label">Var 2:</span> {{ job.variables.variable2 }}</div>
+                                {% endif %}
+                                {% if job.variables.variable3 %}
+                                <div><span class="var-label">Var 3:</span> {{ job.variables.variable3 }}</div>
+                                {% endif %}
+                            {% else %}
+                                <div><span class="var-label">No variables defined</span></div>
+                            {% endif %}
                         {% endif %}
                     </span>
                 </div>
@@ -134,34 +185,74 @@
     </div>
 </div>
 
-<div class="content-card">
-    <div class="card-header">
-        <h3 class="card-title">Script Output</h3>
-    </div>
-    
-    <div class="card-body" style="padding: 0;">
-        <div class="script-code-viewer">
-            {% if job.output %}
-            <pre><code>{{ job.output }}</code></pre>
-            {% elif job.status == 'running' %}
-            <div style="padding: 3rem; text-align: center; color: var(--text-muted);">
-                <p style="font-size: 1.125rem; margin-bottom: 0.5rem; font-weight: 500;">Script is running...</p>
-                <p style="font-size: 0.875rem;">Output will appear here when available</p>
-            </div>
-            {% else %}
-            <div style="padding: 3rem; text-align: center; color: var(--text-muted);">
-                <p style="font-size: 1.125rem; margin-bottom: 0.5rem;">No output available</p>
-            </div>
-            {% endif %}
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
+    function switchTab(tab) {
+        const tabs = { output: 'tabOutput', details: 'tabDetails' };
+
+        Object.entries(tabs).forEach(([key, id]) => {
+            const el = document.getElementById(id);
+            if (key === tab) {
+                el.style.display = 'block';
+                anime({
+                    targets: el,
+                    opacity: [0, 1],
+                    translateY: [8, 0],
+                    duration: 250,
+                    easing: 'easeOutQuad'
+                });
+            } else {
+                el.style.display = 'none';
+            }
+        });
+
+        document.getElementById('tabBtnOutput').classList.toggle('action-button-primary', tab === 'output');
+        document.getElementById('tabBtnOutput').classList.toggle('action-button-secondary', tab !== 'output');
+        document.getElementById('tabBtnOutput').style.opacity = tab === 'output' ? '1' : '0.6';
+        document.getElementById('tabBtnDetails').classList.toggle('action-button-primary', tab === 'details');
+        document.getElementById('tabBtnDetails').classList.toggle('action-button-secondary', tab !== 'details');
+        document.getElementById('tabBtnDetails').style.opacity = tab === 'details' ? '1' : '0.6';
+    }
+
     {% if job.status == 'running' %}
-    setTimeout(() => location.reload(), 3000);
+    function pollJobStatus() {
+        fetch("{{ url_for('history_job_status', job_id=job.job_id) }}")
+            .then(r => r.json())
+            .then(data => {
+                if (data.output) {
+                    document.getElementById('liveOutputCode').textContent = data.output;
+                    document.getElementById('liveOutputPre').style.display = '';
+                    document.getElementById('noOutputPlaceholder').style.display = 'none';
+                }
+                if (data.finished) {
+                    anime({
+                        targets: '#statusBadge',
+                        scale: [1, 1.15, 1],
+                        duration: 500,
+                        easing: 'easeInOutQuad',
+                        complete: () => location.reload()
+                    });
+                } else {
+                    setTimeout(pollJobStatus, 2000);
+                }
+            })
+            .catch(() => setTimeout(pollJobStatus, 3000));
+    }
+    pollJobStatus();
+
+
+    anime({
+        targets: '#liveIndicatorDot',
+        scale: [1, 1.4],
+        opacity: [1, 0.4],
+        duration: 900,
+        direction: 'alternate',
+        loop: true,
+        easing: 'easeInOutSine'
+    });
     {% endif %}
+
 </script>
 {% endblock %}

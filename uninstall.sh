@@ -67,7 +67,7 @@ confirm() {
 }
 
 # ===================================
-# 1. STOP SERVICES
+# STOP SERVICES
 # ===================================
 
 echo -e "${YELLOW}Step 1: Stop services${NC}"
@@ -89,7 +89,7 @@ else
 fi
 
 # ===================================
-# 2. REMOVE SYSTEMD SERVICE
+# REMOVE SYSTEMD SERVICE
 # ===================================
 
 echo ""
@@ -114,7 +114,7 @@ else
 fi
 
 # ===================================
-# 3. REMOVE NGINX CONFIG
+# REMOVE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -145,13 +145,13 @@ else
 fi
 
 # ===================================
-# 4. REMOVE SSL CERTIFICATES
+# REMOVE SSL CERTIFICATES
 # ===================================
 
 echo ""
 echo -e "${YELLOW}Step 4: Remove SSL certificates${NC}"
 
-if confirm "Remove SSL certificates ($PATHCERT and $PATHPRIVATEKEY)?"; then
+if confirm "Remove SSL certificates ($PATHCERT and $PATHPRIVATKEY)?"; then
     if [ -f "$PATHCERT" ]; then
         sudo rm "$PATHCERT"
         print_status "Certificate removed: $PATHCERT"
@@ -170,7 +170,7 @@ else
 fi
 
 # ===================================
-# 5. REMOVE LOG DIRECTORY
+# REMOVE LOG DIRECTORY
 # ===================================
 
 echo ""
@@ -189,16 +189,16 @@ if confirm "Remove log directory (/var/log/netpac)?"; then
 fi
 
 # ===================================
-# 6. REMOVE SCRIPT DIRECTORY
+# REMOVE PLAYBOOK/GIT/SCRIPT DIRECTORY
 # ===================================
 
 echo ""
-echo -e "${YELLOW}Step 6: Remove script directory${NC}"
+echo -e "${YELLOW}Step 6: Remove playbook/git/script directory${NC}"
 
-if confirm "Remove script directory (/var/lib/netpac/scripts)?"; then
+if confirm "Remove script directory (/var/lib/netpac/*)?"; then
     if [ -d "/var/lib/netpac" ]; then
         sudo rm -rf /var/lib/netpac
-        print_status "Script directory removed"
+        print_status "All netpac directorys removed"
     fi
 
     if getent group netpacscript > /dev/null; then
@@ -208,7 +208,7 @@ if confirm "Remove script directory (/var/lib/netpac/scripts)?"; then
 fi
 
 # ===================================
-# 7. REMOVE GUNICORN CONFIG
+# REMOVE GUNICORN CONFIG
 # ===================================
 
 echo ""
@@ -226,7 +226,7 @@ else
 fi
 
 # ===================================
-# 8. REMOVE PYTHON PACKAGES
+# REMOVE PYTHON PACKAGES
 # ===================================
 
 echo ""

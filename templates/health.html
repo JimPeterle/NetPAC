@@ -46,9 +46,12 @@
                         <td>
                             {% if name == 'mariadb' %}MariaDB
                             {% elif name == 'sql-size' %}SQL-Database size
+                            {% elif name == 'python' %}Python
                             {% elif name == 'scheduler' %}APScheduler
                             {% elif name == 'scripts_dir' %}Scripts Directory
                             {% elif name == 'encryption' %}Encryption
+                            {% elif name == 'venv' %}Python venv
+                            {% elif name == 'ansible_galaxy' %}Ansible Galaxy
                             {% else %}{{ name }}
                             {% endif %}
                         </td>
@@ -60,8 +63,16 @@
                             {% endif %}
                         </td>
                         <td style="color: var(--text-muted); font-size: 0.875rem;">
-                            {% if name == 'scheduler' and check.status == 'ok' %}
-                                {{ check.jobs }} active jobs
+                            {% if name == 'mariadb' and check.status == 'ok' %}
+                                {{ check.version }}
+                            {% elif name == 'python' and check.status == 'ok'%}
+                                {{ check.version }}
+                            {% elif name == 'scheduler' and check.status == 'ok' %}
+                                {{ check.jobs }}
+                            {% elif name == 'venv' and check.status == 'ok' %}
+                                {{ check.packages }} packages installed
+                            {% elif name == 'ansible_galaxy' and check.status == 'ok' %}
+                                {{ check.collections }} collections installed
                             {% elif check.message is defined %}
                                 {{ check.message }}
                             {% else %}

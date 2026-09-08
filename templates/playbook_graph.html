@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">{{ filename }}</h1>
+        <p class="page-subtitle">Playbook Graph</p>
+    </div>
+    <div class="page-header-actions">
+        <a href="javascript:history.back()" class="action-button action-button-secondary">Back</a>
+    </div>
+</div>
+<div class="content-card">
+    <div class="card-body" style="overflow-x: auto;">
+        {{ svg | safe }}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}Playbooks - NetPAC{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="page-header-content">
+        <h1 class="page-title">Playbooks</h1>
+        <p class="page-subtitle">Manage your Ansible Playbooks</p>
+    </div>
+    <div class="page-header-actions">
+        {% if git_config.repo_url %}
+        <form action="{{ url_for('sync_scripts') }}" method="POST" style="display:inline; margin:0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <button type="submit" class="action-button action-button-secondary"
+                    title="Git Pull: {{ git_config.repo_url }} @ {{ git_config.branch }}">
+                <span>Sync</span>
+            </button>
+        </form>
+        {% endif %}
+        <div class="search-container" style="position: relative;">
+            <svg style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchInput" class="search-input" placeholder="Search playbooks..." style="padding-left: 32px;">
+        </div>
+    </div>
+</div>
+
+<div class="content-card">
+    <div class="card-header">
+        <div>
+            {% if current_path %}
+            <div style="font-size: 0.8rem; color: var(--text-muted, #64748b); margin-bottom: 0.25rem;">
+                <a href="{{ url_for('browse_playbooks') }}" style="color: var(--text-muted, #64748b);">Playbooks</a>
+                {% set ns = namespace(accumulated='') %}
+                {% for part in current_path.split('/') %}
+                    {% set ns.accumulated = ns.accumulated + '/' + part if ns.accumulated else part %}
+                    <span style="margin: 0 0.25rem;">›</span>
+                    <a href="{{ url_for('browse_playbooks', subpath=ns.accumulated) }}" style="color: var(--text-muted, #64748b);">{{ part }}</a>
+                {% endfor %}
+            </div>
+            {% endif %}
+            <h3 class="card-title">Playbook list</h3>
+        </div>
+        <span class="card-badge">{{ entries|length }} Playbooks</span>
+    </div>
+
+    <div class="card-body">
+        {% if entries %}
+            <ul class="script-list" id="playbookList">
+                {% if current_path is defined and current_path %}
+                <li class="script-item">
+                    <a href="{{ url_for('browse_playbooks') if '/' not in current_path else url_for('browse_playbooks', subpath=current_path.rsplit('/', 1)[0]) }}" class="script-link">
+                        <div class="script-info">
+                            <div class="script-details">
+                                <span class="script-name">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                                    ..
+                                </span>
+                            </div>
+                        </div>
+                    </a>
+                </li>
+                {% endif %}
+                {% for entry in entries %}
+                <li class="script-item">
+                    <a href="{{ url_for('browse_playbooks', subpath=entry.path) if entry.is_dir else url_for('browse_playbooks', subpath=entry.path) }}" class="script-link">
+                        <div class="script-info">
+                            <div class="script-details">
+                                <span class="script-name">
+                                    {% if entry.is_dir %}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                                    {% else %}
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                    {% endif %}
+                                    {{ entry.name }}
+                                </span>
+                            </div>
+                        </div>
+                        <span class="script-action">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+                        </span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+
+            {% if all_playbooks is defined %}
+            <ul class="script-list" id="allPlaybookList" style="display: none;">
+                {% for pb in all_playbooks %}
+                <li class="script-item" data-path="{{ pb.path }}">
+                    <a href="{{ url_for('browse_playbooks', subpath=pb.path) }}" class="script-link">
+                        <div class="script-info">
+                            <div class="script-details">
+                                <span class="script-name">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                                    {{ pb.path }}
+                                </span>
+                            </div>
+                        </div>
+                        <span class="script-action">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
+                        </span>
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
+        {% else %}
+            <div class="empty-state">
+                <h3 class="empty-title">No playbooks available</h3>
+                <p class="empty-text">Add .yml files to /var/lib/netpac/playbooks</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    const searchInput = document.getElementById("searchInput");
+    const normalList  = document.getElementById("playbookList");
+    const allList     = document.getElementById("allPlaybookList");
+    const allItems    = allList ? document.querySelectorAll("#allPlaybookList li") : [];
+
+    if (normalList) normalList.style.display = "block";
+    if (allList) allList.style.display = "none";
+
+    if (searchInput) {
+        searchInput.addEventListener("input", function () {
+            const filter = this.value.toLowerCase();
+            if (filter.length > 0) {
+                if (normalList) normalList.style.display = "none";
+                if (allList) allList.style.display = "block";
+                allItems.forEach(item => {
+                    const path = item.getAttribute("data-path").toLowerCase();
+                    item.style.display = path.includes(filter) ? "" : "none";
+                });
+            } else {
+                if (normalList) normalList.style.display = "block";
+                if (allList) allList.style.display = "none";
+            }
+        });
+    }
+</script>
+{% endblock %}

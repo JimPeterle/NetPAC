@@ -6,7 +6,7 @@
     <title>{% block title %}NetPAC{% endblock %}</title>
     <link rel="stylesheet" id="markdownCss" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v={{ range(1000, 9999) | random }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
     {% block extra_css %}{% endblock %}
     <script>
@@ -28,9 +28,19 @@
 
     <div class="sidebar" id="sidebar" style="{% if session.get('default_pw_warning') %}padding-top: 36px;{% endif %}">
         <div class="sidebar-header">
-            <span class="sidebar-title">NetPAC</span>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span class="sidebar-title">NetPAC V3.0.0</span>
+            </div>
             <button class="sidebar-toggle-inner" id="sidebarToggle" title="Toggle sidebar">
                 <span class="toggle-icon">☰</span>
+            </button>
+        </div>
+        <div class="mode-toggle-container">
+            <button class="mode-btn" id="modePython" onclick="setMode('python')">
+                <span class="sidebar-text">Python</span>
+            </button>
+            <button class="mode-btn" id="modeAnsible" onclick="setMode('ansible')">
+                <span class="sidebar-text">Ansible</span>
             </button>
         </div>
         
@@ -44,10 +54,16 @@
             <a href="{{ url_for('groups') }}" class="sidebar-link {% if request.endpoint == 'groups' %}active{% endif %}">
                 <span class="sidebar-text">Groups</span>
             </a>
-            <a href="{{ url_for('scripts') }}" class="sidebar-link {% if request.endpoint in ['scripts', 'view_script', 'run_script'] %}active{% endif %}">
+            <a href="{{ url_for('scripts') }}" class="sidebar-link mode-python {% if request.endpoint in ['scripts', 'view_script', 'run_script'] %}active{% endif %}">
                 <span class="sidebar-text">Scripts</span>
             </a>
-            <a href="{{ url_for('history') }}" class="sidebar-link {% if request.endpoint in ['history', 'history_detail'] %}active{% endif %}">
+            <a href="{{ url_for('browse_playbooks') }}" class="sidebar-link mode-ansible {% if request.endpoint in ['playbooks', 'view_playbook', 'run_playbook'] %}active{% endif %}">
+                <span class="sidebar-text">Playbooks</span>
+            </a>
+            <a href="{{ url_for('playbook_templates') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'playbook_templates' %}active{% endif %}">
+                <span class="sidebar-text">Templates</span>
+            </a>
+            <a href="#" onclick="navigateWithMode('{{ url_for('history') }}'); return false;" class="sidebar-link {% if request.endpoint in ['history', 'history_detail'] %}active{% endif %}">
                 <span class="sidebar-text">History</span>
             </a>
             <a href="{{ url_for('schedule') }}" class="sidebar-link {% if request.endpoint == 'schedule' %}active{% endif %}">
@@ -55,6 +71,12 @@
             </a>
             <a href="{{ url_for('secrets') }}" class="sidebar-link {% if request.endpoint in ['secrets', 'create_secret', 'edit_secret'] %}active{% endif %}">
                 <span class="sidebar-text">Secrets</span>
+            </a>
+            <a href="{{ url_for('venv_manager') }}" class="sidebar-link mode-python {% if request.endpoint == 'venv_manager' %}active{% endif %}">
+                <span class="sidebar-text">Environment</span>
+            </a>
+            <a href="{{ url_for('ansible_collections') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'ansible_collections' %}active{% endif %}">
+                <span class="sidebar-text">Collections</span>
             </a>
         </nav>
 
@@ -65,7 +87,6 @@
                 </button>
                 <div class="user-dropdown" id="userDropdown">
                     <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active-dropdown{% endif %}">Settings</a>
-                    <a href="#" onclick="event.preventDefault(); openAboutModal();">About</a>
                     <a href="{{ url_for('health') }}">Health</a>
                     <a href="#" onclick="event.preventDefault(); toggleTheme();" id="themeDropdownLink">
                         <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline-block; vertical-align: middle; margin-right: 6px;">
@@ -95,7 +116,7 @@
                         <span class="alert-icon">
                             {% if category == 'success' %}✓{% elif category == 'danger' %}✗{% else %}ⓘ{% endif %}
                         </span>
-                        <span class="alert-text">{{ message }}</span>
+                        <span class="alert-text">{{ message | safe }}</span>
                         <button class="alert-close" onclick="this.parentElement.remove()">×</button>
                     </div>
                 {% endfor %}
@@ -105,50 +126,11 @@
         {% block content %}{% endblock %}
     </div>
 
-    <div id="aboutModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 10000; justify-content: center; align-items: center;">
-        <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);">
-            <div style="padding: 2rem 2rem 1rem 2rem; border-bottom: 1px solid var(--border); position: relative;">
-                <button onclick="closeAboutModal()" style="position: absolute; top: 1rem; right: 1rem; background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-muted); width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px; transition: all 0.2s;">×</button>
-                <div style="text-align: center;">
-                    <h2 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: var(--accent); font-family: inherit; letter-spacing: 0.1em;">NETPAC</h2>
-                </div>
-            </div>
-            
-            <div style="padding: 2rem;">
-                <div style="display: flex; flex-direction: column; gap: 1.25rem;">
-                    <div style="background: var(--bg-table-head); padding: 1rem; border-radius: 10px; border-left: 4px solid var(--accent);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                            <span style="font-weight: 600; color: var(--text-secondary); font-size: 0.8rem;">NetPAC Version</span>
-                            <span style="color: var(--accent); font-weight: 700; font-family: inherit;">v2.0.0</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-                            <span style="font-weight: 600; color: var(--text-secondary); font-size: 0.8rem;">Python Version</span>
-                            <span style="color: var(--text-muted); font-family: inherit; font-size: 0.8rem;" id="pythonVersion">Loading...</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-weight: 600; color: var(--text-secondary); font-size: 0.8rem;">MySQL Version</span>
-                            <span style="color: var(--text-muted); font-family: inherit; font-size: 0.8rem;" id="mysqlVersion">Loading...</span>
-                        </div>
-                    </div>
-
-                    <div style="background: var(--accent-dim); border: 1px solid var(--accent); padding: 1.25rem; border-radius: 10px; text-align: center;">
-                        <p style="margin: 0; font-weight: 600; color: var(--text-secondary); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em;">Developed by</p>
-                        <p style="margin: 0.5rem 0 0 0; color: var(--accent); font-weight: 700; font-size: 1.1rem; letter-spacing: 0.04em;">JimPeterle</p>
-                    </div>
-                </div>
-            </div>
-            
-            <div style="padding: 1rem 2rem; background: var(--bg-table-head); border-top: 1px solid var(--border); border-radius: 0 0 16px 16px; text-align: center;">
-                <p style="margin: 0; color: var(--text-muted); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase;">© 2026 NetPAC.</p>
-            </div>
-        </div>
-    </div>
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
 
     <script>
-        // Sidebar Toggle
         const sidebar = document.getElementById('sidebar');
         const mainContent = document.getElementById('mainContent');
         const sidebarToggle = document.getElementById('sidebarToggle');
@@ -158,7 +140,6 @@
             mainContent.classList.toggle('expanded');
         });
 
-        // User Dropdown
         const userMenuBtn = document.getElementById('userMenuBtn');
         const userDropdown = document.getElementById('userDropdown');
 
@@ -171,42 +152,10 @@
             userDropdown.classList.remove('show');
         });
 
-        // Syntax Highlighting
         document.querySelectorAll('pre code').forEach((block) => {
             hljs.highlightElement(block);
         });
 
-        // About Modal
-        function openAboutModal() {
-            document.getElementById('aboutModal').style.display = 'flex';
-            document.getElementById('userDropdown').classList.remove('show');
-
-            fetch('/about/version')
-                .then(response => {
-                    if (!response.ok) return { python: "N/A", mysql: "N/A", error: true };
-                    return response.json();
-                })
-                .then(data => {
-                    document.getElementById('pythonVersion').textContent = data.python || 'N/A';
-                    document.getElementById('mysqlVersion').textContent = data.mysql || 'N/A';
-                })
-                .catch(() => {
-                    document.getElementById('pythonVersion').textContent = 'Error';
-                    document.getElementById('mysqlVersion').textContent = 'Error';
-                });
-        }
-
-        function closeAboutModal() {
-            document.getElementById('aboutModal').style.display = 'none';
-        }
-
-        document.getElementById('aboutModal').addEventListener('click', function(event) {
-            if (event.target === this) {
-                closeAboutModal();
-            }
-        });
-
-        // Theme Toggle
         function toggleTheme() {
             const current = document.documentElement.getAttribute('data-theme');
             const next = current === 'dark' ? 'light' : 'dark';
@@ -251,6 +200,48 @@
         }
 
         updateToggleUI(savedTheme);
+
+        function setMode(mode) {
+            localStorage.setItem('netpac-mode', mode);
+            applyMode(mode);
+        }
+
+        function applyMode(mode) {
+            document.querySelectorAll('.mode-python').forEach(el => {
+                el.style.display = mode === 'python' ? '' : 'none';
+            });
+            document.querySelectorAll('.mode-ansible').forEach(el => {
+                el.style.display = mode === 'ansible' ? '' : 'none';
+            });
+            const btnPython = document.getElementById('modePython');
+            const btnAnsible = document.getElementById('modeAnsible');
+            if (btnPython) btnPython.classList.toggle('mode-btn-active', mode === 'python');
+            if (btnAnsible) btnAnsible.classList.toggle('mode-btn-active', mode === 'ansible');
+            const modeLabel = document.getElementById('modeLabel');
+            if (modeLabel) modeLabel.textContent = mode === 'python' ? 'Python' : 'Ansible';
+        }
+
+        const savedMode = localStorage.getItem('netpac-mode') || 'python';
+        applyMode(savedMode);
+        
+        function navigateWithMode(baseUrl) {
+            const mode = localStorage.getItem('netpac-mode') || 'python';
+            window.location.href = `${baseUrl}?mode=${mode}&page=1`;
+        }
+
+        function openModalAnimated(id) {
+            const modal = document.getElementById(id);
+            modal.style.display = 'flex';
+            const box = modal.querySelector(':scope > div');
+            anime({
+                targets: box,
+                scale: [0.92, 1],
+                opacity: [0, 1],
+                duration: 200,
+                easing: 'easeOutQuad'
+            });
+        }
+        
     </script>
     {% block extra_js %}{% endblock %}
 </body>
