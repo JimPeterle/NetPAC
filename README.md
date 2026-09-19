@@ -106,7 +106,7 @@ Login as root:
 sudo mysql -u root -p
 ```
 
-Start the netpac_db installation:
+Start the installation of netpac_db, but first replace the fields enclosed by the two # symbols at the beginning of the code. This applies twice to the user and once to the password. The # symbols must be removed.
 
 ```sql
 
@@ -115,9 +115,9 @@ CREATE DATABASE IF NOT EXISTS `netpac_db`
 DEFAULT CHARACTER SET utf8mb4 
 COLLATE utf8mb4_bin;
 
-CREATE USER 'YOUR-USER'@'localhost' IDENTIFIED BY 'YOUR-PASSWORD';
+CREATE USER #YOUR-USER#@'localhost' IDENTIFIED BY #YOUR-PASSWORD#;
 
-GRANT ALL PRIVILEGES ON netpac_db.* TO 'YOUR-USER'@'localhost';
+GRANT ALL PRIVILEGES ON netpac_db.* TO #YOUR-USER#@'localhost';
 
 FLUSH PRIVILEGES;
 
