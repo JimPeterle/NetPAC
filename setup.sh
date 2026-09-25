@@ -50,15 +50,15 @@ APP_USER="$USER"
 APP_GROUP="$(id -gn)"
 CERT_DIR="/etc/netpac/certs"
 
-read -p "Please enter Domain:" DOMAIN
+read -p "Please enter IP:" IP
 read -p "Please define Worker (2 x CPU-Cores + 1):" WORKER
 
 # ===================================
 # CHECK USER INPUT
 # ===================================
 
-if [ -z "$DOMAIN" ]; then 
-    print_error "DOMAIN is not set"
+if [ -z "$IP" ]; then 
+    print_error "IP is not set"
     exit 1
 fi
 
@@ -564,7 +564,7 @@ if [ ! -f "$CERT_DIR/netpac.crt" ]; then
         -keyout "$CERT_DIR/netpac.key" \
         -out "$CERT_DIR/netpac.crt" \
         -subj "/CN=netpac.local" \
-        -addext "subjectAltName=DNS:netpac.local,IP:${DOMAIN}"
+        -addext "subjectAltName=DNS:netpac.local,IP:${IP}"
     
     sudo chown "$APP_USER":"$APP_GROUP" "$CERT_DIR/netpac.key" "$CERT_DIR/netpac.crt"
     sudo chmod 640 "$CERT_DIR/netpac.key"
@@ -604,13 +604,13 @@ upstream netpac_backend {
 
 server {
     listen 80;
-    server_name $DOMAIN;
+    server_name $IP;
     return 301 https://\$server_name\$request_uri;
 }
 
 server {
     ${NGINX_LISTEN_SSL}
-    server_name $DOMAIN;
+    server_name $IP;
 
     ssl_certificate /etc/netpac/certs/netpac.crt;
     ssl_certificate_key /etc/netpac/certs/netpac.key ;
@@ -729,7 +729,7 @@ echo "  App directory: $APP_DIR"
 echo "  App user: $APP_USER"
 echo "  App local port: 8443"
 echo "  App NGINX port: 443"
-echo "  Domain: $DOMAIN"
+echo "  IP: $IP"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
 echo "  Check status: sudo systemctl status netpac netpac-scheduler nginx"
@@ -742,6 +742,6 @@ echo "  Gunicorn: tail -f /var/log/netpac/gunicorn_error.log"
 echo "  Nginx: sudo tail -f /var/log/nginx/netpac_error.log"
 echo ""
 echo -e "${YELLOW}Final step:${NC}"
-echo "  Enter the page via: https://$DOMAIN"
+echo "  Enter the page via: https://$IP"
 echo ""
 echo -e "${GREEN}Good luck!${NC}"
