@@ -10,10 +10,12 @@ set up two-factor authentication (TOTP) on first login.
 For local login you can use for first startup the user **admin** with password **admin**, after login and totp verification please change the default password under Settings -> Change Password of local user. 
 If you logged in with the local admin user, you can add more local user. 
 
-For Radius login please specify the needed parameter in the secret.env.
+For RADIUS login, the local admin configures the RADIUS server under 
+Settings -> Radius. The shared secret is stored encrypted in the database.
 
-Before running setup.sh, make sure your SSL certificate and private key 
-are in place and specify the needed parameter in the secret.env.
+setup.sh creates a self-signed SSL certificate. Your own certificate 
+(e.g. from Let's Encrypt or an internal CA) can be uploaded later under 
+Settings -> SSL/TLS.
 
 ## Scripts
 
@@ -35,6 +37,7 @@ Playbooks support:
 - Passing extra vars (survey variables) at runtime
 - Syntax checking before execution
 - Visual graph generation via ansible-playbook-grapher
+- Playbook dry run mode
 - Reusable **Playbook Templates**, which save a playbook path together 
   with a target, extra vars, and secrets for quick, repeatable launches
 
@@ -63,7 +66,9 @@ multiple groups.
 ## Monitoring & Logs
 
 The output of scripts and playbooks can be viewed in the job history and 
-exported as TXT. System logs can be viewed directly in the Settings area. 
+exported as TXT. Running jobs can be cancelled from the job detail page; 
+they are then shown with the status **cancelled**. Jobs whose process 
+disappeared (e.g. after a NetPAC restart) are marked as **failed**. System logs can be viewed directly in the Settings area. 
 A Health page shows the status of the database, scheduler, encryption, 
 venv, and Ansible Galaxy collections at a glance.
 
@@ -97,7 +102,7 @@ sudo systemctl status mariadb
 If you'd like, you can secure a new MariaDB/MySQL installation by following the steps after running the command. This is entirely optional and, among other things, removes anonymous users and the test database:
 
 ```bash
-sudo mariadb-secure-installation
+sudo mysql_secure_installation
 ```
 
 Login as root:
@@ -106,24 +111,21 @@ Login as root:
 sudo mysql -u root -p
 ```
 
-Start the installation of netpac_db, but first replace the fields enclosed by the two # symbols at the beginning of the code. This applies twice to the user and once to the password. The # symbols must be removed.
+Start the netpac_db installation:
 
 ```sql
-
--- Create Database and user
 CREATE DATABASE IF NOT EXISTS `netpac_db` 
 DEFAULT CHARACTER SET utf8mb4 
 COLLATE utf8mb4_bin;
 
-CREATE USER #YOUR-USER#@'localhost' IDENTIFIED BY #YOUR-PASSWORD#;
+CREATE USER 'YOUR-USER'@'localhost' IDENTIFIED BY 'YOUR-PASSWORD';
 
-GRANT ALL PRIVILEGES ON netpac_db.* TO #YOUR-USER#@'localhost';
+GRANT ALL PRIVILEGES ON netpac_db.* TO 'YOUR-USER'@'localhost';
 
 FLUSH PRIVILEGES;
 
 USE `netpac_db`;
 
--- Create hosts table
 CREATE TABLE `hosts` (
     host_id INT AUTO_INCREMENT PRIMARY KEY,
     hostname VARCHAR(255) UNIQUE NOT NULL,
@@ -137,8 +139,8 @@ COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `host_groups` (
     group_id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(255) UNIQUE NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    ansible_vars TEXT DEFAULT NULL;
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ansible_vars TEXT DEFAULT NULL
 ) ENGINE=InnoDB 
 AUTO_INCREMENT=1 
 DEFAULT CHARSET=utf8mb4
@@ -155,21 +157,21 @@ AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
--- Create history_jobs table
 CREATE TABLE `history_jobs` (
   `job_id` INT(11) NOT NULL AUTO_INCREMENT,
   `script_name` VARCHAR(255) NOT NULL,
   `user_id` VARCHAR(100) NOT NULL,
   `target` VARCHAR(255) DEFAULT NULL,
   `variables` LONGTEXT DEFAULT NULL,
-  `status` ENUM('running','planned','completed','failed','timeout') DEFAULT 'running',
-  `output` TEXT DEFAULT NULL,
+  `status` ENUM('running','planned','completed','failed','timeout','cancelled') DEFAULT 'running',
+  `output` LONGTEXT DEFAULT NULL,
   `started_at` TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP(),
   `finished_at` TIMESTAMP NULL DEFAULT NULL,
   `duration` INT(11) DEFAULT NULL,
   `credential` TEXT DEFAULT NULL,
   `job_type` ENUM('python','ansible') DEFAULT 'python',
-  `pid` INT DEFAULT NULL;
+  `ansible_dry_run` TINYINT(1) DEFAULT 0,
+  `pid` INT DEFAULT NULL,
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`),
   KEY `idx_status` (`status`),
@@ -181,7 +183,6 @@ AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
--- Create schedule_jobs table
 CREATE TABLE `schedule_jobs` (
   `job_id` INT(11) NOT NULL AUTO_INCREMENT,
   `script_name` VARCHAR(255) NOT NULL,
@@ -201,19 +202,6 @@ AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
--- Create playbooks table
-CREATE TABLE `playbooks` (
-  `playbook_id` INT AUTO_INCREMENT PRIMARY KEY,
-  `name` VARCHAR(255) NOT NULL,
-  `path` VARCHAR(500) NOT NULL,
-  `description` TEXT,
-  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB
-AUTO_INCREMENT=1
-DEFAULT CHARSET=utf8mb4
-COLLATE=utf8mb4_unicode_ci;
-
--- Create playbook_templates table
 CREATE TABLE `playbook_templates` (
   `template_id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(255) NOT NULL,
@@ -231,9 +219,8 @@ AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
--- Create user table
 CREATE TABLE `user` (
-  `name` VARCHAR(20) NOT NULL,
+  `name` VARCHAR(100) NOT NULL,
   `password` VARCHAR(255) DEFAULT NULL,
   `totp_secret` VARCHAR(32) DEFAULT NULL,
   `totp_confirmed` BOOLEAN DEFAULT FALSE,
@@ -243,14 +230,12 @@ CREATE TABLE `user` (
 DEFAULT CHARSET=utf8mb4 
 COLLATE=utf8mb4_bin;
 
--- Create admin user
 INSERT INTO `user` (`name`, `password`, `method`) VALUES (
   'admin',
   '$2b$12$3u9Sfbazd4cOpm9kEKspyO7aU0R0BnND.mo5JBTYH8QSmtIj.rk82',
   'local'
 );
 
--- Create secret table
 CREATE TABLE IF NOT EXISTS `secrets` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `name` VARCHAR(100) UNIQUE NOT NULL,
@@ -264,7 +249,6 @@ AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
--- Create apscheduler table
 CREATE TABLE apscheduler_jobs (
     id VARCHAR(191) NOT NULL,
     next_run_time DOUBLE DEFAULT NULL,
@@ -275,6 +259,14 @@ CREATE TABLE apscheduler_jobs (
 AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE radius(
+    id INT PRIMARY KEY DEFAULT 1,
+    server VARCHAR(255),
+    port INT DEFAULT 1812,
+    encrypted_secret TEXT,
+    timeout INT DEFAULT 5,
+    CONSTRAINT single_row CHECK (id = 1)
+);
 ```
 
 ## NetPAC configuration
@@ -300,20 +292,47 @@ git clone https://github.com/JimPeterle/NetPAC.git
 cd NetPAC
 ```
 
-The secret_examples.env file serves as a template.
+The user `netpac` and the directory `~/bin/NetPAC` are the recommended layout, 
+but not required: both services run as the user that executes `setup.sh`, from 
+the directory it is executed in. Database backups are stored next to the 
+application directory (e.g. `~/bin/netpac_backups`).
+
+Create your configuration from the template and fill in the values. 
+secret.env is excluded from Git, so later updates via `git pull` never 
+overwrite it.
+
 ```Bash
+cp secret_examples.env secret.env
 vim secret.env
 ```
 
-To create an ENCRYPTION_KEY used to encrypt passwords in the database, run the following command and store the key in secret.env.
+Generate the ENCRYPTION_KEY (encrypts the stored secrets in the database):
 ```Bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
+
+Keep a backup of secret.env. Without the ENCRYPTION_KEY, the stored secrets 
+can no longer be decrypted (Store the keys inside a Keepass).
 
 When everything is ready, the final step can be carried out.
 ```Bash
 bash setup.sh
 ```
+
+## Frontend libraries
+
+NetPAC loads nothing from the internet: all frontend libraries (anime.js, 
+highlight.js, Chart.js, flatpickr, github-markdown-css) and the JetBrains Mono 
+font are stored in `static/vendor/`. This also works in management networks 
+without internet access and transfers no user data to third parties.
+
+The versions are defined in `static/vendor/manifest.json`. To update them:
+```Bash
+python3 update_vendor.py --check   # show available updates
+# change the version in static/vendor/manifest.json
+python3 update_vendor.py           # download the new version, remove the old one
+```
+Each library keeps its license file in its own folder under `static/vendor/`.
 
 ## Additional information
 
@@ -334,3 +353,19 @@ sudo deluser netpac sudo
 sudo deluser --remove-home netpac
 ```
 After this steps netpac is removed from your system.
+
+## License
+
+Copyright (C) 2026 JimPeterle
+
+NetPAC is free software: you can redistribute it and/or modify it under the 
+terms of the GNU Affero General Public License as published by the Free 
+Software Foundation, either version 3 of the License, or (at your option) 
+any later version. See [LICENSE](LICENSE) for the full text.
+
+In short: you may use, modify and share NetPAC, also commercially. If you 
+distribute a modified version or make it available to others over a network, 
+you must publish its complete source code under the same license.
+
+The libraries in `static/vendor/` keep their own licenses (MIT, BSD-3-Clause, 
+SIL Open Font License); each license file is stored next to the library.

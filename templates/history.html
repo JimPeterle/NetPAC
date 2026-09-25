@@ -50,7 +50,12 @@
                     {% for job in jobs %}
                     <tr data-jobtype="{{ job.job_type }}">
                         <td>#{{ job.job_id }}</td>
-                        <td>{{ job.script_name }}</td>
+                        <td>
+                            {{ job.script_name }}
+                            {% if job.dry_run %}
+                            <span style="background: var(--warning-dim); color: var(--warning); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: 0.4rem;">DRY</span>
+                            {% endif %}
+                        </td>
                         <td>{{ job.target if job.target else '-' }}</td>
                         <td>
                             {% if job.status == 'running' %}
@@ -61,6 +66,8 @@
                                 <span class="status-badge status-error">✗ Failed</span>
                             {% elif job.status == 'timeout' %}
                                 <span class="status-badge status-warning">Timeout</span>
+                            {% elif job.status == 'cancelled' %}
+                                <span class="status-badge status-cancelled">⊘ Cancelled</span>
                             {% endif %}
                         </td>
                         <td>{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
@@ -123,7 +130,7 @@
 
     window.setMode = function(mode) {
         localStorage.setItem('netpac-mode', mode);
-        if (mode !== '{{ mode }}') {
+        if (mode !== {{ mode|tojson }}) {
             const url = new URL(window.location.href);
             url.searchParams.set('mode', mode);
             url.searchParams.set('page', '1');

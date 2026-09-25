@@ -1,0 +1,57 @@
+{
+    "_comment": "Third-party frontend libraries, served locally from static/vendor/<name>-<version>/. Change a version here, then run: python3 update_vendor.py",
+    "animejs": {
+        "package": "animejs",
+        "version": "3.2.1",
+        "files": {
+            "js": "lib/anime.min.js"
+        },
+        "license": "LICENSE.md"
+    },
+    "highlightjs": {
+        "package": "@highlightjs/cdn-assets",
+        "version": "11.9.0",
+        "files": {
+            "js": "highlight.min.js",
+            "python": "languages/python.min.js",
+            "css": "styles/atom-one-dark.min.css"
+        },
+        "license": "LICENSE"
+    },
+    "markdown_css": {
+        "package": "github-markdown-css",
+        "version": "5.2.0",
+        "files": {
+            "light": "github-markdown-light.css",
+            "dark": "github-markdown-dark.css"
+        },
+        "license": "license"
+    },
+    "chartjs": {
+        "package": "chart.js",
+        "version": "4.4.1",
+        "files": {
+            "js": "dist/chart.umd.js"
+        },
+        "license": "LICENSE.md"
+    },
+    "flatpickr": {
+        "package": "flatpickr",
+        "version": "4.6.13",
+        "files": {
+            "js": "dist/flatpickr.min.js",
+            "css": "dist/flatpickr.min.css"
+        },
+        "license": "LICENSE.md"
+    },
+    "jetbrains_mono": {
+        "package": "@fontsource-variable/jetbrains-mono",
+        "version": "5.3.0",
+        "files": {
+            "css": "wght.css",
+            "css_italic": "wght-italic.css"
+        },
+        "license": "LICENSE",
+        "css_assets": true
+    }
+}

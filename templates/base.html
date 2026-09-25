@@ -1,20 +1,24 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}NetPAC{% endblock %}</title>
-    <link rel="stylesheet" id="markdownCss" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" id="markdownCss" href="{{ vendor('markdown_css', 'light') }}">
+    <link rel="stylesheet" href="{{ vendor('highlightjs', 'css') }}">
+    <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css') }}">
+    <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css_italic') }}">
+    <link rel="stylesheet" href="{{ static_file('styles.css') }}">
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
     {% block extra_css %}{% endblock %}
     <script>
+        const MARKDOWN_CSS = {
+            light: {{ vendor('markdown_css', 'light')|tojson }},
+            dark: {{ vendor('markdown_css', 'dark')|tojson }}
+        };
         const savedTheme = localStorage.getItem('netpac-theme') || 'light';
         document.documentElement.setAttribute('data-theme', savedTheme);
-        document.getElementById('markdownCss').href = savedTheme === 'dark'
-            ? 'https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css'
-            : 'https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css';
+        document.getElementById('markdownCss').href = MARKDOWN_CSS[savedTheme === 'dark' ? 'dark' : 'light'];
     </script>
 </head>
 <body class="dashboard-body" style="overflow-y: auto;">
@@ -29,7 +33,7 @@
     <div class="sidebar" id="sidebar" style="{% if session.get('default_pw_warning') %}padding-top: 36px;{% endif %}">
         <div class="sidebar-header">
             <div style="display: flex; flex-direction: column; gap: 2px;">
-                <span class="sidebar-title">NetPAC V3.0.0</span>
+                <span class="sidebar-title">NetPAC V{{ app_version }}</span>
             </div>
             <button class="sidebar-toggle-inner" id="sidebarToggle" title="Toggle sidebar">
                 <span class="toggle-icon">☰</span>
@@ -48,7 +52,7 @@
             <a href="{{ url_for('dashboard') }}" class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
                 <span class="sidebar-text">Dashboard</span>
             </a>
-            <a href="{{ url_for('hosts') }}" class="sidebar-link {% if request.endpoint in ['hosts', 'add_host', 'delete_host'] %}active{% endif %}">
+            <a href="{{ url_for('hosts') }}" class="sidebar-link {% if request.endpoint in ['hosts', 'hosts_by_group'] %}active{% endif %}">
                 <span class="sidebar-text">Hosts</span>
             </a>
             <a href="{{ url_for('groups') }}" class="sidebar-link {% if request.endpoint == 'groups' %}active{% endif %}">
@@ -57,7 +61,7 @@
             <a href="{{ url_for('scripts') }}" class="sidebar-link mode-python {% if request.endpoint in ['scripts', 'view_script', 'run_script'] %}active{% endif %}">
                 <span class="sidebar-text">Scripts</span>
             </a>
-            <a href="{{ url_for('browse_playbooks') }}" class="sidebar-link mode-ansible {% if request.endpoint in ['playbooks', 'view_playbook', 'run_playbook'] %}active{% endif %}">
+            <a href="{{ url_for('browse_playbooks') }}" class="sidebar-link mode-ansible {% if request.endpoint in ['browse_playbooks', 'view_playbook_graph'] %}active{% endif %}">
                 <span class="sidebar-text">Playbooks</span>
             </a>
             <a href="{{ url_for('playbook_templates') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'playbook_templates' %}active{% endif %}">
@@ -102,7 +106,10 @@
                         </svg>
                         <span id="themeLabel">Dark Mode</span>
                     </a>
-                    <a href="{{ url_for('logout') }}">Logout</a>
+                    <a href="#" onclick="document.getElementById('logoutForm').submit(); return false;">Logout</a>
+                    <form id="logoutForm" method="POST" action="{{ url_for('logout') }}" style="display: none;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    </form>
                 </div>
             </div>
         </div>
@@ -116,7 +123,7 @@
                         <span class="alert-icon">
                             {% if category == 'success' %}✓{% elif category == 'danger' %}✗{% else %}ⓘ{% endif %}
                         </span>
-                        <span class="alert-text">{{ message | safe }}</span>
+                        <span class="alert-text">{{ message }}</span>
                         <button class="alert-close" onclick="this.parentElement.remove()">×</button>
                     </div>
                 {% endfor %}
@@ -126,9 +133,9 @@
         {% block content %}{% endblock %}
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    <script src="{{ vendor('highlightjs', 'js') }}"></script>
+    <script src="{{ vendor('highlightjs', 'python') }}"></script>
+    <script src="{{ vendor('animejs', 'js') }}"></script>
 
     <script>
         const sidebar = document.getElementById('sidebar');
@@ -166,9 +173,7 @@
         }
 
         function updateMarkdownCss(theme) {
-            document.getElementById('markdownCss').href = theme === 'dark'
-                ? 'https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css'
-                : 'https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css';
+            document.getElementById('markdownCss').href = MARKDOWN_CSS[theme === 'dark' ? 'dark' : 'light'];
         }
 
         function updateToggleUI(theme) {
@@ -227,6 +232,181 @@
         function navigateWithMode(baseUrl) {
             const mode = localStorage.getItem('netpac-mode') || 'python';
             window.location.href = `${baseUrl}?mode=${mode}&page=1`;
+        }
+
+        const EGG_EMPTY_MS = 10000;
+        let eggClicks = 0;
+        let eggClickTimer = null;
+        let eggRunning = false;
+
+        document.querySelector('.sidebar-title').addEventListener('click', () => {
+            if (eggRunning) return;
+            eggClicks++;
+            clearTimeout(eggClickTimer);
+            eggClickTimer = setTimeout(() => { eggClicks = 0; }, 1500);
+
+            if (eggClicks >= 5) {
+                eggClicks = 0;
+                runEasterEgg();
+            }
+        });
+
+        const eggRandom = (min, max) => min + Math.random() * (max - min);
+        const eggSleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        async function runEasterEgg() {
+            eggRunning = true;
+            const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const html = document.documentElement;
+            const savedOverflow = html.style.overflow;
+            html.style.overflow = 'hidden';
+
+            try {
+                if (!reducedMotion) {
+                    await bunnyHop();
+                }
+                const restore = await collapsePage(reducedMotion);
+                await eggSleep(EGG_EMPTY_MS);
+                await restore();
+            } finally {
+                html.style.overflow = savedOverflow;
+                eggRunning = false;
+            }
+        }
+
+        function bunnyHop() {
+            const runner = document.createElement('div');
+            runner.className = 'bunny-runner';
+            const text = document.createElement('span');
+            text.className = 'bunny-text';
+            text.textContent = 'NetPAC';
+            runner.appendChild(text);
+            document.body.appendChild(runner);
+
+            const hops = Math.max(4, Math.round(window.innerWidth / 260));
+            const hopDuration = 520;
+            const squashDuration = 160;
+            const total = hops * (hopDuration + squashDuration);
+
+            const keyframes = [];
+            for (let i = 0; i < hops; i++) {
+                keyframes.push(
+                    { translateY: -eggRandom(90, 170), scaleX: 0.9, scaleY: 1.12, duration: hopDuration / 2, easing: 'easeOutQuad' },
+                    { translateY: 0, scaleX: 1, scaleY: 1, duration: hopDuration / 2, easing: 'easeInQuad' },
+                    { scaleX: 1.25, scaleY: 0.75, duration: squashDuration / 2, easing: 'easeOutQuad' },
+                    { scaleX: 1, scaleY: 1, duration: squashDuration / 2, easing: 'easeOutQuad' }
+                );
+            }
+
+            const move = anime({
+                targets: runner,
+                translateX: [-runner.offsetWidth - 20, window.innerWidth + 20],
+                duration: total,
+                easing: 'linear'
+            });
+            const hop = anime({ targets: text, keyframes: keyframes });
+
+            return Promise.all([move.finished, hop.finished]).then(() => runner.remove());
+        }
+
+        function collectBricks() {
+            const maxHeight = window.innerHeight * 0.35;
+            const maxWidth = window.innerWidth * 0.6;
+            const bricks = [];
+            const shells = [];
+
+            function visit(el, depth) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) return;
+
+                const children = [...el.children].filter(child => {
+                    const display = getComputedStyle(child).display;
+                    return display !== 'none' && display !== 'inline' && display !== 'contents';
+                });
+
+                if ((rect.height > maxHeight || rect.width > maxWidth) && children.length) {
+                    shells.push({ el, depth });
+                    children.forEach(child => visit(child, depth + 1));
+                } else {
+                    bricks.push(el);
+                }
+            }
+
+            const roots = [...document.body.children].filter(el => el.tagName !== 'SCRIPT');
+            roots.forEach(el => visit(el, 0));
+
+            shells.sort((a, b) => b.depth - a.depth);
+            return { roots, bricks, shells: shells.map(s => s.el) };
+        }
+
+        async function collapsePage(reducedMotion) {
+            const { roots, bricks, shells } = collectBricks();
+            const touched = [...new Set([...roots, ...bricks, ...shells])];
+            const savedStyles = new Map(touched.map(el => [el, el.getAttribute('style')]));
+
+            const pieces = [...bricks, ...shells];
+            const rects = new Map(pieces.map(el => [el, el.getBoundingClientRect()]));
+            const vh = window.innerHeight;
+
+            shells.forEach(el => { el.style.overflow = 'visible'; });
+
+            const distances = new Map();
+            const durations = new Map();
+            pieces.forEach(el => {
+                const distance = Math.max(0, vh - rects.get(el).top + 20);
+                distances.set(el, distance);
+                durations.set(el, Math.round(260 * Math.sqrt(Math.max(distance, 100) / 100)));
+            });
+
+            const delays = new Map();
+            bricks.forEach(el => {
+                const fromBottom = Math.min(1, Math.max(0, (vh - rects.get(el).bottom) / vh));
+                delays.set(el, fromBottom * 900 + eggRandom(0, 150));
+            });
+            shells.forEach(shell => {
+                let start = 0;
+                delays.forEach((delay, el) => {
+                    if (el !== shell && shell.contains(el)) {
+                        start = Math.max(start, delay + durations.get(el) * 0.5);
+                    }
+                });
+                delays.set(shell, start);
+            });
+
+            const falls = pieces.map(el => {
+                const rect = rects.get(el);
+                if (reducedMotion) {
+                    return anime({ targets: el, opacity: 0, duration: 600, easing: 'linear' }).finished;
+                }
+                if (rect.bottom <= 0 || rect.top >= vh) {
+                    return Promise.resolve();
+                }
+                el.style.willChange = 'transform';
+                return anime({
+                    targets: el,
+                    translateY: distances.get(el),
+                    delay: delays.get(el),
+                    duration: durations.get(el),
+                    easing: 'easeInQuad'
+                }).finished;
+            });
+
+            await Promise.all(falls);
+            roots.forEach(el => { el.style.visibility = 'hidden'; });
+
+            return async function restore() {
+                savedStyles.forEach((style, el) => {
+                    if (style === null) el.removeAttribute('style');
+                    else el.setAttribute('style', style);
+                });
+                roots.forEach(el => { el.style.opacity = '0'; });
+                await anime({ targets: roots, opacity: [0, 1], duration: 600, easing: 'easeOutQuad' }).finished;
+                roots.forEach(el => {
+                    const style = savedStyles.get(el);
+                    if (style === null) el.removeAttribute('style');
+                    else el.setAttribute('style', style);
+                });
+            };
         }
 
         function openModalAnimated(id) {

@@ -24,6 +24,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import re
 import threading
 import json
+import hashlib
 from cryptography.fernet import Fernet
 import base64
 import sys
@@ -34,20 +35,29 @@ import io
 import shutil
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.triggers.cron import CronTrigger
 import fcntl
 import glob
 import pwd
+import signal
 import time
 from collections import defaultdict
 from datetime import date, timedelta
+from flask import jsonify
+import urllib
 
 
 # --------------------
 #   Configuration variables
 # --------------------
 dir_path = os.path.dirname(os.path.realpath(__file__))
+APP_VERSION = "4.0.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
+SSL_CERT_DIR = "/etc/netpac/certs"
+BACKUP_DIR = os.path.join(os.path.dirname(dir_path), "netpac_backups")
+DB_CNF_FILE = os.path.join(dir_path, "db_secrets.cnf")
+
 
 # --------------------
 #   Initialize Logger 
@@ -83,7 +93,6 @@ exec_logger.setLevel(logging.INFO)
 # ---------------------------------------
 #   Log level adjustment 
 # ---------------------------------------
-# Flask logs from CLI not in logs file 
 logging.getLogger('werkzeug').propagate = False
 
 logging.getLogger('apscheduler').setLevel(logging.WARNING)
@@ -185,9 +194,6 @@ class SecretEncryption:
 # --------------------
 encryption = SecretEncryption(encryption_key)
 flask_key = os.getenv("FLASK_KEY")
-radius_secret = os.getenv("RADIUS_SECRET")
-radius_ip = os.getenv("RADIUS_IP")
-radius_nas = os.getenv("RADIUS_NAS")
 db_user = os.getenv("DB_USER")
 db_pw = os.getenv("DB_PW")
 db_ip = os.getenv("DB_IP")
@@ -208,34 +214,110 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SECURE'] = True     
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' 
 app.jinja_env.filters['fromjson'] = json.loads
+
+
+# --------------------
+#   Local frontend libraries (static/vendor, see update_vendor.py)
+# --------------------
+def load_vendor_manifest():
+    try:
+        with open(os.path.join(dir_path, "static", "vendor", "manifest.json"), "r", encoding="utf-8") as f:
+            return {name: lib for name, lib in json.load(f).items() if not name.startswith("_")}
+    except Exception as e:
+        logger.error(f"Could not load static/vendor/manifest.json: {e}")
+        return {}
+
+VENDOR_LIBS = load_vendor_manifest()
+
+
+_static_hashes = {}
+
+def static_file_hash(filename):
+    if filename not in _static_hashes:
+        try:
+            with open(os.path.join(dir_path, "static", filename), "rb") as f:
+                _static_hashes[filename] = hashlib.sha256(f.read()).hexdigest()[:10]
+        except OSError as e:
+            logger.error(f"Could not hash static file {filename}: {e}")
+            _static_hashes[filename] = APP_VERSION
+    return _static_hashes[filename]
+
+
+@app.context_processor
+def inject_app_info():
+    def static_file(filename):
+        return url_for("static", filename=filename, v=static_file_hash(filename))
+    return {"app_version": APP_VERSION, "static_file": static_file}
+
+
+@app.context_processor
+def inject_vendor():
+    def vendor(name, key):
+        lib = VENDOR_LIBS.get(name)
+        if not lib or key not in lib.get("files", {}):
+            logger.error(f"Unknown vendor file: {name}/{key}")
+            return ""
+        return url_for("static", filename=f"vendor/{name}-{lib['version']}/{lib['files'][key]}")
+    return {"vendor": vendor}
 csrf = CSRFProtect(app)
 
 app.wsgi_app = ProxyFix(
     app.wsgi_app,
-    x_for=1,      
-    x_proto=1,    
-    x_host=1,     
-    x_prefix=1    
+    x_for=1,
+    x_proto=1,
+    x_host=0,
+    x_prefix=0
 )
 
 def get_real_ip():
-
-    if request.headers.get('X-Forwarded-For'):
-        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
     return request.remote_addr
 
 limiter = Limiter(
     app=app,
     key_func=get_real_ip,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=[],
     storage_uri="memory://"
 )
 
 # --------------------
 #   Define Radius
 # --------------------
-srv = Client(server=radius_ip, secret=radius_secret.encode(),
-             dict = Dictionary(f"{dir_path}/dictionary"))
+def load_radius_config():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT server, port, encrypted_secret, timeout FROM radius WHERE id = 1")
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row:
+        return {'server_host': '', 'server_port': 1812, 'secret_set': False, 'timeout': 5}
+
+    server_host, server_port, encrypted_secret, timeout = row
+    return {
+        'server_host': server_host or '',
+        'server_port': server_port or 1812,
+        'secret_set': bool(encrypted_secret),
+        'timeout': timeout or 5
+    }
+
+
+def get_radius_secret():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute("SELECT encrypted_secret FROM radius WHERE id = 1")
+    row = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not row or not row[0]:
+        return None
+
+    try:
+        return encryption.decrypt(row[0])
+    except Exception as e:
+        logger.error(f"Failed to decrypt RADIUS secret: {e}")
+        return None
 
 
 # --------------------
@@ -321,7 +403,7 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
 
     if job_type == 'ansible':
         extra_vars = vars_dict.get('extra_vars', {})
-        extra_vars_str = " ".join([f"{k}={v}" for k, v in extra_vars.items()])
+        extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
         thread = threading.Thread(
             target=execute_playbook_background,
             args=(
@@ -391,15 +473,71 @@ def load_jobs_from_db():
 #   Validate path
 # --------------------
 def is_safe_path(target: str, base_dir: str) -> bool:
-    """
-    Checks whether ‘target’ is actually located within ‘base_dir’.
-    Prevents both ‘../’ traversal and string prefix pitfalls
-    (e.g., base_dir=‘/var/lib/netpac/scripts’ would otherwise also
-    incorrectly accept ‘/var/lib/netpac/scripts-evil’ as ‘inside’).
-    """
     base_dir = os.path.abspath(base_dir)
     target = os.path.abspath(target)
     return target == base_dir or target.startswith(base_dir + os.sep)
+
+
+# --------------------
+#   Stale job cleanup
+# --------------------
+STALE_JOB_NO_PID_SECONDS = 600
+JOB_CANCELLED_NOTE = "\n[NetPAC] Job was cancelled.\n"
+
+def is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def reap_stale_jobs():
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT job_id, pid, TIMESTAMPDIFF(SECOND, started_at, NOW())
+            FROM history_jobs
+            WHERE status = 'running' AND finished_at IS NULL
+        """)
+        for job_id, pid, age in cur.fetchall():
+            if pid:
+                if is_process_alive(pid):
+                    continue
+            elif age is None or age < STALE_JOB_NO_PID_SECONDS:
+                continue
+
+            cur.execute("""
+                UPDATE history_jobs
+                SET status = 'failed',
+                    finished_at = NOW(),
+                    duration = TIMESTAMPDIFF(SECOND, started_at, NOW()),
+                    output = CONCAT(COALESCE(output, ''), %s)
+                WHERE job_id = %s AND status = 'running'
+            """, ("\n[NetPAC] Job was interrupted (process no longer running, e.g. after a NetPAC restart).\n", job_id))
+            exec_logger.warning(f"Job {job_id} marked as failed: process {pid} no longer running")
+        conn.commit()
+    except Exception as e:
+        exec_logger.error(f"Error while cleaning up stale jobs: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+# --------------------
+#   Validate script variable count
+# --------------------
+MAX_SCRIPT_VARS = 10
+
+def parse_var_count(value) -> int:
+    try:
+        count = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(count, MAX_SCRIPT_VARS))
 
 
 # --------------------
@@ -441,14 +579,22 @@ class User(UserMixin):
 # --------------------
 @login_manager.user_loader
 def load_user(user_id):
-    return User(user_id)
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT 1 FROM user WHERE name = %s", (user_id,))
+        exists = cur.fetchone() is not None
+    finally:
+        cur.close()
+        conn.close()
+    return User(user_id) if exists else None
 
 
 # --------------------
 #   Login route
 # --------------------
 @app.route("/", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("5 per minute", methods=["POST"])
 def login():
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -498,14 +644,32 @@ def login():
         
 
         elif auth_mode == "radius":
+            radius_cfg = load_radius_config()
+            radius_secret = get_radius_secret()
+
+            if not radius_cfg['server_host'] or not radius_secret:
+                logger.error("RADIUS login attempted but RADIUS is not configured")
+                flash("RADIUS is not configured. Contact your administrator.", "danger")
+                return redirect(url_for("login"))
+
             try:
+                srv = Client(
+                    server=radius_cfg['server_host'],
+                    authport=radius_cfg['server_port'],
+                    secret=radius_secret.encode(),
+                    dict=Dictionary(f"{dir_path}/dictionary"),
+                    timeout=radius_cfg['timeout']
+                )
+
                 req = srv.CreateAuthPacket(
                     code=pyrad.packet.AccessRequest,
                     User_Name=username,
-                    NAS_Identifier=radius_nas
+                    NAS_Identifier="NetPAC"
                 )
                 
                 req["User-Password"] = req.PwCrypt(password)
+                req.add_message_authenticator()
+
                 reply = srv.SendPacket(req)
                 
                 if reply.code == pyrad.packet.AccessAccept:
@@ -513,8 +677,13 @@ def login():
                     cur = conn.cursor()
                     
                     try:
-                        cur.execute("SELECT totp_confirmed FROM user WHERE name = %s", (username,))
+                        cur.execute("SELECT totp_confirmed, method FROM user WHERE name = %s", (username,))
                         row = cur.fetchone()
+
+                        if row is not None and row[1] != 'radius':
+                            logger.warning(f"RADIUS login rejected for '{sanitize_log(username)}': name belongs to a {row[1]} account (IP: {get_real_ip()})")
+                            flash("Invalid login credentials", "danger")
+                            return redirect(url_for("login"))
 
                         session["pre_auth_user"] = username
 
@@ -553,23 +722,50 @@ def login():
 #   TOTP setup route
 # --------------------
 @app.route("/totp/setup", methods=["GET", "POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 def totp_setup():
     if "pre_auth_user" not in session:
         return redirect(url_for("login"))
 
     username = session["pre_auth_user"]
 
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT totp_confirmed FROM user WHERE name = %s", (username,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+    if row is None:
+        session.clear()
+        return redirect(url_for("login"))
+
+    if row[0]:
+        return redirect(url_for("totp_verify"))
+
     if request.method == "POST":
-        code = request.form.get("code")
+        code = request.form.get("code", "")
         secret = session.get("totp_secret_temp")
+
+        if not secret:
+            return redirect(url_for("totp_setup"))
 
         totp = pyotp.TOTP(secret)
         if totp.verify(code):
             conn = get_db()
             cur = conn.cursor()
-            cur.execute("UPDATE user SET totp_secret = %s, totp_confirmed = TRUE WHERE name = %s", (secret, username))
+            cur.execute("UPDATE user SET totp_secret = %s, totp_confirmed = TRUE WHERE name = %s AND NOT COALESCE(totp_confirmed, FALSE)", (secret, username))
+            updated = cur.rowcount
             conn.commit()
-            
+
+            if updated != 1:
+                cur.close()
+                conn.close()
+                session.clear()
+                return redirect(url_for("login"))
+
             cur.execute("SELECT method FROM user WHERE name = %s", (username,))
             row = cur.fetchone()
             method = row[0] if row else "unknown"
@@ -592,7 +788,11 @@ def totp_setup():
         session["totp_secret_temp"] = pyotp.random_base32()
 
     secret = session["totp_secret_temp"]
-    uri = pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name="NetPAC")
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=username, issuer_name="NetPAC")
+
+    favicon_url = url_for('static', filename='favicon.png', _external=True)
+    uri += "&image=" + urllib.parse.quote(favicon_url, safe='')
 
     img = qrcode.make(uri)
     buf = io.BytesIO()
@@ -606,7 +806,7 @@ def totp_setup():
 #   TOTP for existing user
 # ------------------------
 @app.route("/totp/verify", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("5 per minute", methods=["POST"])
 def totp_verify():
     if "pre_auth_user" not in session:
         return redirect(url_for("login"))
@@ -626,10 +826,14 @@ def totp_verify():
         cur.close()
         conn.close()
         
-        method = row[1] if row else "unknown"
-        
+        if not row or not row[0]:
+            session.clear()
+            return redirect(url_for("login"))
+
+        method = row[1]
+
         totp = pyotp.TOTP(row[0])
-        if totp.verify(code):
+        if totp.verify(code or ""):
             session.pop("pre_auth_user", None)
             user = User(username)
             login_user(user)
@@ -883,6 +1087,22 @@ def delete_group():
     return redirect(url_for("groups"))
 
 
+def load_host_group_names(cur, group_id=None):
+    sql = """
+        SELECT h.hostname, COALESCE(GROUP_CONCAT(g.name ORDER BY g.name SEPARATOR ','), '')
+        FROM hosts h
+        LEFT JOIN host_group_membership m ON h.host_id = m.host_id
+        LEFT JOIN host_groups g ON m.group_id = g.group_id
+    """
+    params = ()
+    if group_id is not None:
+        sql += " WHERE h.host_id IN (SELECT host_id FROM host_group_membership WHERE group_id = %s)"
+        params = (group_id,)
+    sql += " GROUP BY h.host_id, h.hostname"
+    cur.execute(sql, params)
+    return {row[0]: row[1] for row in cur.fetchall()}
+
+
 # ------------------------
 #   Hosts by Group route
 # ------------------------
@@ -908,15 +1128,7 @@ def hosts_by_group(group_id):
         """, (group_id,))
         all_hosts = cur.fetchall()
 
-        host_groups = {}
-        for row in all_hosts:
-            cur.execute("""
-                SELECT g.name FROM host_groups g
-                JOIN host_group_membership m ON g.group_id = m.group_id
-                WHERE m.host_id = %s
-            """, (row[0],))
-            groups_list = [r[0] for r in cur.fetchall()]
-            host_groups[row[1]] = ",".join(groups_list)
+        host_groups = load_host_group_names(cur, group_id)
 
         cur.execute("SELECT group_id, name, ansible_vars FROM host_groups ORDER BY name")
         available_groups = cur.fetchall()
@@ -946,15 +1158,7 @@ def hosts():
     cur.execute("SELECT host_id, hostname, description FROM hosts ORDER BY hostname")
     all_hosts = cur.fetchall()
 
-    host_groups = {}
-    for row in all_hosts:
-        cur.execute("""
-            SELECT g.name FROM host_groups g
-            JOIN host_group_membership m ON g.group_id = m.group_id
-            WHERE m.host_id = %s
-        """, (row[0],))
-        groups_list = [r[0] for r in cur.fetchall()]
-        host_groups[row[1]] = ",".join(groups_list)
+    host_groups = load_host_group_names(cur)
 
     cur.execute("SELECT group_id, name, ansible_vars FROM host_groups ORDER BY name")
     available_groups = cur.fetchall()
@@ -985,6 +1189,7 @@ def add_host():
             flash(f"Host '{hostname}' already exists", "danger")
             return redirect(url_for("hosts"))
 
+        conn.begin()
         cur.execute("INSERT INTO hosts (hostname, description) VALUES (%s, %s)", (hostname, description))
         host_id = cur.lastrowid
 
@@ -1030,6 +1235,7 @@ def update_host():
             return redirect(url_for("hosts"))
         host_id = row[0]
 
+        conn.begin()
         cur.execute("UPDATE hosts SET hostname = %s, description = %s WHERE host_id = %s", (hostname, description, host_id))
 
         cur.execute("DELETE FROM host_group_membership WHERE host_id = %s", (host_id,))
@@ -1098,12 +1304,15 @@ def load_git_config():
     return {"repo_url": "", "branch": "main", "token_encrypted": ""}
 
 
-def build_authenticated_url(repo_url: str, token: str) -> str:
-    if not token:
-        return repo_url
-    if repo_url.startswith("https://"):
-        return repo_url.replace("https://", f"https://oauth2:{token}@", 1)
-    return repo_url
+def build_git_env(token: str) -> dict:
+    env = os.environ.copy()
+    env['GIT_TERMINAL_PROMPT'] = '0'
+    if token:
+        basic = base64.b64encode(f"oauth2:{token}".encode()).decode()
+        env['GIT_CONFIG_COUNT'] = '1'
+        env['GIT_CONFIG_KEY_0'] = 'http.extraHeader'
+        env['GIT_CONFIG_VALUE_0'] = f"Authorization: Basic {basic}"
+    return env
 
 
 # --------------------
@@ -1117,7 +1326,11 @@ def scripts():
     git_config = load_git_config()
 
     entries = []
-    for name in sorted(os.listdir(base_dir)):
+    if not os.path.isdir(base_dir):
+        logger.error(f"Script directory {base_dir} does not exist")
+        flash(f"Script directory {base_dir} does not exist — run setup.sh again or create it", "warning")
+
+    for name in (sorted(os.listdir(base_dir)) if os.path.isdir(base_dir) else []):
         full = os.path.join(base_dir, name)
         if os.path.isdir(full) or name.endswith('.py'):
             entries.append({
@@ -1214,42 +1427,6 @@ def view_script(subpath):
         abort(500)
 
 
-@app.route("/scripts/<filename>/update", methods=["POST"])
-@login_required
-def update_script(filename):
-    safe_filename = secure_filename(filename)
-    base_dir = os.path.realpath("/var/lib/netpac/scripts")
-    script_path = os.path.realpath(os.path.join(base_dir, safe_filename))
-    
-    if not is_safe_path(script_path, base_dir):
-        logger.warning(f"Path traversal attempt detected: {filename}")
-        abort(403)
-    
-    if not os.path.exists(script_path):
-        flash("Script not found!", "danger")
-        return redirect(url_for("scripts"))
-    
-    new_content = request.form.get("content", "")
-    
-    if not new_content:
-        flash("Script content cannot be empty!", "danger")
-        return redirect(url_for("view_script", filename=safe_filename))
-    
-    try:
-
-        with open(script_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        
-        logger.info(f"Script '{safe_filename}' updated by {current_user.id}")
-        flash(f"Script '{safe_filename}' successfully updated!", "success")
-        
-    except Exception as e:
-        logger.error(f"Error updating script {safe_filename}: {e}")
-        flash("Error updating script!", "danger")
-    
-    return redirect(url_for('view_script', filename=safe_filename))
-
-
 @app.route("/run_scripts/<path:subpath>", methods=["POST"])
 @login_required
 def run_script(subpath):
@@ -1260,6 +1437,8 @@ def run_script(subpath):
         logger.warning(f"Path traversal attempt detected: {subpath}")
         abort(403)
     
+    reap_stale_jobs()
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (subpath,))
@@ -1277,7 +1456,7 @@ def run_script(subpath):
     secret_1 = request.form.get("secret_1", "").strip()
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
-    var_count = int(request.form.get("varCount", "0"))
+    var_count = parse_var_count(request.form.get("varCount"))
     vars_dict = {"varCount": var_count}
     for i in range(1, var_count + 1):
         vars_dict[f"variable{i}"] = request.form.get(f"variable{i}", "").strip()
@@ -1352,13 +1531,12 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
     conn = get_db()
     cur = conn.cursor()
 
-    def update_live_output(text):
+    def append_live_output(text):
         try:
-            exec_logger.info(f"DEBUG: live update called, {len(text)} chars")
             live_conn = get_db()
             live_cur = live_conn.cursor()
             live_cur.execute(
-                "UPDATE history_jobs SET output = %s WHERE job_id = %s",
+                "UPDATE history_jobs SET output = CONCAT(COALESCE(output, ''), %s) WHERE job_id = %s",
                 (text, job_id)
             )
             live_conn.commit()
@@ -1403,11 +1581,12 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
             if secret:
                 cur.execute("SELECT username, encrypted_password FROM secrets WHERE name = %s", (secret,))
                 row = cur.fetchone()
-                if row:
-                    username, password_enc = row
-                    decrypted = encryption.decrypt(password_enc)
-                    env[f'SECRET_{num}_USERNAME'] = username
-                    env[f'SECRET_{num}_PASSWORD'] = decrypted
+                if not row:
+                    raise ValueError(f"Secret '{secret}' not found (deleted or renamed?)")
+                username, password_enc = row
+                decrypted = encryption.decrypt(password_enc)
+                env[f'SECRET_{num}_USERNAME'] = username
+                env[f'SECRET_{num}_PASSWORD'] = decrypted
 
         temp_hostfile = tempfile.gettempdir() + f"/netpac_hosts_{uuid.uuid4().hex}.txt"
         with open(temp_hostfile, "w") as f:
@@ -1460,24 +1639,17 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
             exec_logger.error(f"Failed to store PID for job {job_id}: {e}")
 
         last_update = time.time()
+        flushed = 0
 
         for line in process.stdout:
             output_lines.append(line)
             if time.time() - last_update >= 1:
-                update_live_output("".join(output_lines))
+                append_live_output("".join(output_lines[flushed:]))
+                flushed = len(output_lines)
                 last_update = time.time()
 
         process.wait()
         output_script = "".join(output_lines)
-
-        update_live_output(output_script)
-
-        if process.returncode != 0:
-            status = "failed"
-
-        output_script = "".join(output_lines)
-
-        update_live_output(output_script)
 
         if process.returncode != 0:
             status = "failed"
@@ -1497,9 +1669,11 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
         try:
             cur.execute("""
                 UPDATE history_jobs 
-                SET status = %s, output = %s, finished_at = NOW(), duration = %s
+                SET status = IF(status = 'cancelled', 'cancelled', %s),
+                    output = IF(status = 'cancelled', CONCAT(%s, %s), %s),
+                    finished_at = NOW(), duration = %s
                 WHERE job_id = %s
-            """, (status, output_script, duration, job_id))
+            """, (status, output_script, JOB_CANCELLED_NOTE, output_script, duration, job_id))
             conn.commit()
         except Exception as e:
             exec_logger.error(f"Failed to update job {job_id}: {e}")
@@ -1670,26 +1844,26 @@ def sync_scripts():
             flash("Error decrypting git token", "danger")
             return redirect(url_for("scripts"))
 
-    auth_url = build_authenticated_url(repo_url, token)
+    git_env = build_git_env(token)
 
     try:
         is_git_repo = os.path.isdir(os.path.join(git_dir, ".git"))
 
         if is_git_repo:
             subprocess.run(
-                ["/usr/bin/git", "remote", "set-url", "origin", auth_url],
+                ["/usr/bin/git", "remote", "set-url", "origin", repo_url],
                 capture_output=True, text=True, timeout=10,
-                cwd=git_dir
+                cwd=git_dir, env=git_env
             )
             result = subprocess.run(
                 ["/usr/bin/git", "pull", "origin", branch],
                 capture_output=True, text=True, timeout=60,
-                cwd=git_dir
+                cwd=git_dir, env=git_env
             )
         else:
             result = subprocess.run(
-                ["/usr/bin/git", "clone", "--branch", branch, auth_url, git_dir],
-                capture_output=True, text=True, timeout=120
+                ["/usr/bin/git", "clone", "--branch", branch, repo_url, git_dir],
+                capture_output=True, text=True, timeout=120, env=git_env
             )
 
         if result.returncode == 0:
@@ -1701,7 +1875,7 @@ def sync_scripts():
             flash(f"Sync failed: {safe_stderr.strip()}", "danger")
 
     except subprocess.TimeoutExpired:
-        flash("Timeout of 60 seconds exceeded", "danger")
+        flash("Git sync timed out", "danger")
     except Exception as e:
         safe_err = str(e).replace(token, "***") if token else str(e)
         logger.error(f"Git sync error: {safe_err}")
@@ -1733,12 +1907,15 @@ def browse_playbooks(subpath):
         logger.warning(f"Path traversal attempt detected: {subpath}")
         abort(403)
 
-    if not os.path.exists(target):
+    if subpath == "" and not os.path.isdir(target):
+        logger.error(f"Playbook directory {target} does not exist")
+        flash(f"Playbook directory {target} does not exist — run setup.sh again or create it", "warning")
+    elif not os.path.exists(target):
         abort(404)
 
-    if os.path.isdir(target):
+    if subpath == "" or os.path.isdir(target):
         entries = []
-        for name in sorted(os.listdir(target)):
+        for name in (sorted(os.listdir(target)) if os.path.isdir(target) else []):
             if name == '.git':
                 continue
             full = os.path.join(target, name)
@@ -1847,7 +2024,7 @@ def playbook_graph(subpath):
     graph_name = subpath.replace("/", "_").replace(".yml", "").replace(".yaml", "")
     output_path = os.path.join(graph_dir, graph_name)
 
-    grapher = ("/home/netpac/bin/NetPAC/venv/bin/ansible-playbook-grapher")
+    grapher = os.path.join(dir_path, "venv", "bin", "ansible-playbook-grapher")
 
     if not os.path.exists(grapher) and not shutil.which("ansible-playbook-grapher"):
         flash("ansible-playbook-grapher is not installed. Install it manually over the Web-Interface -> Python -> Environment", "danger")
@@ -1934,10 +2111,13 @@ def playbook_syntax_check(subpath):
 def run_playbook(subpath):
     base_dir = os.path.abspath("/var/lib/netpac/playbooks")
     target_path = os.path.abspath(os.path.join(base_dir, subpath))
+    dry_run = request.form.get("dry_run") == "on"
 
     if not is_safe_path(target_path, base_dir):
         logger.warning(f"Path traversal attempt detected: {subpath}")
         abort(403)
+
+    reap_stale_jobs()
 
     conn = get_db()
     cur = conn.cursor()
@@ -1971,7 +2151,7 @@ def run_playbook(subpath):
             k, v = k.strip(), v.strip()
             if k:
                 extra_vars[k] = v
-    extra_vars_str = " ".join([f"{k}={v}" for k, v in extra_vars.items()])
+    extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
     variables = json.dumps({"extra_vars": extra_vars})
     secrets_json = json.dumps({"secret_1": secret_1, "secret_2": secret_2, "secret_3": secret_3})
@@ -1981,9 +2161,9 @@ def run_playbook(subpath):
     try:
         cur.execute("""
             INSERT INTO history_jobs 
-            (script_name, user_id, target, variables, status, started_at, credential, job_type)
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible')
-        """, (subpath, current_user.id, target, variables, secrets_json))
+            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run)
+            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible', %s)
+        """, (subpath, current_user.id, target, variables, secrets_json, dry_run))
         conn.commit()
         job_id = cur.lastrowid
     except Exception as e:
@@ -1996,12 +2176,12 @@ def run_playbook(subpath):
 
     thread = threading.Thread(
         target=execute_playbook_background,
-        args=(job_id, subpath, target, extra_vars_str, secret_1, secret_2, secret_3)
+        args=(job_id, subpath, target, extra_vars_str, secret_1, secret_2, secret_3, dry_run)
     )
     thread.daemon = True
     thread.start()
 
-    flash(f"Playbook '{subpath}' started (Job #{job_id})", "success")
+    flash(f"Playbook '{subpath}' started {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
 
@@ -2149,6 +2329,8 @@ def delete_playbook_template(template_id):
 @app.route("/playbook_templates/launch/<int:template_id>", methods=["POST"])
 @login_required
 def launch_playbook_template(template_id):
+    dry_run = request.form.get("dry_run") == "on"
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -2164,6 +2346,21 @@ def launch_playbook_template(template_id):
 
     name, playbook_path, target, extra_vars_raw, secret_1, secret_2, secret_3 = row
 
+    reap_stale_jobs()
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (playbook_path,))
+        running = cur.fetchone()[0]
+    finally:
+        cur.close()
+        conn.close()
+
+    if running > 0:
+        flash(f"Playbook '{playbook_path}' is already running.", "danger")
+        return redirect(url_for("history", mode="ansible"))
+
     if not target:
         target = "localhost"
 
@@ -2175,7 +2372,7 @@ def launch_playbook_template(template_id):
                 k, v = k.strip(), v.strip()
                 if k:
                     extra_vars[k] = v
-    extra_vars_str = " ".join([f"{k}={v}" for k, v in extra_vars.items()])
+    extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
     variables = json.dumps({"extra_vars": extra_vars, "template": name})
     secrets_json = json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})
@@ -2185,9 +2382,9 @@ def launch_playbook_template(template_id):
     try:
         cur.execute("""
             INSERT INTO history_jobs 
-            (script_name, user_id, target, variables, status, started_at, credential, job_type)
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible')
-        """, (playbook_path, current_user.id, target, variables, secrets_json))
+            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run)
+            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible', %s)
+        """, (playbook_path, current_user.id, target, variables, secrets_json, dry_run))
         conn.commit()
         job_id = cur.lastrowid
     except Exception as e:
@@ -2201,20 +2398,21 @@ def launch_playbook_template(template_id):
 
     thread = threading.Thread(
         target=execute_playbook_background,
-        args=(job_id, playbook_path, target, extra_vars_str, secret_1 or "", secret_2 or "", secret_3 or "")
+        args=(job_id, playbook_path, target, extra_vars_str, secret_1 or "", secret_2 or "", secret_3 or "", dry_run)
     )
     thread.daemon = True
     thread.start()
 
-    flash(f"Template '{name}' launched (Job #{job_id})", "success")
+    flash(f"Template '{name}' launched {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
 
 # --------------------
 #   Background Playbook execution
 # --------------------
-def execute_playbook_background(job_id, filename, target, extra_vars_str, secret_1, secret_2, secret_3):
-    exec_logger.info(f"Background executing playbook: {filename}")
+def execute_playbook_background(job_id, filename, target, extra_vars_str, secret_1, secret_2, secret_3, dry_run=False):
+    exec_logger.info(f"Background executing playbook: {filename}" + (" (DRY RUN)" if dry_run else ""))
+
 
     start_time = datetime.now()
     output_script = ""
@@ -2231,13 +2429,12 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     conn = get_db()
     cur = conn.cursor()
 
-    def update_live_output(text):
-        """Schreibt den aktuellen Output-Stand in die DB, ohne den Job-Status zu ändern."""
+    def append_live_output(text):
         try:
             live_conn = get_db()
             live_cur = live_conn.cursor()
             live_cur.execute(
-                "UPDATE history_jobs SET output = %s WHERE job_id = %s",
+                "UPDATE history_jobs SET output = CONCAT(COALESCE(output, ''), %s) WHERE job_id = %s",
                 (text, job_id)
             )
             live_conn.commit()
@@ -2291,11 +2488,12 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             if secret:
                 cur.execute("SELECT username, encrypted_password FROM secrets WHERE name = %s", (secret,))
                 row = cur.fetchone()
-                if row:
-                    username, password_enc = row
-                    decrypted = encryption.decrypt(password_enc)
-                    env[f'SECRET_{num}_USERNAME'] = username
-                    env[f'SECRET_{num}_PASSWORD'] = decrypted
+                if not row:
+                    raise ValueError(f"Secret '{secret}' not found (deleted or renamed?)")
+                username, password_enc = row
+                decrypted = encryption.decrypt(password_enc)
+                env[f'SECRET_{num}_USERNAME'] = username
+                env[f'SECRET_{num}_PASSWORD'] = decrypted
 
         temp_inventory = tempfile.gettempdir() + f"/netpac_inventory_{uuid.uuid4().hex}.ini"
         with open(temp_inventory, "w") as f:
@@ -2341,8 +2539,12 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             raise FileNotFoundError(f"Playbook not found: {filename}")
 
         args = [ansible, playbook_path, '-i', temp_inventory]
+
         if extra_vars_str:
             args += ['-e', extra_vars_str]
+
+        if dry_run:
+            args += ['--check', '--diff']
 
         playbook_dir = os.path.dirname(os.path.abspath(playbook_path))
 
@@ -2367,22 +2569,17 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             exec_logger.error(f"Failed to store PID for job {job_id}: {e}")
 
         last_update = time.time()
+        flushed = 0
 
         for line in process.stdout:
             output_lines.append(line)
             if time.time() - last_update >= 1:
-                update_live_output("".join(output_lines))
+                append_live_output("".join(output_lines[flushed:]))
+                flushed = len(output_lines)
                 last_update = time.time()
 
         process.wait()
         output_script = "".join(output_lines)
-
-        update_live_output(output_script)
-
-        if process.returncode != 0:
-            status = "failed"
-
-        update_live_output(output_script)
 
         if process.returncode != 0:
             status = "failed"
@@ -2402,9 +2599,11 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         try:
             cur.execute("""
                 UPDATE history_jobs 
-                SET status = %s, output = %s, finished_at = NOW(), duration = %s
+                SET status = IF(status = 'cancelled', 'cancelled', %s),
+                    output = IF(status = 'cancelled', CONCAT(%s, %s), %s),
+                    finished_at = NOW(), duration = %s
                 WHERE job_id = %s
-            """, (status, output_script, duration, job_id))
+            """, (status, output_script, JOB_CANCELLED_NOTE, output_script, duration, job_id))
             conn.commit()
         except Exception as e:
             exec_logger.error(f"Failed to update playbook job {job_id}: {e}")
@@ -2418,6 +2617,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
 #   Ansible Collections
 # --------------------
 ANSIBLE_GALAXY = shutil.which("ansible-galaxy") or "/usr/bin/ansible-galaxy"
+COLLECTION_NAME_RE = re.compile(r'^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$')
 
 @app.route("/ansible_collections")
 @login_required
@@ -2490,19 +2690,19 @@ def ansible_collections_uninstall():
         flash("Collection name required", "danger")
         return redirect(url_for("ansible_collections"))
     
-    if not re.match(r'^[a-zA-Z0-9_\.\-]+$', collection):
-        flash("Invalid collection name", "danger")
+    if not COLLECTION_NAME_RE.match(collection):
+        flash("Invalid collection name (expected namespace.name)", "danger")
         return redirect(url_for("ansible_collections"))
 
     namespace, _, name = collection.partition('.')
     removed = False
 
-    for path in glob.glob(f'/root/.ansible/collections/ansible_collections/{namespace}/{collection}'):
-        shutil.rmtree(path, ignore_errors=True)
-        removed = True
-    for path in glob.glob(f'/home/*/.ansible/collections/ansible_collections/{namespace}/{collection}'):
-        shutil.rmtree(path, ignore_errors=True)
-        removed = True
+    for pattern in (f'/root/.ansible/collections/ansible_collections/{namespace}/{name}',
+                    f'/home/*/.ansible/collections/ansible_collections/{namespace}/{name}'):
+        for path in glob.glob(pattern):
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path, ignore_errors=True)
+                removed = True
 
     if removed:
         flash(f"Collection '{collection}' removed", "success")
@@ -2517,7 +2717,11 @@ def ansible_collections_uninstall():
 def ansible_collections_update():
     collection = request.form.get("collection", "").strip()
 
-    netpac_home = pwd.getpwnam('netpac').pw_dir
+    if not COLLECTION_NAME_RE.match(collection):
+        flash("Invalid collection name (expected namespace.name)", "danger")
+        return redirect(url_for("ansible_collections"))
+
+    netpac_home = pwd.getpwuid(os.getuid()).pw_dir
     env = {**os.environ,
         'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', ''),
         'ANSIBLE_COLLECTIONS_PATH': f'{netpac_home}/.ansible/collections:/usr/lib/python3/dist-packages/ansible_collections'}
@@ -2574,7 +2778,9 @@ def ansible_collections_update_all():
 @app.route("/history")
 @login_required
 def history():
-    page = request.args.get("page", 1, type=int)
+    reap_stale_jobs()
+
+    page = max(1, request.args.get("page", 1, type=int))
     search = request.args.get("search", "").strip()
     mode = request.args.get("mode", "python").strip()
     per_page = 100
@@ -2611,7 +2817,7 @@ def history():
     total_jobs = cur.fetchone()[0]
 
     cur.execute(f"""
-        SELECT job_id, script_name, target, status, started_at, finished_at, duration, job_type
+        SELECT job_id, script_name, target, status, started_at, finished_at, duration, job_type, ansible_dry_run
         FROM history_jobs 
         {where_clause}
         ORDER BY job_id DESC
@@ -2630,7 +2836,8 @@ def history():
             'started_at': row[4],
             'finished_at': row[5],
             'duration': row[6],
-            'job_type': row[7] if row[7] else 'python'
+            'job_type': row[7] if row[7] else 'python',
+            'dry_run': bool(row[8])
         })
 
     cur.close()
@@ -2657,7 +2864,7 @@ def history_detail(job_id):
     
     cur.execute("""
         SELECT job_id, script_name, user_id, target, variables, status, 
-               output, started_at, finished_at, duration, credential, job_type
+            output, started_at, finished_at, duration, credential, job_type, ansible_dry_run
         FROM history_jobs 
         WHERE job_id = %s
     """, (job_id,))
@@ -2687,7 +2894,8 @@ def history_detail(job_id):
         'finished_at': row[8],
         'duration': row[9],
         'secrets': secrets_json,
-        'job_type': row[11] if len(row) > 11 and row[11] else 'python'
+        'job_type': row[11] if len(row) > 11 and row[11] else 'python',
+        'dry_run': bool(row[12]) if len(row) > 12 else False
     }
     
     return render_template("history_detail.html", job=job)
@@ -2696,6 +2904,8 @@ def history_detail(job_id):
 @app.route("/history/<int:job_id>/status")
 @login_required
 def history_job_status(job_id):
+    reap_stale_jobs()
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT status, output, finished_at, duration FROM history_jobs WHERE job_id = %s", (job_id,))
@@ -2712,6 +2922,54 @@ def history_job_status(job_id):
         "finished": row[2] is not None,
         "duration": row[3]
     }
+
+
+@app.route("/history/<int:job_id>/cancel", methods=["POST"])
+@login_required
+def cancel_job(job_id):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT status, pid FROM history_jobs WHERE job_id = %s", (job_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+
+        status, pid = row
+        if status != 'running':
+            flash(f"Job #{job_id} is not running anymore", "warning")
+            return redirect(url_for("history_detail", job_id=job_id))
+
+        if not pid:
+            flash(f"Job #{job_id} is still starting — try again in a moment", "warning")
+            return redirect(url_for("history_detail", job_id=job_id))
+
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            logger.error(f"No permission to cancel job {job_id} (PID {pid})")
+            flash(f"No permission to stop process {pid}. Stop it via SSH: sudo kill -TERM -{pid}", "danger")
+            return redirect(url_for("history_detail", job_id=job_id))
+
+        cur.execute("""
+            UPDATE history_jobs
+            SET status = 'cancelled',
+                finished_at = NOW(),
+                duration = TIMESTAMPDIFF(SECOND, started_at, NOW()),
+                output = CONCAT(COALESCE(output, ''), %s)
+            WHERE job_id = %s AND status = 'running'
+        """, (JOB_CANCELLED_NOTE, job_id))
+        conn.commit()
+
+        logger.info(f"Job {job_id} (PID {pid}) cancelled by {current_user.id}")
+        flash(f"Job #{job_id} cancelled", "success")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("history_detail", job_id=job_id))
 
 
 # --------------------
@@ -2742,7 +3000,7 @@ def export_history_txt(job_id):
     filename = f"{safe_name}_{job_id}.txt"
 
     response = make_response(output)
-    response.headers["Content-Type"] = "text/plain"
+    response.headers["Content-Type"] = "text/plain; charset=utf-8"
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
     return response
 
@@ -2824,7 +3082,7 @@ def add_schedule():
         variables = json.dumps({"extra_vars": extra_vars})
         use_venv = 0
     else:
-        var_count = int(request.form.get("varCount", "0"))
+        var_count = parse_var_count(request.form.get("varCount"))
         vars_dict = {"varCount": var_count}
         for i in range(1, var_count + 1):
             vars_dict[f"variable{i}"] = request.form.get(f"variable{i}", "").strip()
@@ -2858,15 +3116,23 @@ def add_schedule():
         flash("Script/Playbook and schedule are required", "danger")
         return redirect(url_for("schedule"))
 
+    try:
+        if len(schedule.split()) != 5:
+            raise ValueError("expected 5 fields")
+        CronTrigger(**parse_schedule(schedule))
+    except Exception as e:
+        flash(f"Invalid schedule '{schedule}': {e}", "danger")
+        return redirect(url_for("schedule"))
+
     conn = get_db()
     cur = conn.cursor()
     try:
+        conn.begin()
         cur.execute("""
             INSERT INTO schedule_jobs 
             (script_name, user_id, target, schedule_expression, variables, credential, is_active, created_at, use_venv, job_type)
             VALUES (%s, %s, %s, %s, %s, %s, TRUE, NOW(), %s, %s)
         """, (script_name, current_user.id, target, schedule, variables, secrets_json, use_venv, job_type))
-        conn.commit()
         cron_id = cur.lastrowid
 
         scheduler.add_job(
@@ -2886,6 +3152,7 @@ def add_schedule():
             },
             **parse_schedule(schedule)
         )
+        conn.commit()
         flash("Schedule added", "success")
 
     except Exception as e:
@@ -3042,8 +3309,13 @@ def settings():
     
     git_config = load_git_config()
     
+    radius_config = load_radius_config()
+
+    ssl_info_data = get_ssl_info()
+
     return render_template("settings.html", output=output, logs=log_files, git_config=git_config, 
-                           user_method=user_method, users=users, backups=backup_files, active_tab=active_tab)
+                        user_method=user_method, users=users, backups=backup_files, 
+                        active_tab=active_tab, radius_config=radius_config, ssl_info=ssl_info_data)
 
 
 @app.route("/settings/git", methods=["POST"])
@@ -3191,7 +3463,7 @@ def change_password():
         new_hash = bcrypt.generate_password_hash(new_password).decode('utf-8')
         cur.execute("UPDATE user SET password = %s WHERE name = %s", (new_hash, current_user.id))
         conn.commit()
-        session.pop('pw_checked', None)
+        session.pop('default_pw_warning', None)
         flash("Password changed successfully", "success")
         logger.info(f"Password changed for user: {current_user.id}")
 
@@ -3286,6 +3558,210 @@ def delete_user():
     return redirect(url_for("settings", tab="user"))
 
 
+@app.route("/settings/radius", methods=["POST"])
+@login_required
+def save_radius_config():
+    if current_user.id != 'admin':
+        abort(403)
+
+    server_host = request.form.get("server_host", "").strip()
+    server_port = request.form.get("server_port", "1812").strip()
+    secret = request.form.get("secret", "").strip()
+    timeout = request.form.get("timeout", "5").strip()
+
+    if not server_host:
+        flash("RADIUS server host is required", "danger")
+        return redirect(url_for("settings", tab="radius"))
+
+    try:
+        server_port = int(server_port)
+        timeout = int(timeout)
+    except ValueError:
+        flash("Port and timeout must be numbers", "danger")
+        return redirect(url_for("settings", tab="radius"))
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute("SELECT encrypted_secret FROM radius WHERE id = 1")
+    existing = cur.fetchone()
+
+    if secret:
+        encrypted_secret = encryption.encrypt(secret)
+    elif existing and existing[0]:
+        encrypted_secret = existing[0]
+    else:
+        encrypted_secret = None
+
+    try:
+        cur.execute("""
+            INSERT INTO radius (id, server, port, encrypted_secret, timeout)
+            VALUES (1, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                server = VALUES(server),
+                port = VALUES(port),
+                encrypted_secret = VALUES(encrypted_secret),
+                timeout = VALUES(timeout)
+        """, (server_host, server_port, encrypted_secret, timeout))
+        conn.commit()
+        logger.info(f"RADIUS config updated by {current_user.id}")
+        flash("RADIUS configuration saved", "success")
+    except Exception as e:
+        logger.error(f"Error saving RADIUS config: {e}")
+        conn.rollback()
+        flash("Error saving RADIUS configuration", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("settings", tab="radius"))
+
+
+@app.route("/settings/radius/test", methods=["POST"])
+@login_required
+def test_radius_config():
+    if current_user.id != 'admin':
+        abort(403)
+
+    test_username = request.form.get("test_username", "").strip()
+    test_password = request.form.get("test_password", "")
+
+    if not test_username or not test_password:
+        return jsonify({"success": False, "message": "Username and password required"}), 400
+
+    server_host = request.form.get("server_host", "").strip()
+    server_port = request.form.get("server_port", "1812").strip()
+    secret_input = request.form.get("secret", "").strip()
+    timeout = request.form.get("timeout", "5").strip()
+
+    if not server_host:
+        return jsonify({"success": False, "message": "Server host is required"}), 400
+
+    try:
+        server_port = int(server_port)
+        timeout = int(timeout)
+    except ValueError:
+        return jsonify({"success": False, "message": "Port and timeout must be numbers"}), 400
+
+    if secret_input:
+        radius_secret = secret_input
+    else:
+        radius_secret = get_radius_secret()
+        if not radius_secret:
+            return jsonify({"success": False, "message": "No secret provided and none saved yet"}), 400
+
+    try:
+        srv = Client(
+            server=server_host,
+            authport=server_port,
+            secret=radius_secret.encode(),
+            dict=Dictionary(f"{dir_path}/dictionary"),
+            timeout=timeout
+        )
+
+        req = srv.CreateAuthPacket(
+            code=pyrad.packet.AccessRequest,
+            User_Name=test_username,
+            NAS_Identifier="NetPAC"
+        )
+        req["User-Password"] = req.PwCrypt(test_password)
+        req.add_message_authenticator()
+        reply = srv.SendPacket(req)
+
+        if reply.code == pyrad.packet.AccessAccept:
+            logger.info(f"RADIUS test successful for user '{sanitize_log(test_username)}' by {current_user.id}")
+            return jsonify({"success": True, "message": f"Access-Accept received for '{test_username}'"})
+        else:
+            return jsonify({"success": False, "message": f"Access-Reject received for '{test_username}'"})
+
+    except Exception as e:
+        logger.error(f"RADIUS test failed: Error: {e!r}")
+        return jsonify({"success": False, "message": f"Error: {e!r}"}), 500
+
+
+def get_ssl_info():
+    cert_path = os.path.join(SSL_CERT_DIR, "netpac.crt")
+    info = {"exists": False}
+
+    if os.path.exists(cert_path):
+        try:
+            from cryptography.x509 import load_pem_x509_certificate
+            with open(cert_path, "rb") as f:
+                cert = load_pem_x509_certificate(f.read())
+
+            info = {
+                "exists": True,
+                "subject": cert.subject.rfc4514_string(),
+                "issuer": cert.issuer.rfc4514_string(),
+                "serial_number": format(cert.serial_number, 'X'),
+                "not_valid_after": cert.not_valid_after_utc,
+                "is_self_signed": cert.subject == cert.issuer
+            }
+        except Exception as e:
+            logger.error(f"Failed to read SSL cert info: {e}")
+
+    return info
+
+
+@app.route("/settings/ssl/upload", methods=["POST"])
+@login_required
+def upload_ssl_cert():
+    if current_user.id != 'admin':
+        abort(403)
+
+    cert_file = request.files.get('cert_file')
+    key_file = request.files.get('key_file')
+
+    if not cert_file or not key_file or cert_file.filename == '' or key_file.filename == '':
+        flash("Both certificate and key file are required", "danger")
+        return redirect(url_for("settings", tab="ssl"))
+
+    cert_data = cert_file.read()
+    key_data = key_file.read()
+
+    try:
+        from cryptography.x509 import load_pem_x509_certificate
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key, Encoding, PublicFormat
+        cert = load_pem_x509_certificate(cert_data)
+        key = load_pem_private_key(key_data, password=None)
+    except Exception as e:
+        flash(f"Invalid certificate or key file: {e}", "danger")
+        return redirect(url_for("settings", tab="ssl"))
+
+    cert_pub = cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    key_pub = key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    if cert_pub != key_pub:
+        flash("The private key does not belong to this certificate — nothing was changed", "danger")
+        return redirect(url_for("settings", tab="ssl"))
+
+    os.makedirs(SSL_CERT_DIR, exist_ok=True)
+
+    cert_path = os.path.join(SSL_CERT_DIR, "netpac.crt")
+    key_path = os.path.join(SSL_CERT_DIR, "netpac.key")
+
+    if os.path.exists(cert_path):
+        shutil.copy2(cert_path, cert_path + ".bak")
+    if os.path.exists(key_path):
+        shutil.copy2(key_path, key_path + ".bak")
+
+    try:
+        with open(cert_path, "wb") as f:
+            f.write(cert_data)
+        fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+        with os.fdopen(fd, "wb") as f:
+            f.write(key_data)
+        os.chmod(key_path, 0o640)
+
+        logger.info(f"SSL certificate updated by {current_user.id}")
+        flash("Certificate uploaded successfully. Restart nginx to apply: sudo systemctl reload nginx", "success")
+
+    except Exception as e:
+        logger.error(f"SSL upload error: {e}")
+        flash(f"Error saving certificate: {str(e)}", "danger")
+
+    return redirect(url_for("settings", tab="ssl"))
+
+
 # ---------------------
 #   Server error route
 # ---------------------
@@ -3326,6 +3802,27 @@ def handle_error(e):
 # ---------------------
 #   Secrets
 # ---------------------
+def find_secret_usages(cur, secret_name):
+    usages = []
+
+    cur.execute("SELECT job_id, script_name, credential FROM schedule_jobs")
+    for job_id, script_name, credential in cur.fetchall():
+        try:
+            names = json.loads(credential).values() if credential else []
+        except (ValueError, AttributeError):
+            continue
+        if secret_name in names:
+            usages.append(f"Schedule #{job_id} ({script_name})")
+
+    cur.execute("""
+        SELECT name FROM playbook_templates
+        WHERE secret_1 = %s OR secret_2 = %s OR secret_3 = %s
+        ORDER BY name
+    """, (secret_name, secret_name, secret_name))
+    usages += [f"Template '{row[0]}'" for row in cur.fetchall()]
+
+    return usages
+
 @app.route("/secrets")
 @login_required
 def secrets():
@@ -3394,11 +3891,14 @@ def create_secret():
             logger.info(f"Secret '{name}' created by {current_user.id}")
             flash(f"Secret '{name}' successfully created!", "success")
             return redirect(url_for("secrets"))
-            
+
+        except pymysql.IntegrityError:
+            flash(f"A secret named '{name}' already exists", "danger")
+            return redirect(url_for("create_secret"))
         except Exception as e:
             conn.rollback()
             logger.error(f"Error creating secret: {e}")
-            flash(f"Error creating secret", "danger")
+            flash("Error creating secret", "danger")
             return redirect(url_for("create_secret"))
         finally:
             cur.close()
@@ -3466,8 +3966,17 @@ def edit_secret(secret_id):
                 conn.commit()
                 logger.info(f"Secret '{name}' (ID: {secret_id}) updated by {current_user.id}")
                 flash(f"Secret '{name}' has been updated", "success")
+
+                if name != secret['name']:
+                    usages = find_secret_usages(cur, secret['name'])
+                    if usages:
+                        flash(f"The old name '{secret['name']}' is still used by: {', '.join(usages)}. "
+                              f"These jobs will fail until they are updated to '{name}'.", "warning")
+
                 return redirect(url_for("secrets"))
                 
+            except pymysql.IntegrityError:
+                flash(f"A secret named '{name}' already exists", "danger")
             except Exception as e:
                 conn.rollback()
                 logger.error(f"Error updating secret {secret_id}: {e}")
@@ -3513,6 +4022,11 @@ def delete_secret(secret_id):
         
         logger.info(f"Secret '{secret_name}' (ID: {secret_id}) deleted by {current_user.id}")
         flash(f"Secret '{secret_name}' was deleted", "success")
+
+        usages = find_secret_usages(cur, secret_name)
+        if usages:
+            flash(f"The deleted secret '{secret_name}' is still used by: {', '.join(usages)}. "
+                  f"These jobs will fail until another secret is selected.", "warning")
         
     except Exception as e:
         conn.rollback()
@@ -3528,8 +4042,6 @@ def delete_secret(secret_id):
 # --------------------
 #   Backup
 # --------------------
-BACKUP_DIR = "/home/netpac/bin/netpac_backups"
-DB_CNF_FILE = os.path.join(dir_path, "db_secrets.cnf")
 
 
 def run_backup_background(backup_type, filename, output_path, tables):
@@ -3746,49 +4258,39 @@ def restore_backup():
         flash(f"Safety backup error: {str(e)} — restore aborted", "danger")
         return redirect(url_for("settings", tab="backup"))
 
-    try:
-        conn = get_db()
-        cur = conn.cursor()
+    def import_sql(path):
+        try:
+            with open(path, "r") as f:
+                result = subprocess.run(
+                    [mysql_bin, f"--defaults-extra-file={DB_CNF_FILE}", db_database],
+                    stdin=f,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=300,
+                    env=env
+                )
+            return result.returncode == 0, result.stderr.strip()
+        except Exception as e:
+            return False, str(e)
 
-        if is_hosts_backup:
-            cur.execute("SET FOREIGN_KEY_CHECKS=0")
-            cur.execute("DROP TABLE IF EXISTS host_group_membership")
-            cur.execute("DROP TABLE IF EXISTS hosts")
-            cur.execute("DROP TABLE IF EXISTS host_groups")
-            cur.execute("SET FOREIGN_KEY_CHECKS=1")
-            conn.commit()
-        else:
-            cur.execute("SHOW TABLES")
-            all_tables = [r[0] for r in cur.fetchall()]
-            cur.execute("SET FOREIGN_KEY_CHECKS=0")
-            for t in all_tables:
-                cur.execute(f"DROP TABLE IF EXISTS `{t}`")
-            cur.execute("SET FOREIGN_KEY_CHECKS=1")
-            conn.commit()
+    ok, error = import_sql(file_path)
 
-        cur.close()
-        conn.close()
+    if ok:
+        logger.info(f"Restore completed by {current_user.id} from backup: {safe_filename}")
+        flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: sudo systemctl restart netpac", "success")
+        return redirect(url_for("settings", tab="backup"))
 
-        with open(file_path, "r") as f:
-            restore_result = subprocess.run(
-                [mysql_bin, f"--defaults-extra-file={DB_CNF_FILE}", db_database],
-                stdin=f,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=300,
-                env=env
-            )
+    logger.error(f"Restore from {safe_filename} failed: {error} — rolling back to {safety_filename}")
 
-        if restore_result.returncode == 0:
-            logger.info(f"Restore completed by {current_user.id} from backup: {safe_filename}")
-            flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: sudo systemctl restart netpac", "success")
-        else:
-            logger.error(f"Restore failed: {restore_result.stderr}")
-            flash(f"Restore failed: {restore_result.stderr.strip()}. A safety backup was made before this attempt: {safety_filename}", "danger")
+    rollback_ok, rollback_error = import_sql(safety_path)
 
-    except Exception as e:
-        logger.error(f"Restore error: {e}")
-        flash(f"Restore error: {str(e)}. A safety backup was made before this attempt: {safety_filename}", "danger")
+    if rollback_ok:
+        logger.info(f"Rollback to safety backup {safety_filename} completed")
+        flash(f"Restore failed: {error}. The previous state was restored automatically from '{safety_filename}'.", "danger")
+    else:
+        logger.critical(f"Rollback to safety backup {safety_filename} FAILED: {rollback_error}")
+        flash(f"Restore failed: {error}. Automatic rollback also failed: {rollback_error}. "
+              f"Restore '{safety_filename}' manually via SSH.", "danger")
 
     return redirect(url_for("settings", tab="backup"))
 
@@ -3949,7 +4451,7 @@ def health():
 
 
 # ---------------------
-#   Default password check
+#   Default checks
 # ---------------------
 @app.before_request
 def check_default_password():
@@ -3976,11 +4478,10 @@ def check_default_password():
         conn.close()
 
 
-# ---------------------
-#   Check long running jobs
-# ---------------------
 @app.before_request
 def check_long_running_jobs():
+    if request.endpoint in (None, 'static', 'favicon', 'apple_touch_icon'):
+        return
     if not current_user.is_authenticated:
         return
 
@@ -4008,22 +4509,32 @@ def check_long_running_jobs():
             base_dir = os.path.realpath("/var/lib/netpac/scripts")
 
         flash(
-            f"⚠️ Job #{job_id} ({script_name}) has been running for over 3 hours (PID {pid}). "
-            f"If this is stuck, kill the whole process group via SSH: <code>sudo kill -9 -{pid}</code>",
+            Markup(
+                "⚠️ Job #{} ({}) has been running for over 3 hours (PID {}). "
+                "If this is stuck, cancel it on the <a href=\"{}\">job page</a> "
+                "or kill the whole process group via SSH: <code>sudo kill -9 -{}</code>"
+            ).format(job_id, script_name, pid, url_for("history_detail", job_id=job_id), pid),
             "warning"
-)
+        )
         session[flash_key] = True
+
+
+# ---------------------
+#   Icon check
+# ---------------------
+@app.route('/apple-touch-icon.png')
+@app.route('/apple-touch-icon-precomposed.png')
+def apple_touch_icon():
+    return send_from_directory(app.static_folder, 'apple-touch-icon.png')
 
 
 # ---------------------
 #   Logout route
 # ---------------------
-@app.route("/logout")
+@app.route("/logout", methods=["POST"])
 @login_required
 def logout():
-
-    session.pop('_flashes', None)
-    
     logout_user()
+    session.clear()
     flash("Logged out", "success")
     return redirect(url_for("login"))

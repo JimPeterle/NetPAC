@@ -3,7 +3,6 @@
 {% block title %}Settings - NetPAC{% endblock %}
 
 {% block extra_css %}
-<script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
 {% endblock %}
 
 {% block content %}
@@ -18,14 +17,20 @@
     <button type="button" id="tabBtnUser" class="action-button {{ 'action-button-primary' if active_tab == 'user' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'user' else '0.6' }};" onclick="switchSettingsTab('user')">
         User
     </button>
+    <button type="button" id="tabBtnRadius" class="action-button {{ 'action-button-primary' if active_tab == 'radius' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'radius' else '0.6' }};" onclick="switchSettingsTab('radius')">
+        Radius
+    </button>
     <button type="button" id="tabBtnGit" class="action-button {{ 'action-button-primary' if active_tab == 'git' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'git' else '0.6' }};" onclick="switchSettingsTab('git')">
         Git
     </button>
-    <button type="button" id="tabBtnLogs" class="action-button {{ 'action-button-primary' if active_tab == 'logs' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'logs' else '0.6' }};" onclick="switchSettingsTab('logs')">
-        Logs
+    <button type="button" id="tabBtnSsl" class="action-button {{ 'action-button-primary' if active_tab == 'ssl' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'ssl' else '0.6' }};" onclick="switchSettingsTab('ssl')">
+        SSL/TLS
     </button>
     <button type="button" id="tabBtnBackup" class="action-button {{ 'action-button-primary' if active_tab == 'backup' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'backup' else '0.6' }};" onclick="switchSettingsTab('backup')">
         Backup
+    </button>
+    <button type="button" id="tabBtnLogs" class="action-button {{ 'action-button-primary' if active_tab == 'logs' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'logs' else '0.6' }};" onclick="switchSettingsTab('logs')">
+        Logs
     </button>
 </div>
 
@@ -121,6 +126,75 @@
         </div>
     </div>
     {% endif %}
+</div>
+
+<div id="tabRadius" style="{{ 'display: none;' if active_tab != 'radius' else '' }}">
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">RADIUS Server Configuration</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            <p class="settings-description" style="margin-bottom: 20px;">
+                Configure the RADIUS server used for RADIUS login. The shared secret is stored encrypted in the database.
+            </p>
+            <form method="POST" action="{{ url_for('save_radius_config') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Server Host</label>
+                    <input type="text" name="server_host" class="form-input"
+                        placeholder="radius.example.com or 192.168.1.10"
+                        value="{{ radius_config.server_host }}" required>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Server Port</label>
+                    <input type="number" name="server_port" class="form-input"
+                        placeholder="1812"
+                        value="{{ radius_config.server_port }}">
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Shared Secret</label>
+                    <input type="password" name="secret" class="form-input"
+                        placeholder="{% if radius_config.secret_set %}Secret saved – leave blank to keep{% else %}Enter shared secret{% endif %}">
+                    <span class="form-hint">
+                        {% if radius_config.secret_set %}
+                            ✓ Secret is saved – fill this in only if you want to change it
+                        {% else %}
+                            The RADIUS shared secret configured on your RADIUS server
+                        {% endif %}
+                    </span>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="form-label">Timeout (seconds)</label>
+                    <input type="number" name="timeout" class="form-input"
+                        placeholder="5"
+                        value="{{ radius_config.timeout }}">
+                </div>
+
+                <button type="submit" class="action-button action-button-primary">
+                    <span>Save</span>
+                </button>
+
+                <button type="button" class="action-button action-button-secondary" onclick="openModalAnimated('radiusTestModal')" style="margin-left: 0.5rem;">
+                    <span>Test Connection</span>
+                </button>
+
+            </form>
+
+            {% if radius_config.server_host %}
+            <div style="margin-top: 16px; padding: 12px 16px; background: var(--success-dim); border: 1px solid var(--success); border-radius: 8px; font-size: 14px; color: var(--success);">
+                Active: <strong>{{ radius_config.server_host }}:{{ radius_config.server_port }}</strong>
+            </div>
+            {% else %}
+            <div style="margin-top: 16px; padding: 12px 16px; background: var(--warning-dim); border: 1px solid var(--warning); border-radius: 8px; font-size: 14px; color: var(--warning);">
+                RADIUS is not configured yet. RADIUS login will not work until this is set up.
+            </div>
+            {% endif %}
+        </div>
+    </div>
 </div>
 
 <div id="tabGit" style="{{ 'display: none;' if active_tab != 'git' else '' }}">
@@ -273,10 +347,10 @@
                         <a href="{{ url_for('download_backup', filename=backup['name']) }}" class="action-button action-button-secondary">
                             <span>Download</span>
                         </a>
-                        <button type="button" class="action-button action-button-danger" title="Restore this backup" onclick="openRestoreModal('{{ backup['name'] }}')">
+                        <button type="button" class="action-button action-button-danger" title="Restore this backup" onclick='openRestoreModal({{ backup['name']|tojson }})'>
                             <span>Restore</span>
                         </button>
-                        <button type="button" class="action-button action-button-secondary" title="Delete backup" onclick="confirmDeleteBackup('{{ backup['name'] }}')">
+                        <button type="button" class="action-button action-button-secondary" title="Delete backup" onclick='confirmDeleteBackup({{ backup['name']|tojson }})'>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
                                 <polyline points="3 6 5 6 21 6"/>
                                 <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -290,6 +364,59 @@
             </div>
             {% else %}
             <p style="color: var(--text-muted); text-align: center; padding: 20px;">No backups available</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div id="tabSsl" style="{{ 'display: none;' if active_tab != 'ssl' else '' }}">
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">SSL Certificate</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            {% if ssl_info.exists %}
+            <div style="margin-bottom: 20px; padding: 16px; background: {{ 'var(--warning-dim)' if ssl_info.is_self_signed else 'var(--success-dim)' }}; border: 1px solid {{ 'var(--warning)' if ssl_info.is_self_signed else 'var(--success)' }}; border-radius: 8px;">
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: {{ 'var(--warning)' if ssl_info.is_self_signed else 'var(--success)' }};">
+                    {{ 'Self-signed certificate' if ssl_info.is_self_signed else 'CA-signed certificate' }}
+                </p>
+                <p style="margin: 0; font-size: 13px; color: var(--text-muted);">
+                    Subject: {{ ssl_info.subject }}<br>
+                    Issuer: {{ ssl_info.issuer }}<br>
+                    Serial: {{ ssl_info.serial_number }}<br>
+                    Expires: {{ ssl_info.not_valid_after.strftime('%d-%m-%Y') }}
+                </p>
+            </div>
+            {% else %}
+            <div style="margin-bottom: 20px; padding: 16px; background: var(--danger-dim); border: 1px solid var(--danger); border-radius: 8px; color: var(--danger);">
+                No certificate found.
+            </div>
+            {% endif %}
+
+            {% if current_user.id == 'admin' %}
+            <p class="settings-description" style="margin-bottom: 16px;">
+                Upload your own certificate (e.g. from Let's Encrypt or an internal CA) to replace the self-signed one used by default.
+            </p>
+
+            <form method="POST" action="{{ url_for('upload_ssl_cert') }}" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Certificate file (.crt / .pem)</label>
+                    <input type="file" name="cert_file" class="form-input" accept=".crt,.pem" required>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="form-label">Private key file (.key)</label>
+                    <input type="file" name="key_file" class="form-input" accept=".key,.pem" required>
+                </div>
+
+                <button type="submit" class="action-button action-button-primary">Upload Certificate</button>
+            </form>
+            {% else %}
+            <p class="settings-description" style="margin: 0;">
+                Only the admin user can replace the certificate.
+            </p>
             {% endif %}
         </div>
     </div>
@@ -352,6 +479,7 @@
                 </p>
                 <p style="color: var(--danger); font-weight: 600; margin-bottom: 1.5rem;">
                     This action is IRREVERSIBLE. All current data in the affected tables will be permanently deleted and replaced with the backup content. A safety backup of the current state will be created automatically before proceeding.
+                    Please note that during a full restore, user accounts, passwords, and TOTP settings will also be restored.
                 </p>
 
                 <div class="form-group" style="margin-bottom: 1rem;">
@@ -372,12 +500,38 @@
     </div>
 </div>
 
+<div id="radiusTestModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 450px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Test RADIUS Connection</h2>
+        </div>
+        <div style="padding: 1.5rem;">
+            <p class="settings-description" style="margin-bottom: 16px;">
+                Enter a valid RADIUS username/password to test the current form values (or the saved secret if left blank above).
+            </p>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Test Username</label>
+                <input type="text" id="radiusTestUsername" class="form-input" required>
+            </div>
+            <div class="form-group" style="margin-bottom: 16px;">
+                <label class="form-label">Test Password</label>
+                <input type="password" id="radiusTestPassword" class="form-input" required>
+            </div>
+            <div id="radiusTestResult" style="display: none; padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-top: 12px;"></div>
+        </div>
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeRadiusTestModal()">Close</button>
+            <button type="button" id="radiusTestSubmitBtn" class="action-button action-button-primary" onclick="runRadiusTest()">Run Test</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
     function switchSettingsTab(tab) {
-        const tabs = { user: 'tabUser', git: 'tabGit', logs: 'tabLogs', backup: 'tabBackup' };
+        const tabs = { user: 'tabUser', radius: 'tabRadius', git: 'tabGit', logs: 'tabLogs', backup: 'tabBackup', ssl: 'tabSsl' };
 
         Object.entries(tabs).forEach(([key, id]) => {
             const el = document.getElementById(id);
@@ -395,7 +549,7 @@
             }
         });
 
-        ['User', 'Git', 'Logs', 'Backup'].forEach(name => {
+        ['User', 'Radius', 'Git', 'Logs', 'Backup', 'Ssl'].forEach(name => {
             const btn = document.getElementById(`tabBtn${name}`);
             const isActive = name.toLowerCase() === tab;
             btn.classList.toggle('action-button-primary', isActive);
@@ -472,5 +626,69 @@
     document.getElementById('restoreModalOverlay').addEventListener('click', function(e) {
         if (e.target === this) closeRestoreModal();
     });
+
+    function closeRadiusTestModal() {
+    document.getElementById('radiusTestModal').style.display = 'none';
+    document.getElementById('radiusTestResult').style.display = 'none';
+    }
+
+    document.getElementById('radiusTestModal').addEventListener('click', function(e) {
+        if (e.target === this) closeRadiusTestModal();
+    });
+
+    function runRadiusTest() {
+        const testUsername = document.getElementById('radiusTestUsername').value;
+        const testPassword = document.getElementById('radiusTestPassword').value;
+        const resultEl = document.getElementById('radiusTestResult');
+        const btn = document.getElementById('radiusTestSubmitBtn');
+
+        if (!testUsername || !testPassword) {
+            resultEl.style.display = 'block';
+            resultEl.style.background = 'var(--danger-dim)';
+            resultEl.style.color = 'var(--danger)';
+            resultEl.textContent = 'Please enter both username and password';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Testing...';
+
+        const formData = new FormData();
+        formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+        formData.append('test_username', testUsername);
+        formData.append('test_password', testPassword);
+        formData.append('server_host', document.querySelector('input[name="server_host"]').value);
+        formData.append('server_port', document.querySelector('input[name="server_port"]').value);
+        formData.append('secret', document.querySelector('input[name="secret"]').value);
+        formData.append('timeout', document.querySelector('input[name="timeout"]').value);
+
+        fetch("{{ url_for('test_radius_config') }}", {
+            method: 'POST',
+            body: formData
+        })
+            .then(r => r.json())
+            .then(data => {
+                resultEl.style.display = 'block';
+                if (data.success) {
+                    resultEl.style.background = 'var(--success-dim)';
+                    resultEl.style.color = 'var(--success)';
+                    resultEl.textContent = '✓ ' + data.message;
+                } else {
+                    resultEl.style.background = 'var(--danger-dim)';
+                    resultEl.style.color = 'var(--danger)';
+                    resultEl.textContent = '✗ ' + data.message;
+                }
+            })
+            .catch(err => {
+                resultEl.style.display = 'block';
+                resultEl.style.background = 'var(--danger-dim)';
+                resultEl.style.color = 'var(--danger)';
+                resultEl.textContent = '✗ Request failed: ' + err.message;
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.textContent = 'Run Test';
+            });
+    }
 </script>
 {% endblock %}

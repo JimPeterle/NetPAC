@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
-sys.path.insert(0, '/home/netpac/bin/NetPAC')
+import os
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 import logging
 from netpac import scheduler, load_jobs_from_db, scheduler_logger
@@ -21,6 +22,6 @@ if __name__ == "__main__":
     try:
         while True:
             time.sleep(30)
-            load_jobs_from_db()
+            scheduler.wakeup()
     except (KeyboardInterrupt, SystemExit):
         scheduler.shutdown()

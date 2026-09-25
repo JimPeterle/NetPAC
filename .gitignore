@@ -1,36 +1,29 @@
-# .gitignore
-
-# Environment files
+# Secrets and credentials
 secret.env
-*.env
+# The template must be versioned (also overrides a global "*.env" ignore)
+!secret_examples.env
+db_secrets.cnf
+git_config.json
+
+# TLS material
+*.key
+*.crt
+*.pem
+
+# Generated at install/runtime
+gunicorn_config.py
+gunicorn.pid
+venv/
+
+# Unfinished downloads of update_vendor.py
+static/vendor/*.tmp/
 
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-venv/
-env/
-ENV/
 
-# Logs
-*.log
-*.pid
+# Database dumps / backups
+*.sql
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
+# OS / editor
 .DS_Store
-Thumbs.db
-
-# Application specific
-gunicorn.pid
-
-# Pictures
-*.png
-*.ico

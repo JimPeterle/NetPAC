@@ -18,3 +18,4 @@ ATTRIBUTE	Acct-Status-Type   40	integer
 ATTRIBUTE	Acct-Session-Id    44	string
 ATTRIBUTE	Acct-Authentic     45	integer
 ATTRIBUTE	Event-Timestamp    55	date
+ATTRIBUTE	Message-Authenticator 80	octets

@@ -14,7 +14,7 @@
             <span>Back</span>
         </a>
         {% if filename.endswith('.py') %}
-        <button class="action-button action-button-primary" type="button" onclick="toggleLaunch()">
+        <button class="action-button action-button-primary" type="button" onclick="openModalAnimated('runScriptModal')">
             <span>Launch script</span>
         </button>
         {% endif %}
@@ -26,97 +26,93 @@
         <div id="viewMode">
             <div class="code-container">
                 <pre class="line-numbers">{% for line in content.split('\n') %}{{ loop.index }}
-{% endfor %}</pre><pre class="code-content"><code class="language-python">{{ content | safe }}</code></pre>
+{% endfor %}</pre><pre class="code-content"><code class="language-python">{{ content }}</code></pre>
             </div>
         </div>
     </div>
 </div>
 
 {% if filename.endswith('.py') %}
-<div id="launchPanel" class="launch-panel">
-    <div class="launch-panel-header">
-        <h3 class="launch-panel-title">Launch script</h3>
-    </div>
-    
-    <form method="POST" action="{{ url_for('run_script', subpath=filename) }}" class="launch-form" id="scriptForm">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+<div id="runScriptModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 900px; width: 90%; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Launch Script</h2>
+        </div>
+        <form method="POST" action="{{ url_for('run_script', subpath=filename) }}" id="scriptForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div style="padding: 1.5rem;">
 
-        <div class="top-row">
-            <div>
-                <div class="form-group">
-                    <label class="form-label">Target needed? <span style="color: red;">*</span></label>
-                    <div style="display: flex; gap: 0.75rem; margin-bottom: 0.75rem;">
-                        <button type="button" class="action-button action-button-secondary" onclick="toggleTarget(true)" id="targetYesBtn">
-                            <span>Yes</span>
-                        </button>
-                        <button type="button" class="action-button action-button-secondary" onclick="toggleTarget(false)" id="targetNoBtn">
-                            <span>No</span>
-                        </button>
+                <div class="run-playbook-grid">
+                    <div class="form-group">
+                        <label class="form-label">Target Needed? *</label>
+                        <div style="display: flex; gap: 0.75rem;">
+                            <button type="button" class="target-toggle-btn" id="targetYesBtn" onclick="setTargetRequired('yes')">Yes</button>
+                            <button type="button" class="target-toggle-btn" id="targetNoBtn" onclick="setTargetRequired('no')">No</button>
+                        </div>
+                        <input type="hidden" name="targetRequired" id="targetRequiredInput" value="no">
+                        <div class="form-group" id="targetInputGroup" style="margin-top: 1rem;">
+                            <input type="text" name="target" id="targetInput" class="form-input" placeholder="Group or hostname">
+                        </div>
                     </div>
-                    <input type="hidden" name="targetRequired" id="targetRequired" required>
-                    <span class="form-hint" id="targetError" style="color: red; display: none;">Please select an option</span>
+
+                    <div class="form-group">
+                        <label class="form-label">Secrets</label>
+                        <select name="secret_1" class="form-input">
+                            <option value="">None</option>
+                            {% for secret in secrets %}
+                            <option value="{{ secret.name }}">{{ secret.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="secret_2" class="form-input" style="margin-top: 0.5rem;">
+                            <option value="">None</option>
+                            {% for secret in secrets %}
+                            <option value="{{ secret.name }}">{{ secret.name }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="secret_3" class="form-input" style="margin-top: 0.5rem;">
+                            <option value="">None</option>
+                            {% for secret in secrets %}
+                            <option value="{{ secret.name }}">{{ secret.name }}</option>
+                            {% endfor %}
+                        </select>
+
+                        <label for="useVenv" style="display: flex; align-items: center; gap: 0.6rem; margin-top: 1rem; padding: 0.75rem 1rem; border: 1px solid var(--border); border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" name="use_venv" id="useVenv" style="width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0;">
+                            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">
+                                Virtual Environment
+                                <span style="display: block; font-weight: 400; font-size: 0.78rem; margin-top: 2px; color: var(--text-secondary);">Run the script inside the venv</span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Variables</label>
+                        <div id="varTableBody"></div>
+                        <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                            Add variable
+                        </button>
+                        <p class="var-max-hint" id="varMaxHint">0 / 10</p>
+                        <input type="hidden" name="varCount" id="varCountHidden" value="0">
+                    </div>
                 </div>
-                <div class="form-group" id="targetInputGroup" style="display: none;">
-                    <label class="form-label">Target</label>
-                    <input type="text" name="target" id="targetInput" class="form-input" placeholder="Group or Hostname">
-                    <span class="form-hint">One group or hostname</span>
+
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); border-radius: 0 0 12px 12px;">
+                <div class="form-actions">
+                    <button type="button" class="action-button action-button-secondary" onclick="closeRunScriptModal()">Cancel</button>
+                    <button type="submit" class="action-button action-button-primary">Run Script</button>
                 </div>
             </div>
-
-            <div class="form-group">
-                <label class="form-label">Secrets</label>
-                <select name="secret_1" class="form-input">
-                    <option value="">None</option>
-                    {% for secret in secrets %}
-                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
-                    {% endfor %}
-                </select>
-                <select name="secret_2" class="form-input" style="margin-top: 0.5rem;">
-                    <option value="">None</option>
-                    {% for secret in secrets %}
-                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
-                    {% endfor %}
-                </select>
-                <select name="secret_3" class="form-input" style="margin-top: 0.5rem;">
-                    <option value="">None</option>
-                    {% for secret in secrets %}
-                    <option value="{{ secret.name }}">{{ secret.name }} ({{ secret.username }})</option>
-                    {% endfor %}
-                </select>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label class="form-label">Variables</label>
-            <div id="varTableBody"></div>
-            <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Add variable
-            </button>
-            <p class="var-max-hint" id="varMaxHint">0 / 3</p>
-        </div>
-
-        <input type="hidden" name="varCount" id="varCountHidden" value="0">
-
-        <div class="form-group" style="display: flex; align-items: center; gap: 0.75rem;">
-            <input type="checkbox" name="use_venv" id="useVenv" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
-            <label for="useVenv" class="form-label" style="margin: 0; cursor: pointer;">Run in virtual environment (venv)</label>
-        </div>
-
-        <div class="form-actions">
-            <button type="button" class="action-button action-button-secondary" onclick="toggleLaunch()">Cancel</button>
-            <button type="submit" class="action-button action-button-success">
-                <span>Run script</span>
-            </button>
-        </div>
-    </form>
+        </form>
+    </div>
 </div>
 {% endif %}
 {% endblock %}
 
 {% block extra_js %}
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+<script src="{{ vendor('highlightjs', 'js') }}"></script>
+<script src="{{ vendor('highlightjs', 'python') }}"></script>
 
 {% if filename.endswith('.py') %}
 <script>
@@ -124,35 +120,38 @@
 const MAX_VARS = 10;
 let varCount = 0;
 
-function toggleLaunch() {
-    const panel = document.getElementById('launchPanel');
-    if (panel) panel.classList.toggle('open');
-}
+function setTargetRequired(value) {
+    document.getElementById('targetRequiredInput').value = value;
 
-function toggleTarget(needsTarget) {
-    const targetInputGroup = document.getElementById('targetInputGroup');
-    const targetInput       = document.getElementById('targetInput');
-    const targetYesBtn      = document.getElementById('targetYesBtn');
-    const targetNoBtn       = document.getElementById('targetNoBtn');
-    const targetRequired    = document.getElementById('targetRequired');
-    const targetError       = document.getElementById('targetError');
+    const yesBtn = document.getElementById('targetYesBtn');
+    const noBtn = document.getElementById('targetNoBtn');
 
-    targetError.style.display = 'none';
-    targetRequired.value = needsTarget ? 'yes' : 'no';
+    yesBtn.classList.toggle('active', value === 'yes');
+    noBtn.classList.toggle('active', value === 'no');
+    noBtn.classList.toggle('no-active', value === 'no');
 
-    if (needsTarget) {
-        targetInputGroup.style.display = 'block';
-        targetInput.required = true;
-        targetYesBtn.classList.replace('action-button-secondary', 'action-button-primary');
-        targetNoBtn.classList.replace('action-button-primary', 'action-button-secondary');
-    } else {
-        targetInputGroup.style.display = 'none';
+    const targetInput = document.getElementById('targetInput');
+    const targetGroup = document.getElementById('targetInputGroup');
+
+    if (value === 'no') {
+        targetGroup.style.display = 'none';
         targetInput.required = false;
         targetInput.value = '';
-        targetNoBtn.classList.replace('action-button-secondary', 'action-button-primary');
-        targetYesBtn.classList.replace('action-button-primary', 'action-button-secondary');
+    } else {
+        targetGroup.style.display = 'block';
+        targetInput.required = true;
     }
 }
+
+setTargetRequired('no');
+
+function closeRunScriptModal() {
+    document.getElementById('runScriptModal').style.display = 'none';
+}
+
+document.getElementById('runScriptModal').addEventListener('click', function(e) {
+    if (e.target === this) closeRunScriptModal();
+});
 
 function updateHint() {
     document.getElementById('varMaxHint').textContent = `${varCount} / ${MAX_VARS}`;
@@ -191,18 +190,6 @@ function rebuildNames() {
     varCount = rows.length;
     updateHint();
 }
-
-document.getElementById('scriptForm').addEventListener('submit', function(e) {
-    const targetRequired = document.getElementById('targetRequired');
-    const targetError    = document.getElementById('targetError');
-
-    if (!targetRequired.value) {
-        e.preventDefault();
-        targetError.style.display = 'block';
-        targetError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        return false;
-    }
-});
 
 document.addEventListener('DOMContentLoaded', function() {
     if (typeof hljs === 'undefined') return;

@@ -11,6 +11,8 @@
 # - Systemd services
 ######################################
 
+clear
+
 set -e
 
 RED='\033[0;31m'
@@ -46,51 +48,27 @@ print_warning() {
 APP_DIR="$(pwd)"
 APP_USER="$USER"
 APP_GROUP="$(id -gn)"
+CERT_DIR="/etc/netpac/certs"
 
-# ===================================
-# CONFIGURATION FROM SECRET.ENV
-# ===================================
-if [ ! -f "$APP_DIR/secret.env" ]; then
-    print_error "secret.env not found!"
-    print_warning "Copy secret_examples.env to secret.env and fill in your values"
-    exit 1
-fi
-
-load_dotenv() {
-    export $(grep -v '^#' "$1" | xargs)
-}
-
-load_dotenv "$APP_DIR/secret.env"
-
-
-PATHCERT="${PATHCERT}"
-PATHPRIVATEKEY="${PATHPRIVATEKEY}"
-DOMAIN="${DOMAIN}"
-WORKER="${WORKER}"
+read -p "Please enter Domain:" DOMAIN
+read -p "Please define Worker (2 x CPU-Cores + 1):" WORKER
 
 # ===================================
 # CHECK USER INPUT
 # ===================================
 
-if [ -z "$HOSTNAME" ]; then 
+if [ -z "$DOMAIN" ]; then 
     print_error "DOMAIN is not set"
     exit 1
 fi
 
-if [ -z "$PATHCERT" ]; then
-    print_error "PATHCERT is not set"
+if [ -z "$WORKER" ]; then
+    print_error "WORKER is not set"
     exit 1
 fi
-
-if [ -z "$PATHPRIVATKEY" ]; then
-    print_error "PATHPRIVATKEY is not set"
-    exit 1
-fi
-
-
 
 # ===================================
-# CHECK PREREQUISITES
+# 1. CHECK PREREQUISITES
 # ===================================
 
 echo -e "${YELLOW}Checking prerequisites...${NC}"
@@ -117,7 +95,44 @@ print_status "Python detected: $(python3 --version)"
 print_status "Working directory: $APP_DIR"
 
 # ===================================
-# CREATE LOG DIRECTORY
+# 1b. LOAD SECRET.ENV
+# ===================================
+
+echo -e "${YELLOW}Loading secret.env...${NC}"
+
+if [ ! -f "$APP_DIR/secret.env" ]; then
+    print_error "secret.env not found in $APP_DIR"
+    print_warning "Create it first (see README) — it must contain at least DB_USER, DB_PW, DB_IP and DB_PORT"
+    exit 1
+fi
+
+chmod 600 "$APP_DIR/secret.env"
+print_status "secret.env permissions set to 600"
+
+read_env_value() {
+    grep -E "^$1=" "$APP_DIR/secret.env" | head -n1 | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//' || true
+}
+
+DB_USER="$(read_env_value DB_USER)"
+DB_PW="$(read_env_value DB_PW)"
+DB_IP="$(read_env_value DB_IP)"
+DB_PORT="$(read_env_value DB_PORT)"
+
+MISSING=()
+[ -z "$DB_USER" ] && MISSING+=("DB_USER")
+[ -z "$DB_PW" ]   && MISSING+=("DB_PW")
+[ -z "$DB_IP" ]   && MISSING+=("DB_IP")
+[ -z "$DB_PORT" ] && MISSING+=("DB_PORT")
+
+if [ ${#MISSING[@]} -gt 0 ]; then
+    print_error "Missing values in secret.env: ${MISSING[*]}"
+    exit 1
+fi
+
+print_status "Database settings loaded from secret.env (user: $DB_USER, host: $DB_IP:$DB_PORT)"
+
+# ===================================
+# 2. CREATE LOG DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking log directory...${NC}"
@@ -131,17 +146,17 @@ if ! getent group netpaclogs > /dev/null; then
     sudo groupadd netpaclogs
 fi
 
-sudo chown netpac:netpaclogs /var/log/netpac
+sudo chown "$APP_USER":netpaclogs /var/log/netpac
 sudo chmod 750 /var/log/netpac
 
-if ! id -nG netpac | grep -qw netpaclogs; then
-    sudo usermod -aG netpaclogs netpac
+if ! id -nG "$APP_USER" | grep -qw netpaclogs; then
+    sudo usermod -aG netpaclogs "$APP_USER"
 fi
 
 print_status "Finish all for logs directory"
 
 # ===================================
-# CREATE SCRIPT DIRECTORY
+# 3. CREATE SCRIPT DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking script directory...${NC}"
@@ -160,17 +175,17 @@ if ! getent group netpacscript > /dev/null; then
     sudo groupadd netpacscript
 fi
 
-sudo chown -R netpac:netpacscript /var/lib/netpac/scripts
+sudo chown -R "$APP_USER":netpacscript /var/lib/netpac/scripts
 sudo chmod -R 770 /var/lib/netpac/scripts
 
-if ! id -nG netpac | grep -qw netpacscript; then
-    sudo usermod -aG netpacscript netpac
+if ! id -nG "$APP_USER" | grep -qw netpacscript; then
+    sudo usermod -aG netpacscript "$APP_USER"
 fi
 
 print_status "Finish all for script directory"
 
 # ===================================
-# CREATE PLAYBOOK DIRECTORY
+# 3. CREATE PLAYBOOK DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking playbook directory...${NC}"
@@ -185,31 +200,31 @@ if [ ! -d "/var/lib/netpac/playbooks/local" ]; then
     print_status "Created playbooks/local directory"
 fi
 
-sudo chown -R netpac:netpacscript /var/lib/netpac/playbooks
+sudo chown -R "$APP_USER":netpacscript /var/lib/netpac/playbooks
 sudo chmod -R 770 /var/lib/netpac/playbooks
 
 print_status "Finish all for playbooks directory"
 
 # ===================================
-# CREATE GIT DIRECTORY
+# 3. CREATE GIT DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking git directory...${NC}"
 
 if [ ! -d "/var/lib/netpac/git" ]; then
     sudo mkdir -p /var/lib/netpac/git
-    sudo chown netpac:netpacscript /var/lib/netpac/git
+    sudo chown "$APP_USER":netpacscript /var/lib/netpac/git
     sudo chmod 770 /var/lib/netpac/git
     print_status "Created folder for git scripts"
 fi
 
-sudo chown -R netpac:netpacscript /var/lib/netpac/git
+sudo chown -R "$APP_USER":netpacscript /var/lib/netpac/git
 sudo chmod -R 770 /var/lib/netpac/git
 
 print_status "Finish all for git directory"
 
 # ===================================
-# CHECK GIT REPOSITORY
+# 4. CHECK GIT REPOSITORY
 # ===================================
 
 echo ""
@@ -224,22 +239,26 @@ else
 fi
 
 # ===================================
-# Backup DB
+# 6. Backup DB
 # ===================================
 
-sudo -u netpac tee $APP_DIR/db_secrets.cnf > /dev/null << EOF
+cnf_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+sudo -u "$APP_USER" tee "$APP_DIR/db_secrets.cnf" > /dev/null << EOF
 [client]
-user=${DB_USER}
-password=${DB_PW}
-host=${DB_IP}
+user="$(cnf_escape "$DB_USER")"
+password="$(cnf_escape "$DB_PW")"
+host="$(cnf_escape "$DB_IP")"
 port=${DB_PORT}
 EOF
 
 sudo chmod 600 $APP_DIR/db_secrets.cnf
-sudo chown netpac:netpac $APP_DIR/db_secrets.cnf
+sudo chown "$APP_USER":"$APP_GROUP" "$APP_DIR/db_secrets.cnf"
 
 # ===================================
-# INSTALL DEPENDENCIES
+# 6. INSTALL DEPENDENCIES
 # ===================================
 
 echo ""
@@ -272,6 +291,60 @@ sudo apt install ansible -y
 echo "${YELLOW}Finished installing${NC}"
 
 # ===================================
+# CHECK MINIMUM VERSIONS
+# ===================================
+echo ""
+echo -e "${YELLOW}Checking package versions...${NC}"
+
+if ! python3 - << 'EOF'
+import sys
+from importlib.metadata import version, PackageNotFoundError
+
+def parse(v):
+    parts = []
+    for p in v.split(".")[:3]:
+        digits = "".join(c for c in p if c.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts + [0] * (3 - len(parts)))
+
+requirements = [
+    ("pyrad",        "2.4",  None),
+    ("cryptography", "42.0", None),
+    ("APScheduler",  "3.0",  "4.0"),
+]
+
+errors = []
+
+if sys.version_info < (3, 10):
+    errors.append(f"Python {sys.version.split()[0]} found, >= 3.10 required")
+
+for name, minimum, maximum in requirements:
+    try:
+        installed = version(name)
+    except PackageNotFoundError:
+        errors.append(f"{name} is not installed")
+        continue
+    if parse(installed) < parse(minimum):
+        errors.append(f"{name} {installed} found, >= {minimum} required")
+    elif maximum and parse(installed) >= parse(maximum):
+        errors.append(f"{name} {installed} found, < {maximum} required")
+    else:
+        print(f"  {name} {installed} OK")
+
+for e in errors:
+    print(f"  {e}")
+
+sys.exit(1 if errors else 0)
+EOF
+then
+    print_error "Some packages are too old for NetPAC (see above)."
+    print_warning "Use a newer distribution release or install newer versions of these packages manually."
+    exit 1
+fi
+
+print_status "Package versions OK"
+
+# ===================================
 # PYTHON VENV
 # ===================================
 echo -e "${YELLOW}Creating Python virtual environment...${NC}"
@@ -283,15 +356,15 @@ else
     print_status "Virtual environment already exists"
 fi
 
-sudo chown -R netpac:netpac "$APP_DIR/venv"
+sudo chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR/venv"
 
 # ===================================
-# CREATE GRAPH FOLDER
+# 7. CREATE GRAPH FOLDER
 # ===================================
 
 if [ ! -d "/var/lib/netpac/graphs" ]; then
     sudo mkdir -p /var/lib/netpac/graphs
-    sudo chown netpac:netpacscript /var/lib/netpac/graphs
+    sudo chown "$APP_USER":netpacscript /var/lib/netpac/graphs
     sudo chmod 770 /var/lib/netpac/graphs
     print_status "Created graphs directory"
 fi
@@ -343,7 +416,7 @@ if [ "$GRAPHVIZ_AVAILABLE" = true ]; then
 fi
 
 # ===================================
-# CREATE GUNICORN CONFIG
+# 7. CREATE GUNICORN CONFIG
 # ===================================
 
 echo ""
@@ -354,25 +427,21 @@ import os
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-# Gunicorn configuration
 bind = "127.0.0.1:8443"
 workers = $WORKER
 worker_class = "sync"
 timeout = 300
 keepalive = 5
 
-# Logging
 accesslog = "/var/log/netpac/gunicorn_access.log"
 errorlog = "/var/log/netpac/gunicorn_error.log"
 loglevel = "info"
 access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
 
-# Security
 limit_request_line = 4096
 limit_request_fields = 100
 limit_request_field_size = 8190
 
-# Process
 proc_name = "netpac"
 pidfile = f"{dir_path}/gunicorn.pid"
 EOF
@@ -380,7 +449,7 @@ EOF
 print_status "Gunicorn configuration created"
 
 # ===================================
-# CREATE SYSTEMD SERVICE
+# 8. CREATE SYSTEMD SERVICE
 # ===================================
 
 echo ""
@@ -421,9 +490,10 @@ Description=NetPAC Scheduler
 After=network.target mariadb.service
 
 [Service]
-User=netpac
-WorkingDirectory=/home/netpac/bin/NetPAC
-ExecStart=/usr/bin/python3 /home/netpac/bin/NetPAC/netpac_scheduler.py
+User=$APP_USER
+Group=$APP_GROUP
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/python3 $APP_DIR/netpac_scheduler.py
 Restart=always
 
 [Install]
@@ -433,7 +503,7 @@ EOF
 print_status "Systemd service created for scheduler"
 
 # ===================================
-# INSTALL NGINX (IF REQUIRED)
+# 9. INSTALL NGINX (IF REQUIRED)
 # ===================================
 
 echo ""
@@ -456,69 +526,109 @@ else
 fi
 
 # ===================================
-# NGINX permission for /home/netpac
+# 10. NGINX permission for the app directory
 # ===================================
 
 echo ""
-echo -e "${YELLOW}Checking NGINX permission for /home/netpac...${NC}"
+echo -e "${YELLOW}Checking NGINX permission for $APP_DIR...${NC}"
 
-PERMS=$(stat -c "%a" /home/netpac)
+DIR="$APP_DIR"
+while [ "$DIR" != "/" ]; do
+    PERMS=$(stat -c "%a" "$DIR")
+    OTHER_PERMS=${PERMS: -1}
 
-OTHER_PERMS=${PERMS: -1}
+    if [ $((OTHER_PERMS & 1)) -eq 0 ]; then
+        sudo chmod o+x "$DIR"
+        print_status "Execute permission granted for others on $DIR"
+    fi
 
-if [ $((OTHER_PERMS & 1)) -eq 0 ]; then
-    sudo chmod o+x /home/netpac
-    print_status "Execute permission granted for others on /home/netpac"
-else
-    print_status "Execute permission already set on /home/netpac"
-fi
+    DIR="$(dirname "$DIR")"
+done
 
+print_status "Nginx can reach $APP_DIR/static"
 
 # ===================================
-# CREATE NGINX CONFIG
+# 11. CREATE NGINX CONFIG
+# ===================================
+
+if [ ! -d "$CERT_DIR" ]; then
+    sudo mkdir -p "$CERT_DIR"
+    sudo chown "$APP_USER":"$APP_GROUP" "$CERT_DIR"
+    sudo chmod 750 "$CERT_DIR"
+fi
+
+if [ ! -f "$CERT_DIR/netpac.crt" ]; then
+    echo "Generating self-signed SSL certificate..."
+    
+    sudo openssl req -x509 -nodes -days 825 -newkey rsa:2048 \
+        -keyout "$CERT_DIR/netpac.key" \
+        -out "$CERT_DIR/netpac.crt" \
+        -subj "/CN=netpac.local" \
+        -addext "subjectAltName=DNS:netpac.local,IP:${DOMAIN}"
+    
+    sudo chown "$APP_USER":"$APP_GROUP" "$CERT_DIR/netpac.key" "$CERT_DIR/netpac.crt"
+    sudo chmod 640 "$CERT_DIR/netpac.key"
+    sudo chmod 644 "$CERT_DIR/netpac.crt"
+    
+    print_status "Self-signed certificate generated at $CERT_DIR"
+fi
+
+NGINX_USER=$(grep "^user" /etc/nginx/nginx.conf | awk '{print $2}' | tr -d ';')
+if [ -n "$NGINX_USER" ]; then
+    sudo usermod -aG "$APP_GROUP" "$NGINX_USER"
+    print_status "Added $NGINX_USER to $APP_GROUP group for cert access"
+fi
+
+# ===================================
+# 12. CREATE NGINX CONFIG
 # ===================================
 
 echo ""
 echo -e "${YELLOW}Creating Nginx configuration...${NC}"
+
+NGINX_VERSION="$(nginx -v 2>&1 | sed -n 's|.*nginx/\([0-9.]*\).*|\1|p')"
+
+if [ -n "$NGINX_VERSION" ] && [ "$(printf '%s\n' "1.25.1" "$NGINX_VERSION" | sort -V | head -n1)" = "1.25.1" ]; then
+    NGINX_LISTEN_SSL="listen 443 ssl;
+    http2 on;"
+else
+    NGINX_LISTEN_SSL="listen 443 ssl http2;"
+fi
+
+print_status "Nginx ${NGINX_VERSION:-unknown version} detected — using: $(echo "$NGINX_LISTEN_SSL" | tr -s ' \n' ' ')"
 
 sudo tee /etc/nginx/sites-available/netpac > /dev/null << EOF
 upstream netpac_backend {
     server 127.0.0.1:8443 fail_timeout=0;
 }
 
-# Redirect HTTP to HTTPS
 server {
     listen 80;
-    server_name $HOSTNAME;
+    server_name $DOMAIN;
     return 301 https://\$server_name\$request_uri;
 }
 
-# HTTPS Server
 server {
-    listen 443 ssl http2;
-    server_name $HOSTNAME;
+    ${NGINX_LISTEN_SSL}
+    server_name $DOMAIN;
 
-    # SSL certificates
-    ssl_certificate $PATHCERT;
-    ssl_certificate_key $PATHPRIVATKEY;
+    ssl_certificate /etc/netpac/certs/netpac.crt;
+    ssl_certificate_key /etc/netpac/certs/netpac.key ;
 
-    # SSL configuration
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    # Security headers
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-XSS-Protection "1; mode=block" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
 
-    # Logging
     access_log /var/log/nginx/netpac_access.log;
     error_log /var/log/nginx/netpac_error.log;
 
-    # Client settings
     client_max_body_size 16M;
 
     location / {
@@ -538,7 +648,6 @@ server {
         proxy_set_header Connection "upgrade";
     }
 
-    # Static files
     location /static/ {
         alias $APP_DIR/static/;
         expires 30d;
@@ -550,7 +659,7 @@ EOF
 print_status "Nginx configuration created"
 
 # ===================================
-# ENABLE NGINX CONFIG
+# 13. ENABLE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -577,7 +686,7 @@ else
 fi
 
 # ===================================
-# START SERVICES
+# 14. START SERVICES
 # ===================================
 
 echo ""
@@ -586,15 +695,17 @@ echo -e "${YELLOW}Starting services...${NC}"
 sudo systemctl daemon-reload
 print_status "Systemd reloaded"
 
-sudo systemctl enable netpac
-sudo systemctl start netpac
+for svc in netpac netpac-scheduler; do
+    sudo systemctl enable "$svc"
+    sudo systemctl restart "$svc"
 
-if sudo systemctl is-active --quiet netpac; then
-    print_status "NetPAC service started"
-else
-    print_error "NetPAC service failed to start"
-    echo "Logs: sudo journalctl -u netpac -n 50"
-fi
+    if sudo systemctl is-active --quiet "$svc"; then
+        print_status "$svc service started"
+    else
+        print_error "$svc service failed to start"
+        echo "Logs: sudo journalctl -u $svc -n 50"
+    fi
+done
 
 if sudo systemctl is-active --quiet nginx; then
     sudo systemctl reload nginx
@@ -605,21 +716,7 @@ else
 fi
 
 # ===================================
-# SECRET.ENV PERMISSIONS
-# ===================================
-
-echo ""
-echo -e "${YELLOW}Securing secret.env...${NC}"
-
-if [ -f "$APP_DIR/secret.env" ]; then
-    chmod 600 "$APP_DIR/secret.env"
-    print_status "secret.env permissions set to 600"
-else
-    print_warning "secret.env not found - create it and run: chmod 600 secret.env"
-fi
-
-# ===================================
-# SUMMARY
+# 16. SUMMARY
 # ===================================
 
 echo ""
@@ -632,11 +729,11 @@ echo "  App directory: $APP_DIR"
 echo "  App user: $APP_USER"
 echo "  App local port: 8443"
 echo "  App NGINX port: 443"
-echo "  Domain: $HOSTNAME"
+echo "  Domain: $DOMAIN"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
-echo "  Check status: sudo systemctl status netpac nginx"
-echo "  Restart NetPAC: sudo systemctl restart netpac"
+echo "  Check status: sudo systemctl status netpac netpac-scheduler nginx"
+echo "  Restart NetPAC: sudo systemctl restart netpac netpac-scheduler"
 echo "  Reload Nginx: sudo systemctl reload nginx"
 echo ""
 echo -e "${YELLOW}Logs:${NC}"
@@ -645,6 +742,6 @@ echo "  Gunicorn: tail -f /var/log/netpac/gunicorn_error.log"
 echo "  Nginx: sudo tail -f /var/log/nginx/netpac_error.log"
 echo ""
 echo -e "${YELLOW}Final step:${NC}"
-echo "  Enter the page via: https://$HOSTNAME"
+echo "  Enter the page via: https://$DOMAIN"
 echo ""
 echo -e "${GREEN}Good luck!${NC}"

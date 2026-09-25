@@ -3,7 +3,7 @@
 {% block title %}Schedule - NetPAC{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<link rel="stylesheet" href="{{ vendor('flatpickr', 'css') }}">
 {% endblock %}
 
 {% block content %}
@@ -105,7 +105,7 @@
                                     </label>
                                 </form>
 
-                                <button type="button" class="action-button action-button-secondary" title="Delete schedule" onclick="confirmDelete({{ job[0] }}, '{{ job[1] }}')">
+                                <button type="button" class="action-button action-button-secondary" title="Delete schedule" onclick='confirmDelete({{ job[0] }}, {{ job[1]|tojson }})'>
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
                                         <polyline points="3 6 5 6 21 6"/>
                                         <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
@@ -169,7 +169,7 @@
                             </div>
                             <ul id="scriptList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
                                 {% for script in scripts %}
-                                <li onclick="selectScript('{{ script }}')"
+                                <li onclick='selectScript({{ script|tojson }})'
                                     style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
                                     onmouseover="this.style.background='var(--accent-dim)'"
                                     onmouseout="this.style.background=''"
@@ -217,7 +217,7 @@
                             </div>
                             <ul id="playbookList" style="list-style: none; margin: 0; padding: 0 4px 4px 4px;">
                                 {% for pb in playbooks %}
-                                <li onclick="selectPlaybook('{{ pb }}')"
+                                <li onclick='selectPlaybook({{ pb|tojson }})'
                                     style="padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 0.82rem; color: var(--text-primary);"
                                     onmouseover="this.style.background='var(--accent-dim)'"
                                     onmouseout="this.style.background=''"
@@ -452,7 +452,7 @@
 
 
     const flatpickrScript = document.createElement('script');
-    flatpickrScript.src = 'https://cdn.jsdelivr.net/npm/flatpickr';
+    flatpickrScript.src = {{ vendor('flatpickr', 'js')|tojson }};
     document.head.appendChild(flatpickrScript);
 
     flatpickrScript.onload = function() {

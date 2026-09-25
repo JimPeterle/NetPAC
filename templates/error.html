@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ error_code }} - Server Error</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css') }}">
+    <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css_italic') }}">
+    <link rel="stylesheet" href="{{ static_file('styles.css') }}">
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
 </head>
 
@@ -24,8 +26,10 @@
             </p>
 
             <div class="error-actions">
-                <a class="error-button error-button-primary" href="{{ url_for('logout') }}">Logout</a>
-                </a>
+                <form method="POST" action="{{ url_for('logout') }}" style="margin: 0; display: inline;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="error-button error-button-primary" style="cursor: pointer; border: none;">Logout</button>
+                </form>
                 <a href="javascript:history.back()" class="error-button error-button-secondary">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
                     <span>Go Back</span>
