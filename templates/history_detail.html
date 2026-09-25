@@ -16,13 +16,9 @@
         <button class="action-button action-button-secondary" onclick="location.reload()">
             <span>Refresh</span>
         </button>
-        <form method="POST" action="{{ url_for('cancel_job', job_id=job.job_id) }}" style="margin: 0;"
-              onsubmit="return confirm('Cancel job #{{ job.job_id }}? The running process will be terminated.');">
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button type="submit" class="action-button action-button-danger">
-                <span>Cancel Job</span>
-            </button>
-        </form>
+        <button type="button" class="action-button action-button-danger" onclick="openModalAnimated('cancelModalOverlay')">
+            <span>Cancel Job</span>
+        </button>
         {% endif %}
     </div>
 </div>
@@ -197,10 +193,49 @@
     </div>
 </div>
 
+{% if job.status == 'running' %}
+<div id="cancelModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Cancel Job</h2>
+        </div>
+
+        <div style="padding: 1.5rem;">
+            <p style="margin-bottom: 1rem; color: var(--text-secondary);">Do you really want to cancel job #{{ job.job_id }}?</p>
+            <p style="color: var(--danger); font-weight: 500; margin: 0;">The running process will be terminated!</p>
+        </div>
+
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="closeCancelModal()">
+                Back
+            </button>
+            <form method="POST" action="{{ url_for('cancel_job', job_id=job.job_id) }}" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-button action-button-danger">
+                    Cancel Job
+                </button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
+    {% if job.status == 'running' %}
+    function closeCancelModal() {
+        document.getElementById('cancelModalOverlay').style.display = 'none';
+    }
+
+    document.getElementById('cancelModalOverlay').addEventListener('click', function(event) {
+        if (event.target === this) {
+            closeCancelModal();
+        }
+    });
+    {% endif %}
+
     function switchTab(tab) {
         const tabs = { output: 'tabOutput', details: 'tabDetails' };
 
