@@ -2,9 +2,9 @@
     "_comment": "Third-party frontend libraries, served locally from static/vendor/<name>-<version>/. Change a version here, then run: python3 update_vendor.py",
     "animejs": {
         "package": "animejs",
-        "version": "3.2.1",
+        "version": "4.5.0",
         "files": {
-            "js": "lib/anime.min.js"
+            "js": "dist/bundles/anime.umd.min.js"
         },
         "license": "LICENSE.md"
     },

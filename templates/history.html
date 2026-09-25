@@ -139,11 +139,10 @@
     };
 
     {% if search == "" and page == 1 %}
-    anime({
-        targets: '.data-table tbody tr:first-child',
+    anime.animate('.data-table tbody tr:first-child', {
         backgroundColor: ['rgba(0,255,157,0.15)', 'rgba(0,0,0,0)'],
         duration: 1500,
-        easing: 'easeOutQuad'
+        ease: 'outQuad'
     });
     {% endif %}
 

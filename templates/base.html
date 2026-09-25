@@ -291,22 +291,21 @@
             const keyframes = [];
             for (let i = 0; i < hops; i++) {
                 keyframes.push(
-                    { translateY: -eggRandom(90, 170), scaleX: 0.9, scaleY: 1.12, duration: hopDuration / 2, easing: 'easeOutQuad' },
-                    { translateY: 0, scaleX: 1, scaleY: 1, duration: hopDuration / 2, easing: 'easeInQuad' },
-                    { scaleX: 1.25, scaleY: 0.75, duration: squashDuration / 2, easing: 'easeOutQuad' },
-                    { scaleX: 1, scaleY: 1, duration: squashDuration / 2, easing: 'easeOutQuad' }
+                    { translateY: -eggRandom(90, 170), scaleX: 0.9, scaleY: 1.12, duration: hopDuration / 2, ease: 'outQuad' },
+                    { translateY: 0, scaleX: 1, scaleY: 1, duration: hopDuration / 2, ease: 'inQuad' },
+                    { scaleX: 1.25, scaleY: 0.75, duration: squashDuration / 2, ease: 'outQuad' },
+                    { scaleX: 1, scaleY: 1, duration: squashDuration / 2, ease: 'outQuad' }
                 );
             }
 
-            const move = anime({
-                targets: runner,
+            const move = anime.animate(runner, {
                 translateX: [-runner.offsetWidth - 20, window.innerWidth + 20],
                 duration: total,
-                easing: 'linear'
+                ease: 'linear'
             });
-            const hop = anime({ targets: text, keyframes: keyframes });
+            const hop = anime.animate(text, { keyframes: keyframes });
 
-            return Promise.all([move.finished, hop.finished]).then(() => runner.remove());
+            return Promise.all([move, hop]).then(() => runner.remove());
         }
 
         function collectBricks() {
@@ -376,19 +375,18 @@
             const falls = pieces.map(el => {
                 const rect = rects.get(el);
                 if (reducedMotion) {
-                    return anime({ targets: el, opacity: 0, duration: 600, easing: 'linear' }).finished;
+                    return anime.animate(el, { opacity: 0, duration: 600, ease: 'linear' });
                 }
                 if (rect.bottom <= 0 || rect.top >= vh) {
                     return Promise.resolve();
                 }
                 el.style.willChange = 'transform';
-                return anime({
-                    targets: el,
+                return anime.animate(el, {
                     translateY: distances.get(el),
                     delay: delays.get(el),
                     duration: durations.get(el),
-                    easing: 'easeInQuad'
-                }).finished;
+                    ease: 'inQuad'
+                });
             });
 
             await Promise.all(falls);
@@ -400,7 +398,7 @@
                     else el.setAttribute('style', style);
                 });
                 roots.forEach(el => { el.style.opacity = '0'; });
-                await anime({ targets: roots, opacity: [0, 1], duration: 600, easing: 'easeOutQuad' }).finished;
+                await anime.animate(roots, { opacity: [0, 1], duration: 600, ease: 'outQuad' });
                 roots.forEach(el => {
                     const style = savedStyles.get(el);
                     if (style === null) el.removeAttribute('style');
@@ -413,12 +411,11 @@
             const modal = document.getElementById(id);
             modal.style.display = 'flex';
             const box = modal.querySelector(':scope > div');
-            anime({
-                targets: box,
+            anime.animate(box, {
                 scale: [0.92, 1],
                 opacity: [0, 1],
                 duration: 200,
-                easing: 'easeOutQuad'
+                ease: 'outQuad'
             });
         }
         

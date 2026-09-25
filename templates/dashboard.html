@@ -210,12 +210,14 @@ const border = getComputedStyle(document.documentElement).getPropertyValue('--bo
 Chart.defaults.color = textMuted;
 Chart.defaults.borderColor = border;
 
-anime({
-    targets: '.stat-number',
-    innerHTML: (el) => [0, parseInt(el.innerHTML)],
-    round: 1,
-    duration: 1200,
-    easing: 'easeOutExpo'
+document.querySelectorAll('.stat-number').forEach(el => {
+    const counter = { value: 0 };
+    anime.animate(counter, {
+        value: [0, parseInt(el.textContent) || 0],
+        duration: 1200,
+        ease: 'outExpo',
+        onUpdate: () => { el.textContent = Math.round(counter.value); }
+    });
 });
 
 const pythonCtx = document.getElementById('pythonJobsChart');

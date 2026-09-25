@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import sys
+import urllib.error
 import urllib.request
 
 BASE_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -21,10 +22,13 @@ def load_manifest():
 
 
 def fetch(url):
-    with urllib.request.urlopen(url, timeout=30) as response:
-        if response.status != 200:
-            raise RuntimeError(f"HTTP {response.status} for {url}")
-        return response.read()
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            if response.status != 200:
+                raise RuntimeError(f"HTTP {response.status} for {url}")
+            return response.read()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"HTTP {e.code} for {url}") from e
 
 
 def latest_version(package):
@@ -59,7 +63,15 @@ def download(name, lib):
             raise RuntimeError(f"{name}: refusing path outside the package: {rel}")
         done.add(rel)
 
-        content = fetch(f"{base_url}/{rel}")
+        try:
+            content = fetch(f"{base_url}/{rel}")
+        except Exception as e:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise RuntimeError(
+                f"{name} {lib['version']}: could not download '{rel}' ({e}). "
+                f"The file layout may have changed in this version — check the paths "
+                f"in static/vendor/manifest.json, or go back to the previous version."
+            ) from e
         dest = os.path.join(tmp, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         with open(dest, "wb") as f:
@@ -101,7 +113,9 @@ def cmd_check(libs):
             continue
         if latest and latest != lib["version"]:
             outdated += 1
-            print(f"  {name:16} {lib['version']:10} -> {latest} available")
+            major = latest.split(".")[0] != lib["version"].split(".")[0]
+            note = "  (major version — may break NetPAC)" if major else ""
+            print(f"  {name:16} {lib['version']:10} -> {latest} available{note}")
         else:
             print(f"  {name:16} {lib['version']:10} up to date")
     if outdated:

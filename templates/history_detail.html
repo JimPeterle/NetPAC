@@ -243,12 +243,11 @@
             const el = document.getElementById(id);
             if (key === tab) {
                 el.style.display = 'block';
-                anime({
-                    targets: el,
+                anime.animate(el, {
                     opacity: [0, 1],
                     translateY: [8, 0],
                     duration: 250,
-                    easing: 'easeOutQuad'
+                    ease: 'outQuad'
                 });
             } else {
                 el.style.display = 'none';
@@ -277,12 +276,11 @@
                     document.getElementById('noOutputPlaceholder').style.display = 'none';
                 }
                 if (data.finished) {
-                    anime({
-                        targets: '#statusBadge',
-                        scale: [1, 1.15, 1],
+                    anime.animate('#statusBadge', {
+                        scale: [{ to: 1.15 }, { to: 1 }],
                         duration: 500,
-                        easing: 'easeInOutQuad',
-                        complete: () => location.reload()
+                        ease: 'inOutQuad',
+                        onComplete: () => location.reload()
                     });
                 } else {
                     setTimeout(pollJobStatus, 2000);
@@ -293,14 +291,13 @@
     pollJobStatus();
 
 
-    anime({
-        targets: '#liveIndicatorDot',
+    anime.animate('#liveIndicatorDot', {
         scale: [1, 1.4],
         opacity: [1, 0.4],
         duration: 900,
-        direction: 'alternate',
+        alternate: true,
         loop: true,
-        easing: 'easeInOutSine'
+        ease: 'inOutSine'
     });
     {% endif %}
 
