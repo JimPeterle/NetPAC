@@ -3694,7 +3694,7 @@ def get_ssl_info():
                 "subject": cert.subject.rfc4514_string(),
                 "issuer": cert.issuer.rfc4514_string(),
                 "serial_number": format(cert.serial_number, 'X'),
-                "not_valid_after": cert.not_valid_after_utc,
+                "not_valid_after": getattr(cert, "not_valid_after_utc", None) or cert.not_valid_after,
                 "is_self_signed": cert.subject == cert.issuer
             }
         except Exception as e:

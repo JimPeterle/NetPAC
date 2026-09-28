@@ -309,7 +309,7 @@ def parse(v):
 
 requirements = [
     ("pyrad",        "2.4",  None),
-    ("cryptography", "42.0", None),
+    ("cryptography", "3.1",  None),
     ("APScheduler",  "3.0",  "4.0"),
 ]
 

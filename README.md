@@ -108,19 +108,19 @@ sudo mariadb-secure-installation
 Login as root:
 
 ```bash
-sudo mysql -u root -p
+sudo mariadb -u root -p
 ```
 
-Start the netpac_db installation:
+Start the netpac_db installation. But first, fill in the fields marked with # at the beginning in three places; you'll need to remove the # symbols to do so.:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS `netpac_db` 
 DEFAULT CHARACTER SET utf8mb4 
 COLLATE utf8mb4_bin;
 
-CREATE USER 'YOUR-USER'@'localhost' IDENTIFIED BY 'YOUR-PASSWORD';
+CREATE USER '#YOUR-USER#'@'localhost' IDENTIFIED BY '#YOUR-PASSWORD#';
 
-GRANT ALL PRIVILEGES ON netpac_db.* TO 'YOUR-USER'@'localhost';
+GRANT ALL PRIVILEGES ON netpac_db.* TO '#YOUR-USER#'@'localhost';
 
 FLUSH PRIVILEGES;
 
