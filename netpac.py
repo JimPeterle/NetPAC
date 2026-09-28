@@ -51,7 +51,7 @@ import urllib
 #   Configuration variables
 # --------------------
 dir_path = os.path.dirname(os.path.realpath(__file__))
-APP_VERSION = "4.0.0"
+APP_VERSION = "4.1.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
