@@ -1796,6 +1796,35 @@ select.form-input {
 }
 
 /* ============================================================
+   PASSWORD FIELDS
+   ============================================================ */
+.password-field {
+    position: relative;
+}
+
+.password-field > input {
+    padding-right: 40px;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+}
+
+.password-toggle:hover {
+    color: var(--text-primary);
+}
+
+/* ============================================================
    EASTER EGG — click the version 5 times
    ============================================================ */
 .sidebar-title {

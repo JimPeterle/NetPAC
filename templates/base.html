@@ -234,6 +234,40 @@
             window.location.href = `${baseUrl}?mode=${mode}&page=1`;
         }
 
+        const EYE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+
+        function addPasswordToggles() {
+            document.querySelectorAll('input[type="password"]').forEach(input => {
+                if (input.parentElement.classList.contains('password-field')) return;
+
+                const wrapper = document.createElement('div');
+                wrapper.className = 'password-field';
+                input.parentNode.insertBefore(wrapper, input);
+                wrapper.appendChild(input);
+
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'password-toggle';
+                button.tabIndex = -1;
+                button.title = 'Hold to show';
+                button.setAttribute('aria-label', 'Hold to show password');
+                button.innerHTML = EYE_ICON;
+
+                const show = () => { input.type = 'text'; };
+                const hide = () => { input.type = 'password'; };
+                button.addEventListener('mousedown', show);
+                button.addEventListener('mouseup', hide);
+                button.addEventListener('mouseleave', hide);
+                button.addEventListener('touchstart', (e) => { e.preventDefault(); show(); }, { passive: false });
+                button.addEventListener('touchend', hide);
+                button.addEventListener('touchcancel', hide);
+
+                wrapper.appendChild(button);
+            });
+        }
+
+        addPasswordToggles();
+
         const EGG_EMPTY_MS = 10000;
         let eggClicks = 0;
         let eggClickTimer = null;
