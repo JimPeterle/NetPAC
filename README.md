@@ -358,7 +358,7 @@ After this steps netpac is removed from your system.
 
 Copyright (C) 2026 JimPeterle
 
-NetPAC is free software; you can use it as described in the GPL 3.0. See [LICENSE](LICENSE) for the full text.
+NetPAC is free software; you can use it as described in the GPL-3.0. See [LICENSE](LICENSE) for the full text.
 
 The libraries in `static/vendor/` keep their own licenses (MIT, BSD-3-Clause, 
 SIL Open Font License); each license file is stored next to the library.
