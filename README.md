@@ -14,14 +14,23 @@ For RADIUS login, the local admin configures the RADIUS server under
 Settings -> Radius. The shared secret is stored encrypted in the database.
 
 setup.sh creates a self-signed SSL certificate. Your own certificate 
-(e.g. from Let's Encrypt or an internal CA) can be uploaded later under 
-Settings -> SSL/TLS.
+can be uploaded later under Settings -> SSL/TLS.
 
-## Scripts
+## Python
 
 All scripts located under **/var/lib/netpac/scripts** are displayed in the 
 GUI and can be executed there. Scripts can also be synced directly from 
 a Git repository via the built-in Git Sync feature in the UI.
+
+
+Python support:
+- Running a playbook against a target host, host group, or locally 
+  (no target required)
+- Passing extra vars at runtime
+- Schedule script jobs
+
+A Python virtual environment (venv) is available for scripts and can be 
+managed directly in the GUI (install, update, remove packages).
 
 ## Ansible Playbooks
 
@@ -31,7 +40,6 @@ directly from a Git repository — Scripts and Playbooks share the same
 Git sync target, so both are updated with a single sync.
 
 Playbooks support:
-- Browsing folders and subfolders
 - Running a playbook against a target host, host group, or locally 
   (no target required)
 - Passing extra vars (survey variables) at runtime
@@ -45,9 +53,6 @@ Ansible Collections (via ansible-galaxy) can be installed, updated, and
 removed directly in the GUI. Collections that are part of the system's 
 base installation are shown separately as read-only and are not managed 
 through NetPAC.
-
-A Python virtual environment (venv) is available for scripts and can be 
-managed directly in the GUI (install, update, remove packages).
 
 ## Credentials & Scheduling
 
@@ -75,7 +80,6 @@ venv, and Ansible Galaxy collections at a glance.
 The UI supports a dark and light mode.
 
 The following explains the steps required to install NetPAC.
-
 
 ## Database configuration
 
