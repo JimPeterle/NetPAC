@@ -563,6 +563,8 @@ def validate_password(password: str) -> str | None:
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
+login_manager.login_message = "Please log in to access this page."
+login_manager.login_message_category = "warning"
 
 
 # --------------------
