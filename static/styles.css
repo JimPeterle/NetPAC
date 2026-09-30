@@ -890,21 +890,22 @@ select.form-input {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    flex-wrap: wrap;
-    padding: 14px 24px;
     border-bottom: 1px solid var(--border);
-    transition: background 0.12s ease;
-    gap: 12px;
+    gap: 8px;
 }
 
 .host-item:last-child { border-bottom: none; }
-.host-item:hover { background: var(--bg-table-hover); }
 
 .host-info {
+    flex: 1;
     display: flex;
     align-items: center;
-    gap: 10px;
+    padding: 14px 24px;
+    transition: background 0.12s ease;
+    gap: 8px;
 }
+
+.host-info:hover { background: var(--bg-table-hover); }
 
 .host-name {
     font-size: 0.85rem;
