@@ -175,7 +175,7 @@
 
     function openEditGroupModal(groupId, groupName, ansibleVars) {
         document.getElementById('editGroupName').textContent = groupName;
-        document.getElementById('editAnsibleVars').value = ansibleVars;
+        document.getElementById('editAnsibleVars').value = ansibleVars.split(',').join('\n');
         document.getElementById('editGroupForm').action = `/groups/edit/${groupId}`;
         openModalAnimated('editGroupModal');
     }

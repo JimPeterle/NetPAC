@@ -995,7 +995,10 @@ def groups():
 @login_required
 def add_group():
     name = request.form.get("name", "").strip()
-    ansible_vars = request.form.get("ansible_vars", "").strip()
+    ansible_vars_raw = request.form.get("ansible_vars", "").strip()
+
+    ansible_vars_lines = [line.strip() for line in ansible_vars_raw.splitlines() if line.strip()]
+    ansible_vars = ",".join(ansible_vars_lines)
 
     if not name:
         flash("Group name is required", "danger")
@@ -1027,7 +1030,10 @@ def add_group():
 @app.route("/groups/edit/<int:group_id>", methods=["POST"])
 @login_required
 def edit_group(group_id):
-    ansible_vars = request.form.get("ansible_vars", "").strip()
+    ansible_vars_raw = request.form.get("ansible_vars", "").strip()
+
+    if ansible_vars_raw:
+        ansible_vars = "\n".join(v.strip() for v in ansible_vars_raw.split(",") if v.strip())
 
     conn = get_db()
     cur = conn.cursor()
@@ -2515,10 +2521,10 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                         f.write(h + "\n")
 
                     f.write(f"\n[{group_name}:vars]\n")
-                    for line in group_vars_raw.splitlines():
-                        line = line.strip()
-                        if "=" in line:
-                            f.write(line + "\n")
+                    for var in group_vars_raw.split(","):
+                        var = var.strip()
+                        if "=" in var:
+                            f.write(var + "\n")
 
         playbook_base = os.path.realpath("/var/lib/netpac/playbooks")
         git_base = os.path.realpath("/var/lib/netpac/git")
