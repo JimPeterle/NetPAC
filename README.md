@@ -358,14 +358,7 @@ After this steps netpac is removed from your system.
 
 Copyright (C) 2026 JimPeterle
 
-NetPAC is free software: you can redistribute it and/or modify it under the 
-terms of the GNU Affero General Public License as published by the Free 
-Software Foundation, either version 3 of the License, or (at your option) 
-any later version. See [LICENSE](LICENSE) for the full text.
-
-In short: you may use, modify and share NetPAC, also commercially. If you 
-distribute a modified version or make it available to others over a network, 
-you must publish its complete source code under the same license.
+NetPAC is free software; you can use it as described in the GPL 3.0. See [LICENSE](LICENSE) for the full text.
 
 The libraries in `static/vendor/` keep their own licenses (MIT, BSD-3-Clause, 
 SIL Open Font License); each license file is stored next to the library.
