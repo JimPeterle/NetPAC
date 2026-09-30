@@ -1,0 +1,4 @@
+group_id,name,created_at,ansible_vars
+1,Test_1,,ansible_network_os=cisco.ios
+2,Test_2,,"ansible_network_os=cisco.nxos,test=test"
+3,Test_3,,

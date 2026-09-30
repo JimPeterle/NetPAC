@@ -929,7 +929,6 @@ select.form-input {
 
 .group-link, .script-link {
     display: flex;
-    justify-content: space-between;
     align-items: center;
     padding: 14px 24px;
     text-decoration: none;
