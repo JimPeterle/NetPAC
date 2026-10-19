@@ -1128,7 +1128,7 @@ def hosts_by_group(group_id):
         group_name = group_row[0]
 
         cur.execute("""
-            SELECT h.host_id, h.hostname, h.description
+            SELECT h.host_id, h.hostname, h.description, h.is_active
             FROM hosts h
             JOIN host_group_membership m ON h.host_id = m.host_id
             WHERE m.group_id = %s
@@ -1163,7 +1163,7 @@ def hosts():
     conn = get_db()
     cur = conn.cursor()
 
-    cur.execute("SELECT host_id, hostname, description FROM hosts ORDER BY hostname")
+    cur.execute("SELECT host_id, hostname, description, is_active FROM hosts ORDER BY hostname")
     all_hosts = cur.fetchall()
 
     host_groups = load_host_group_names(cur)
@@ -1264,6 +1264,34 @@ def update_host():
         conn.close()
 
     return redirect(url_for("hosts"))
+
+
+@app.route("/hosts/toggle/<int:host_id>", methods=["POST"])
+@login_required
+def toggle_host(host_id):
+    conn = get_db()
+    cur = conn.cursor()
+
+    try:
+        cur.execute("SELECT is_active FROM hosts WHERE host_id = %s", (host_id,))
+        row = cur.fetchone()
+
+        if not row:
+            abort(404)
+
+        cur.execute("UPDATE hosts SET is_active = NOT is_active WHERE host_id = %s", (host_id,))
+        conn.commit()
+
+        flash("Host updated", "success")
+
+    except Exception as e:
+        scheduler_logger.error(f"Error toggling host: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(request.referrer or url_for("hosts"))
 
 
 @app.route("/hosts/delete", methods=["POST"])
@@ -1567,14 +1595,14 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
                     SELECT DISTINCT h.hostname FROM hosts h
                     JOIN host_group_membership m ON h.host_id = m.host_id
                     JOIN host_groups g ON m.group_id = g.group_id
-                    WHERE g.name = %s
+                    WHERE g.name = %s and h.is_active = True
                 """, (item,))
                 group_matches = cur.fetchall()
 
                 if group_matches:
                     resolved.update(row[0] for row in group_matches)
                 else:
-                    cur.execute("SELECT DISTINCT hostname FROM hosts WHERE hostname = %s", (item,))
+                    cur.execute("SELECT DISTINCT hostname FROM hosts WHERE hostname = %s and is_active = True", (item,))
                     host_match = cur.fetchall()
                     if host_match:
                         resolved.update(row[0] for row in host_match)
@@ -2471,7 +2499,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                     SELECT DISTINCT h.hostname FROM hosts h
                     JOIN host_group_membership m ON h.host_id = m.host_id
                     JOIN host_groups g ON m.group_id = g.group_id
-                    WHERE g.name = %s
+                    WHERE g.name = %s and h.is_active = True;
                 """, (item,))
                 group_matches = cur.fetchall()
 
@@ -2480,7 +2508,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                     resolved.update(hostnames)
                     group_host_map.setdefault(item, set()).update(hostnames)
                 else:
-                    cur.execute("SELECT DISTINCT hostname FROM hosts WHERE hostname = %s", (item,))
+                    cur.execute("SELECT DISTINCT hostname FROM hosts WHERE hostname = %s and is_active = True", (item,))
                     host_match = cur.fetchall()
                     if host_match:
                         resolved.update(row[0] for row in host_match)

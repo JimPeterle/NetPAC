@@ -1,4 +1,4 @@
-host_id,hostname,description,created_at
-1,SW-TEST-1,Test,
-2,SW-TEST-2,,
-3,SW-TEST-3,,
+host_id,hostname,description,is_active,created_at
+1,SW-TEST-1,Test,1,
+2,SW-TEST-2,,1,
+3,SW-TEST-3,,1,

@@ -131,28 +131,31 @@ FLUSH PRIVILEGES;
 USE `netpac_db`;
 
 CREATE TABLE `hosts` (
-    host_id INT AUTO_INCREMENT PRIMARY KEY,
-    hostname VARCHAR(255) UNIQUE NOT NULL,
-    description TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB 
-AUTO_INCREMENT=1 
-DEFAULT CHARSET=utf8mb4
-COLLATE=utf8mb4_unicode_ci;
+  `host_id` int(11) NOT NULL AUTO_INCREMENT,
+  `hostname` varchar(255) NOT NULL,
+  `description` text DEFAULT NULL,
+  `is_active` BOOLEAN NOT NULL DEFAULT TRUE,
+  `created_at` datetime DEFAULT current_timestamp(),
+  PRIMARY KEY (`host_id`),
+  UNIQUE KEY `hostname` (`hostname`)
+) ENGINE = InnoDB 
+AUTO_INCREMENT = 1
+DEFAULT CHARSET = utf8mb4 
+COLLATE = utf8mb4_unicode_ci
 
 CREATE TABLE `host_groups` (
-    group_id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(255) UNIQUE NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    ansible_vars TEXT DEFAULT NULL
+    `group_id` INT AUTO_INCREMENT PRIMARY KEY,
+    `name` VARCHAR(255) UNIQUE NOT NULL,
+    `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `ansible_vars` TEXT DEFAULT NULL
 ) ENGINE=InnoDB 
 AUTO_INCREMENT=1 
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `host_group_membership` (
-    host_id INT NOT NULL,
-    group_id INT NOT NULL,
+    `host_id` INT NOT NULL,
+    `group_id` INT NOT NULL,
     PRIMARY KEY (host_id, group_id),
     FOREIGN KEY (host_id) REFERENCES hosts(host_id) ON DELETE CASCADE,
     FOREIGN KEY (group_id) REFERENCES host_groups(group_id) ON DELETE CASCADE
@@ -254,9 +257,9 @@ DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE apscheduler_jobs (
-    id VARCHAR(191) NOT NULL,
-    next_run_time DOUBLE DEFAULT NULL,
-    job_state BLOB NOT NULL,
+    `id` VARCHAR(191) NOT NULL,
+    `next_run_time` DOUBLE DEFAULT NULL,
+    `job_state` BLOB NOT NULL,
     PRIMARY KEY (id),
     KEY ix_apscheduler_jobs_next_run_time (next_run_time)
 ) ENGINE=InnoDB 
@@ -264,10 +267,10 @@ AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE radius(
-    id INT PRIMARY KEY DEFAULT 1,
-    server VARCHAR(255),
-    port INT DEFAULT 1812,
-    encrypted_secret TEXT,
+    `id` INT PRIMARY KEY DEFAULT 1,
+    `server` VARCHAR(255),
+    `port` INT DEFAULT 1812,
+    `encrypted_secret` TEXT,
     timeout INT DEFAULT 5,
     CONSTRAINT single_row CHECK (id = 1)
 );
