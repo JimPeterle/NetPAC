@@ -334,11 +334,17 @@ font are stored in `static/vendor/`. This also works in management networks
 without internet access and transfers no user data to third parties.
 
 The versions are defined in `static/vendor/manifest.json`. To update them:
+
+Show available updates:
 ```Bash
-python3 update_vendor.py --check   # show available updates
-# change the version in static/vendor/manifest.json
-python3 update_vendor.py           # download the new version, remove the old one
+python3 update_vendor.py --check   
 ```
+
+Change the version in static/vendor/manifest.json and download the new version, the old one will be removed automatically.
+```Bash
+python3 update_vendor.py           
+```
+
 Each library keeps its license file in its own folder under `static/vendor/`.
 
 ## Additional information
@@ -347,6 +353,13 @@ For all users who need to create scripts:
 ``` Bash
 sudo usermod -aG netpacscript <user>
 ```
+
+If you want to update NetPac run the script:
+``` Bash
+bash update_netpac.sh
+```
+
+## Remove Netpac
 
 If you want to remove netpac do these steps as netpac user:
 ``` Bash

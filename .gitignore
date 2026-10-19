@@ -24,6 +24,7 @@ __pycache__/
 
 # Database dumps / backups
 *.sql
+!schema_pattern.sql
 
 # OS / editor
 .DS_Store
