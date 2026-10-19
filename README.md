@@ -340,7 +340,7 @@ Show available updates:
 python3 update_vendor.py --check   
 ```
 
-Change the version in static/vendor/manifest.json and download the new version, the old one will be removed automatically.
+Change the version in `static/vendor/manifest.json` and download the new version, the old one will be removed automatically.
 ```Bash
 python3 update_vendor.py           
 ```
