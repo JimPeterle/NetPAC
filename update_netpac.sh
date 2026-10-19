@@ -40,6 +40,12 @@ print_warning() {
 }
 
 # ===================================
+# MAIN
+# ===================================
+
+APP_DIR="$(pwd)"
+
+# ===================================
 # Update Repository
 # ===================================
 
@@ -67,7 +73,7 @@ echo ""
 # ===================================
 
 print_warning "To check if database is up to date, run the following command and update your database if necessary:"
-echo "mariadb-dump -u <username> -p --no-data <database_name> > schema_production.sql"
-echo "diff ./schema_production.sql /home/netpac/bin/NetPAC/database/schema_pattern.sql"
-echo "rm schema_production.sql"
+echo "mariadb-dump -u <username> -p --no-data <database_name> > $APP_DIR/schema_production.sql"
+echo "diff $APP_DIR/schema_production.sql $APP_DIR/database/schema_pattern.sql"
+echo "rm $APP_DIR/schema_production.sql"
 echo ""
