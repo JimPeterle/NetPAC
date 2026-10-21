@@ -1284,12 +1284,12 @@ def bulk_update_hosts():
         conn.begin()
         for host_id in host_ids:
             
-            if description != "" or description is not None or description != " ":
+            if description:
                 cur.execute("UPDATE hosts SET description = %s WHERE host_id = %s", (description, host_id))
  
             for gid in group_ids:
                 if gid:
-                    cur.executemany("INSERT IGNORE INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", [(host_id, gid)])
+                    cur.execute("INSERT IGNORE INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", (host_id, gid))
 
         conn.commit()
         logger.info(f"Bulk updated hosts {host_ids} with description '{description}' and groups {group_ids}")
