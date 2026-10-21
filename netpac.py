@@ -1266,6 +1266,43 @@ def update_host():
     return redirect(url_for("hosts"))
 
 
+@app.route("/hosts/edit/bulk", methods=["POST"])
+@login_required
+def bulk_edit_hosts():
+    host_ids = request.form.getlist("host_ids")
+    description = request.form.get("Description", "").strip()
+    group_ids = request.form.getlist("group_ids")
+
+    if not host_ids:
+        flash("No hosts selected for bulk edit", "danger")
+        return redirect(url_for("hosts"))
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    try:
+        conn.begin()
+        for host_id in host_ids:
+            cur.execute("UPDATE hosts SET description = %s WHERE host_id = %s", (description, host_id))
+            for gid in group_ids:
+                if gid:
+                    cur.executemany("INSERT IGNORE INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", [(host_id, gid)])
+
+        conn.commit()
+        logger.info(f"Bulk updated hosts {host_ids} with description '{description}' and groups {group_ids}")
+        flash(f"Bulk updated {len(host_ids)} hosts", "success")
+
+    except Exception as e:
+        logger.error(f"Exception on bulk_edit_hosts: {type(e).__name__}: {e}")
+        conn.rollback()
+        flash("Error updating hosts in bulk", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("hosts"))
+
+
 @app.route("/hosts/toggle/<int:host_id>", methods=["POST"])
 @login_required
 def toggle_host(host_id):

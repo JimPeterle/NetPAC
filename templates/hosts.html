@@ -34,9 +34,24 @@
 
     <div class="card-body">
         {% if hosts %}
+        <div id="bulkBar" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1rem; margin-bottom: 1rem; background: var(--bg-table-head); border: 1px solid var(--border); border-radius: 8px;">
+            <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                <input type="checkbox" id="selectAllHosts" onchange="toggleSelectAll(this.checked)" style="width: 16px; height: 16px; accent-color: var(--accent);">
+                <span>All</span>
+            </label>
+            <span id="bulkCount" style="font-weight: 600; color: var(--accent);"></span>
+            <div style="margin-left: auto; display: flex; gap: 0.5rem;">
+                <button type="button" class="action-button action-button-secondary" onclick="clearSelection()">Clear</button>
+                <button type="button" id="bulkEditBtn" class="action-button action-button-primary" onclick="openBulkModal()" disabled style="opacity: 0.5; cursor: not-allowed;">Edit selected</button>
+            </div>
+        </div>
         <ul class="host-list" id="hostList">
             {% for row in hosts %}
             <li class="host-item">
+
+                <input type="checkbox" class="host-select" value="{{ row[0] }}" onchange="updateBulkBar()"
+                    style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; margin-right: 0.75rem; flex-shrink: 0;">
+
                 <div class="host-info" style="{% if not row[3] %}opacity: 0.5;{% endif %}">
                     <span class="host-name">{{ row[1] }}</span>
                     
@@ -218,6 +233,44 @@
     </div>
 </div>
 
+<div id="bulkEditModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); max-height: 85vh; overflow-y: auto;">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Edit <span id="bulkModalCount"></span> hosts</h2>
+        </div>
+        <form action="{{ url_for('bulk_update_hosts') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div id="bulkHostIds"></div>
+            <div style="padding: 1.5rem;">
+                <div class="form-group">
+                    <label class="form-label">Add to groups</label>
+                    <span class="form-hint" style="display: block; margin-bottom: 8px;">Existing group memberships are kept — groups are only added.</span>
+                    {% if available_groups %}
+                    <div style="display: flex; flex-direction: column; gap: 0.4rem; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                        {% for g in available_groups %}
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" name="group_ids" value="{{ g[0] }}" style="width: 16px; height: 16px; accent-color: var(--accent);">
+                            {{ g[1] }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="form-hint">No groups exist yet.</p>
+                    {% endif %}
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description</label>
+                    <input type="text" name="description" class="form-input" placeholder="Leave empty to keep existing descriptions">
+                </div>
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="document.getElementById('bulkEditModal').style.display='none'">Cancel</button>
+                <button type="submit" class="action-button action-button-primary">Apply</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -282,5 +335,58 @@
             });
         });
     }
+
+    function selectedHostBoxes() {
+        return Array.from(document.querySelectorAll('.host-select:checked'));
+    }
+
+    function updateBulkBar() {
+        const n = selectedHostBoxes().length;
+        const btn = document.getElementById('bulkEditBtn');
+
+        document.getElementById('bulkCount').textContent = n > 0 ? `${n} selected` : '';
+        btn.disabled = n === 0;
+        btn.style.opacity = n === 0 ? '0.5' : '1';
+        btn.style.cursor = n === 0 ? 'not-allowed' : 'pointer';
+
+        const visible = Array.from(document.querySelectorAll('#hostList li'))
+            .filter(li => li.style.display !== 'none').length;
+        document.getElementById('selectAllHosts').checked = n > 0 && n === visible;
+    }
+
+    function toggleSelectAll(checked) {
+        document.querySelectorAll('#hostList li').forEach(li => {
+            if (li.style.display === 'none') return;
+            const cb = li.querySelector('.host-select');
+            if (cb) cb.checked = checked;
+        });
+        updateBulkBar();
+    }
+
+    function clearSelection() {
+        document.querySelectorAll('.host-select').forEach(cb => cb.checked = false);
+        document.getElementById('selectAllHosts').checked = false;
+        updateBulkBar();
+    }
+
+    function openBulkModal() {
+        const boxes = selectedHostBoxes();
+        const container = document.getElementById('bulkHostIds');
+        container.innerHTML = '';
+        boxes.forEach(cb => {
+            const input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'host_ids';
+            input.value = cb.value;
+            container.appendChild(input);
+        });
+        document.getElementById('bulkModalCount').textContent = boxes.length;
+        openModalAnimated('bulkEditModal');
+    }
+
+    document.getElementById('bulkEditModal').addEventListener('click', function(e) {
+        if (e.target === this) this.style.display = 'none';
+    });
+
 </script>
 {% endblock %}
