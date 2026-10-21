@@ -69,11 +69,27 @@ fi
 echo ""
 
 # ===================================
+# SYSTEMD SERVICE INFORMATION
+# ===================================
+
+read -p "Restart systemd services? (y/n) " -n 1 -r
+echo ""
+
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    sudo systemctl restart netpac.service
+    sudo systemctl restart netpac-scheduler.service
+    print_status "Systemd services restarted successfully."
+else
+    print_warning "Systemd services not restarted. Please restart them manually if necessary."
+fi
+
+# ===================================
 # DATABASE UPDATE INFORMATION
 # ===================================
 
 print_warning "To check if database is up to date, run the following command and update your database if necessary:"
+echo "..................................................."
 echo "mariadb-dump -u <username> -p --no-data <database_name> > $APP_DIR/schema_production.sql"
 echo "diff $APP_DIR/schema_production.sql $APP_DIR/database/schema_pattern.sql"
 echo "rm $APP_DIR/schema_production.sql"
-echo ""
+echo "..................................................."
