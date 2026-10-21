@@ -250,6 +250,9 @@
                         <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
                             <input type="checkbox" name="group_ids" value="{{ g[0] }}" style="width: 16px; height: 16px; accent-color: var(--accent);">
                             {{ g[1] }}
+                            {% if g[2] %}
+                            <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px;">ansible</span>
+                            {% endif %}
                         </label>
                         {% endfor %}
                     </div>
