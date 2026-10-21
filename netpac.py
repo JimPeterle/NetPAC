@@ -1283,7 +1283,10 @@ def bulk_update_hosts():
     try:
         conn.begin()
         for host_id in host_ids:
-            cur.execute("UPDATE hosts SET description = %s WHERE host_id = %s", (description, host_id))
+            
+            if description != "" or description is not None or description != " ":
+                cur.execute("UPDATE hosts SET description = %s WHERE host_id = %s", (description, host_id))
+ 
             for gid in group_ids:
                 if gid:
                     cur.executemany("INSERT IGNORE INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", [(host_id, gid)])
@@ -1293,7 +1296,7 @@ def bulk_update_hosts():
         flash(f"Bulk updated {len(host_ids)} hosts", "success")
 
     except Exception as e:
-        logger.error(f"Exception on bulk_edit_hosts: {type(e).__name__}: {e}")
+        logger.error(f"Exception on bulk_update_hosts: {type(e).__name__}: {e}")
         conn.rollback()
         flash("Error updating hosts in bulk", "danger")
     finally:
