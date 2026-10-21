@@ -1268,7 +1268,7 @@ def update_host():
 
 @app.route("/hosts/edit/bulk", methods=["POST"])
 @login_required
-def bulk_edit_hosts():
+def bulk_update_hosts():
     host_ids = request.form.getlist("host_ids")
     description = request.form.get("Description", "").strip()
     group_ids = request.form.getlist("group_ids")
