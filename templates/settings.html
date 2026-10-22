@@ -868,7 +868,7 @@
         const isMatrix = document.getElementById('notifyChannelMatrix').checked;
         const target = document.getElementById('notifyRuleTarget');
         document.getElementById('notifyTargetLabel').textContent = isMatrix ? 'Matrix Room ID' : 'E-Mail Address';
-        target.placeholder = isMatrix ? '!abc123:matrix.example.org' : 'ops@example.com';
+        target.placeholder = isMatrix ? '!abc123... (as shown in room settings)' : 'ops@example.com';
     }
 
     function openNotifyRuleModal(rule) {

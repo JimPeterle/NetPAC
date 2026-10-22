@@ -334,7 +334,8 @@ NOTIFY_JOB_TYPES = ('all', 'python', 'ansible')
 NOTIFY_SMTP_SECURITY = ('starttls', 'ssl', 'none')
 NOTIFY_SEND_TIMEOUT = 10
 NOTIFY_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-NOTIFY_MATRIX_ROOM_RE = re.compile(r'^![^:\s]+:\S+$')
+# Room IDs up to room version 11: !opaque:server — from room version 12 on: !hash (no server part)
+NOTIFY_MATRIX_ROOM_RE = re.compile(r'^![^:\s]+(:\S+)?$')
 
 
 def load_notification_settings(with_secrets=False):
@@ -4025,7 +4026,7 @@ def parse_notification_rule_form():
     if channel == 'email' and not NOTIFY_EMAIL_RE.match(target):
         return None, "Please enter a valid e-mail address"
     if channel == 'matrix' and not NOTIFY_MATRIX_ROOM_RE.match(target):
-        return None, "Please enter a valid Matrix room ID (e.g. !abc123:matrix.org)"
+        return None, "Please enter a valid Matrix room ID starting with ! (e.g. !abc123 or !abc123:matrix.org)"
     if len(target) > 255:
         return None, "Target is too long (max. 255 characters)"
     if job_type not in NOTIFY_JOB_TYPES:
