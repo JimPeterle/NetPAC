@@ -2260,7 +2260,7 @@ def run_script(subpath):
     thread.daemon = True
     thread.start()
 
-    logger.info(f"Script '{sanitize_log(safe_filename)}' started as job #{job_id} by {current_user.id}")
+    exec_logger.info(f"Script '{sanitize_log(safe_filename)}' started as job #{job_id} by {current_user.id}")
     flash(f"Script '{safe_filename}' started (Job #{job_id})", "success")
     return redirect(url_for("history", mode="python"))
 
@@ -2884,7 +2884,7 @@ def run_playbook(subpath):
     thread.daemon = True
     thread.start()
 
-    logger.info(f"Playbook '{sanitize_log(subpath)}' started as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
+    exec_logger.info(f"Playbook '{sanitize_log(subpath)}' started as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     flash(f"Playbook '{subpath}' started {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
@@ -3107,7 +3107,7 @@ def launch_playbook_template(template_id):
     thread.daemon = True
     thread.start()
 
-    logger.info(f"Template '{sanitize_log(name)}' launched as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
+    exec_logger.info(f"Template '{sanitize_log(name)}' launched as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     flash(f"Template '{name}' launched {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
@@ -3668,7 +3668,7 @@ def cancel_job(job_id):
         except ProcessLookupError:
             pass
         except PermissionError:
-            logger.error(f"No permission to cancel job {job_id} (PID {pid})")
+            exec_logger.error(f"No permission to cancel job {job_id} (PID {pid})")
             flash(f"No permission to stop process {pid}. Stop it via SSH: sudo kill -TERM -{pid}", "danger")
             return redirect(url_for("history_detail", job_id=job_id))
 
@@ -3683,7 +3683,7 @@ def cancel_job(job_id):
         conn.commit()
         notify_job_finished(job_id)
 
-        logger.info(f"Job {job_id} (PID {pid}) cancelled by {current_user.id}")
+        exec_logger.info(f"Job {job_id} (PID {pid}) cancelled by {current_user.id}")
         flash(f"Job #{job_id} cancelled", "success")
     finally:
         cur.close()
