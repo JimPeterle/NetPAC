@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css') }}">
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css_italic') }}">
     <link rel="stylesheet" href="{{ static_file('styles.css') }}">
+    <script>
+        try { document.documentElement.setAttribute('data-theme', localStorage.getItem('netpac-theme') || 'light'); }
+        catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+    </script>
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
 </head>
 

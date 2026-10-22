@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css') }}">
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css_italic') }}">
     <link rel="stylesheet" href="{{ static_file('styles.css') }}">
+    <script>
+        try { document.documentElement.setAttribute('data-theme', localStorage.getItem('netpac-theme') || 'light'); }
+        catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+    </script>
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
 </head>
 
@@ -61,7 +65,7 @@
             <form method="POST" style="margin-top: 0.75rem;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <input type="hidden" name="cancel" value="1"/>
-                <button type="submit" class="login-button" style="background: transparent; color: var(--text-muted, #64748b); border: 1px solid var(--border-color, #e2e8f0); box-shadow: none;">
+                <button type="submit" class="login-button login-button-secondary">
                     <span class="button-text">Cancel</span>
                 </button>
             </form>

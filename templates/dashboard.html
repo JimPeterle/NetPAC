@@ -201,7 +201,8 @@ const jobsPerDay = {{ jobs_per_day | tojson }};
 const stats = {{ stats | tojson }};
 
 const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00ff9d';
+// Charts use their own colour: --accent is near-black (light) / light grey (dark)
+const accent = getComputedStyle(document.documentElement).getPropertyValue('--chart-primary').trim() || '#3db866';
 const textMuted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#6b7fa8';
 const danger = getComputedStyle(document.documentElement).getPropertyValue('--danger').trim() || '#ef4444';
 const warning = getComputedStyle(document.documentElement).getPropertyValue('--warning').trim() || '#f59e0b';

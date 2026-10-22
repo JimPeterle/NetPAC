@@ -7,6 +7,10 @@
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css') }}">
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css_italic') }}">
     <link rel="stylesheet" href="{{ static_file('styles.css') }}">
+    <script>
+        try { document.documentElement.setAttribute('data-theme', localStorage.getItem('netpac-theme') || 'light'); }
+        catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
+    </script>
     <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}" type="image/x-icon">
 </head>
 
@@ -39,13 +43,13 @@
                 <img 
                     src="data:image/png;base64,{{ qr_b64 }}" 
                     alt="QR Code"
-                    style="width: 180px; height: 180px; border-radius: 8px; border: 3px solid var(--border-color, #e2e8f0);"
+                    style="width: 180px; height: 180px; border-radius: 8px; border: 3px solid var(--border);"
                 >
             </div>
 
             <div style="text-align: center; margin-bottom: 1rem;">
-                <p style="font-size: 0.8rem; color: var(--text-muted, #64748b); margin-bottom: 0.25rem;">Or enter manually:</p>
-                <code style="display: inline-block; padding: 0.4rem 0.75rem; background: var(--bg-secondary, #f1f5f9); border-radius: 6px; font-size: 0.85rem; letter-spacing: 0.1em; word-break: break-all;">{{ secret }}</code>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">Or enter manually:</p>
+                <code style="display: inline-block; padding: 0.4rem 0.75rem; background: var(--bg-table-head); color: var(--text-primary); border-radius: 6px; font-size: 0.85rem; letter-spacing: 0.1em; word-break: break-all;">{{ secret }}</code>
             </div>
 
             <form method="POST" class="login-form">
@@ -73,7 +77,7 @@
 
             <form method="POST" action="{{ url_for('totp_abort') }}" style="margin-top: 0.75rem;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                <button type="submit" class="login-button" style="background: transparent; color: var(--text-muted, #64748b); border: 1px solid var(--border-color, #e2e8f0); box-shadow: none;">
+                <button type="submit" class="login-button login-button-secondary">
                     <span class="button-text">Cancel</span>
                 </button>
             </form>

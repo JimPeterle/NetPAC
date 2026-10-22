@@ -4,6 +4,10 @@ NetPAC is a network automation and management platform. You can create an invent
 hosts and groups and use this inventory for Python scripts and Ansible 
 Playbooks.
 
+<p align="center">
+  <img src="docs/screenshots/dashboard.png" alt="NetPAC dashboard with job statistics" width="900">
+</p>
+
 For login, you can use RADIUS or a local user. All users are required to 
 set up two-factor authentication (TOTP) on first login.
 
@@ -70,12 +74,20 @@ multiple groups.
 
 ## Monitoring & Logs
 
+<p align="center">
+  <img src="docs/screenshots/job-output.png" alt="Live output of a running Ansible playbook in NetPAC" width="900">
+</p>
+
 The output of scripts and playbooks can be viewed in the job history and 
 exported as TXT. Running jobs can be cancelled from the job detail page; 
 they are then shown with the status **cancelled**. Jobs whose process 
 disappeared (e.g. after a NetPAC restart) are marked as **failed**. System logs can be viewed directly in the Settings area. 
 A Health page shows the status of the database, scheduler, encryption, 
 venv, and Ansible Galaxy collections at a glance.
+
+Jobs are kept in the history for 180 days; older finished jobs are deleted
+automatically once a day by the scheduler. The log files in /var/log/netpac are
+rotated weekly and kept for 8 weeks (logrotate, set up by setup.sh).
 
 The UI supports a dark and light mode.
 

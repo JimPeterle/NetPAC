@@ -140,7 +140,7 @@
 
     {% if search == "" and page == 1 %}
     anime.animate('.data-table tbody tr:first-child', {
-        backgroundColor: ['rgba(0,255,157,0.15)', 'rgba(0,0,0,0)'],
+        backgroundColor: [getComputedStyle(document.documentElement).getPropertyValue('--success-dim').trim() || 'rgba(47,147,80,0.1)', 'rgba(0,0,0,0)'],
         duration: 1500,
         ease: 'outQuad'
     });

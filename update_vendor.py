@@ -16,12 +16,16 @@ API = "https://data.jsdelivr.com/v1/packages/npm"
 
 
 def load_manifest():
+    """Loads the library list from static/vendor/manifest.json."""
+
     with open(MANIFEST, "r", encoding="utf-8") as f:
         data = json.load(f)
     return {name: lib for name, lib in data.items() if not name.startswith("_")}
 
 
 def fetch(url):
+    """Downloads a URL and returns its content."""
+
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             if response.status != 200:
@@ -32,20 +36,28 @@ def fetch(url):
 
 
 def latest_version(package):
+    """Returns the latest version of an npm package."""
+
     data = json.loads(fetch(f"{API}/{package}/resolved?specifier=latest"))
     return data.get("version")
 
 
 def lib_dir(name, lib):
+    """Returns the local folder of a library version."""
+
     return os.path.join(VENDOR_DIR, f"{name}-{lib['version']}")
 
 
 def css_assets(css_text):
+    """Returns relative files referenced by url() in a CSS file."""
+
     urls = re.findall(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", css_text)
     return [u for u in urls if not u.startswith(("data:", "http:", "https:", "/"))]
 
 
 def download(name, lib):
+    """Downloads all files of a library (incl. CSS assets) into its folder."""
+
     base_url = f"{CDN}/{lib['package']}@{lib['version']}"
     target = lib_dir(name, lib)
     tmp = target + ".tmp"
@@ -88,6 +100,8 @@ def download(name, lib):
 
 
 def remove_old_versions(name, lib):
+    """Deletes all other versions of a library."""
+
     keep = os.path.basename(lib_dir(name, lib))
     removed = []
     for entry in os.listdir(VENDOR_DIR):
@@ -99,11 +113,15 @@ def remove_old_versions(name, lib):
 
 
 def is_complete(name, lib):
+    """Returns True if all files of a library are present."""
+
     target = lib_dir(name, lib)
     return all(os.path.isfile(os.path.join(target, p)) for p in list(lib["files"].values()) + [lib["license"]])
 
 
 def cmd_check(libs):
+    """Shows which libraries have newer versions."""
+
     outdated = 0
     for name, lib in libs.items():
         try:
@@ -124,6 +142,8 @@ def cmd_check(libs):
 
 
 def cmd_update(libs):
+    """Downloads missing libraries and removes old versions."""
+
     for name, lib in libs.items():
         if is_complete(name, lib):
             print(f"  {name:16} {lib['version']:10} already present")
@@ -136,6 +156,8 @@ def cmd_update(libs):
 
 
 def main():
+    """Command line entry point (--check or update)."""
+
     parser = argparse.ArgumentParser(description="Manage NetPAC's local frontend libraries")
     parser.add_argument("--check", action="store_true", help="only show available updates")
     args = parser.parse_args()

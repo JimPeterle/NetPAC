@@ -54,7 +54,7 @@ read -p "Please enter IP:" IP
 read -p "Please define Worker (2 x CPU-Cores + 1):" WORKER
 
 # ===================================
-# CHECK USER INPUT
+# 1. CHECK USER INPUT
 # ===================================
 
 if [ -z "$IP" ]; then 
@@ -68,7 +68,7 @@ if [ -z "$WORKER" ]; then
 fi
 
 # ===================================
-# 1. CHECK PREREQUISITES
+# 2. CHECK PREREQUISITES
 # ===================================
 
 echo -e "${YELLOW}Checking prerequisites...${NC}"
@@ -95,7 +95,7 @@ print_status "Python detected: $(python3 --version)"
 print_status "Working directory: $APP_DIR"
 
 # ===================================
-# 1b. LOAD SECRET.ENV
+# 3. LOAD SECRET.ENV
 # ===================================
 
 echo -e "${YELLOW}Loading secret.env...${NC}"
@@ -132,7 +132,7 @@ fi
 print_status "Database settings loaded from secret.env (user: $DB_USER, host: $DB_IP:$DB_PORT)"
 
 # ===================================
-# 2. CREATE LOG DIRECTORY
+# 4. CREATE LOG DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking log directory...${NC}"
@@ -155,8 +155,31 @@ fi
 
 print_status "Finish all for logs directory"
 
+if ! command -v logrotate > /dev/null; then
+    sudo apt install logrotate -y
+fi
+
+sudo tee /etc/logrotate.d/netpac > /dev/null << LOGROTATE
+/var/log/netpac/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su $APP_USER netpaclogs
+}
+LOGROTATE
+
+if sudo logrotate -d /etc/logrotate.d/netpac > /dev/null 2>&1; then
+    print_status "Log rotation configured (weekly, kept for 8 weeks)"
+else
+    print_warning "Log rotation could not be validated — check: sudo logrotate -d /etc/logrotate.d/netpac"
+fi
+
 # ===================================
-# 3. CREATE SCRIPT DIRECTORY
+# 5. CREATE SCRIPT DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking script directory...${NC}"
@@ -185,7 +208,7 @@ fi
 print_status "Finish all for script directory"
 
 # ===================================
-# 3. CREATE PLAYBOOK DIRECTORY
+# 6. CREATE PLAYBOOK DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking playbook directory...${NC}"
@@ -206,7 +229,7 @@ sudo chmod -R 770 /var/lib/netpac/playbooks
 print_status "Finish all for playbooks directory"
 
 # ===================================
-# 3. CREATE GIT DIRECTORY
+# 7. CREATE GIT DIRECTORY
 # ===================================
 
 echo -e "${YELLOW}Checking git directory...${NC}"
@@ -224,7 +247,7 @@ sudo chmod -R 770 /var/lib/netpac/git
 print_status "Finish all for git directory"
 
 # ===================================
-# 4. CHECK GIT REPOSITORY
+# 8. CHECK GIT REPOSITORY
 # ===================================
 
 echo ""
@@ -239,13 +262,14 @@ else
 fi
 
 # ===================================
-# 6. Backup DB
+# 9. CREATE DATABASE CREDENTIALS FILE
 # ===================================
 
 cnf_escape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
+sudo install -m 600 -o "$APP_USER" -g "$APP_GROUP" /dev/null "$APP_DIR/db_secrets.cnf"
 sudo -u "$APP_USER" tee "$APP_DIR/db_secrets.cnf" > /dev/null << EOF
 [client]
 user="$(cnf_escape "$DB_USER")"
@@ -258,7 +282,7 @@ sudo chmod 600 $APP_DIR/db_secrets.cnf
 sudo chown "$APP_USER":"$APP_GROUP" "$APP_DIR/db_secrets.cnf"
 
 # ===================================
-# 6. INSTALL DEPENDENCIES
+# 10. INSTALL DEPENDENCIES
 # ===================================
 
 echo ""
@@ -291,7 +315,7 @@ sudo apt install ansible -y
 echo "${YELLOW}Finished installing${NC}"
 
 # ===================================
-# CHECK MINIMUM VERSIONS
+# 11. CHECK MINIMUM VERSIONS
 # ===================================
 echo ""
 echo -e "${YELLOW}Checking package versions...${NC}"
@@ -345,7 +369,7 @@ fi
 print_status "Package versions OK"
 
 # ===================================
-# PYTHON VENV
+# 12. CREATE PYTHON VENV
 # ===================================
 echo -e "${YELLOW}Creating Python virtual environment...${NC}"
 
@@ -359,7 +383,7 @@ fi
 sudo chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR/venv"
 
 # ===================================
-# 7. CREATE GRAPH FOLDER
+# 13. CREATE GRAPH FOLDER
 # ===================================
 
 if [ ! -d "/var/lib/netpac/graphs" ]; then
@@ -370,7 +394,7 @@ if [ ! -d "/var/lib/netpac/graphs" ]; then
 fi
 
 # ===================================
-# GRAPHVIZ (optional)
+# 14. GRAPHVIZ (OPTIONAL)
 # ===================================
 GRAPHVIZ_AVAILABLE=false
 
@@ -391,7 +415,7 @@ else
 fi
 
 # ===================================
-# ANSIBLE PLAYBOOK GRAPHER (optional)
+# 15. ANSIBLE PLAYBOOK GRAPHER (OPTIONAL)
 # ===================================
 if [ "$GRAPHVIZ_AVAILABLE" = true ]; then
     if command -v ansible-playbook-grapher &> /dev/null; then
@@ -416,7 +440,7 @@ if [ "$GRAPHVIZ_AVAILABLE" = true ]; then
 fi
 
 # ===================================
-# 7. CREATE GUNICORN CONFIG
+# 16. CREATE GUNICORN CONFIG
 # ===================================
 
 echo ""
@@ -449,7 +473,7 @@ EOF
 print_status "Gunicorn configuration created"
 
 # ===================================
-# 8. CREATE SYSTEMD SERVICE
+# 17. CREATE SYSTEMD SERVICES
 # ===================================
 
 echo ""
@@ -505,7 +529,7 @@ EOF
 print_status "Systemd service created for scheduler"
 
 # ===================================
-# 9. INSTALL NGINX (IF REQUIRED)
+# 18. INSTALL NGINX (IF REQUIRED)
 # ===================================
 
 echo ""
@@ -528,7 +552,7 @@ else
 fi
 
 # ===================================
-# 10. NGINX permission for the app directory
+# 19. NGINX PERMISSION FOR THE APP DIRECTORY
 # ===================================
 
 echo ""
@@ -550,7 +574,7 @@ done
 print_status "Nginx can reach $APP_DIR/static"
 
 # ===================================
-# 11. CREATE NGINX CONFIG
+# 20. CREATE SSL CERTIFICATE
 # ===================================
 
 if [ ! -d "$CERT_DIR" ]; then
@@ -582,7 +606,7 @@ if [ -n "$NGINX_USER" ]; then
 fi
 
 # ===================================
-# 12. CREATE NGINX CONFIG
+# 21. CREATE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -599,8 +623,6 @@ fi
 
 print_status "Nginx ${NGINX_VERSION:-unknown version} detected — using: $(echo "$NGINX_LISTEN_SSL" | tr -s ' \n' ' ')"
 
-# The security headers live in a snippet: nginx drops all server-level add_header lines in a
-# location that sets its own add_header (here: /static/), so both places include the snippet
 sudo mkdir -p /etc/nginx/snippets
 sudo tee /etc/nginx/snippets/netpac-security-headers.conf > /dev/null << 'HEADERS'
 add_header X-Content-Type-Options "nosniff" always;
@@ -611,7 +633,6 @@ add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
 HEADERS
 
-# Shared proxy settings for every location that forwards to Gunicorn
 sudo tee /etc/nginx/snippets/netpac-proxy.conf > /dev/null << 'PROXY'
 proxy_pass http://netpac_backend;
 
@@ -634,8 +655,6 @@ upstream netpac_backend {
     server 127.0.0.1:8443 fail_timeout=0;
 }
 
-# Login rate limit across all Gunicorn workers (Flask-Limiter only counts per worker).
-# Only POST requests get a key — an empty key is not limited, so opening the login page stays free.
 map \$request_method \$netpac_login_key {
     POST    \$binary_remote_addr;
     default "";
@@ -668,7 +687,6 @@ server {
 
     limit_req_status 429;
 
-    # Login (/) and TOTP: 5 POSTs per minute and IP, a few typos in a row are allowed (burst)
     location ~ ^/(totp/(verify|setup))?\$ {
         limit_req zone=netpac_login burst=3 nodelay;
         include /etc/nginx/snippets/netpac-proxy.conf;
@@ -690,7 +708,7 @@ EOF
 print_status "Nginx configuration created"
 
 # ===================================
-# 13. ENABLE NGINX CONFIG
+# 22. ENABLE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -717,7 +735,7 @@ else
 fi
 
 # ===================================
-# 14. START SERVICES
+# 23. START SERVICES
 # ===================================
 
 echo ""
@@ -747,7 +765,7 @@ else
 fi
 
 # ===================================
-# 16. SUMMARY
+# 24. SUMMARY
 # ===================================
 
 echo ""

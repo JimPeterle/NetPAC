@@ -3,7 +3,7 @@
 # --------------------
 from flask import Flask, render_template, request, redirect, url_for, flash, session, make_response, send_from_directory
 from flask_login import LoginManager, login_user, login_required, logout_user, UserMixin, current_user
-from pyrad.client import Client
+from pyrad.client import Client, Timeout as RadiusTimeout
 from pyrad.dictionary import Dictionary
 import pyrad.packet
 import pymysql
@@ -30,8 +30,8 @@ import hmac
 import traceback
 from cryptography.fernet import Fernet
 import base64
-import sys
-from datetime import datetime, timedelta
+import inspect
+from datetime import date, datetime, timedelta
 import pyotp
 import qrcode
 import io
@@ -39,13 +39,10 @@ import shutil
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.cron import CronTrigger
-import fcntl
 import glob
 import pwd
 import signal
 import time
-from collections import defaultdict
-from datetime import date, timedelta
 from flask import jsonify
 import urllib
 import urllib.parse
@@ -60,7 +57,7 @@ from email.message import EmailMessage
 #   Configuration variables
 # --------------------
 dir_path = os.path.dirname(os.path.realpath(__file__))
-APP_VERSION = "6.1.0"
+APP_VERSION = "6.0.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
@@ -107,6 +104,8 @@ logging.getLogger('werkzeug').propagate = False
 logging.getLogger('apscheduler').setLevel(logging.WARNING)
 
 def sanitize_log(value: str) -> str:
+    """Removes line breaks from a value so it can't forge extra log lines."""
+
     return value.replace('\n', ' ').replace('\r', ' ').strip()
 
 
@@ -114,10 +113,15 @@ def sanitize_log(value: str) -> str:
 #   Filter for removce traceback logs from logfile
 # -------------------------------------------------
 class TracebackInfoFilter(logging.Filter):
+    """Logging filter that keeps tracebacks out of the log file."""
 
     def __init__(self, clear=True):
+        """Sets whether tracebacks are hidden (True) or restored (False)."""
+
         self.clear = clear
     def filter(self, record):
+        """Hides or restores the traceback of a log record."""
+
         if self.clear:
             record._exc_info_hidden, record.exc_info = record.exc_info, None
             record.exc_text = None
@@ -132,8 +136,6 @@ file_handler.addFilter(TracebackInfoFilter())
 # -----------------------------------------
 #   Load .env file and map them to variable
 # -----------------------------------------
-# Read into a dict instead of os.environ, so child processes (scripts, playbooks, pip, git …)
-# never inherit ENCRYPTION_KEY, FLASK_KEY or the DB credentials
 secret_config = dotenv_values(f"{dir_path}/secret.env")
 
 
@@ -141,7 +143,8 @@ secret_config = dotenv_values(f"{dir_path}/secret.env")
 #   Encryption Key Management (Used to encrypt passwords in the database)
 # -----------------------------------------
 def ensure_encryption_key():
-    
+    """Returns the ENCRYPTION_KEY from secret.env if it is a valid Fernet key, else None."""
+
     existing_key = secret_config.get("ENCRYPTION_KEY")
     if not existing_key:
         logger.error("ENCRYPTION_KEY not found in secret.env")
@@ -165,7 +168,10 @@ encryption_key = ensure_encryption_key()
 #   Secret Encryption
 # --------------------
 class SecretEncryption:
+    """Encrypts and decrypts stored secrets with the Fernet key."""
+
     def __init__(self, key):
+        """Initialises the cipher; encryption is disabled if the key is missing or invalid."""
 
         if key is None:
             self.cipher = None
@@ -179,9 +185,13 @@ class SecretEncryption:
             logger.error(f"Error initializing encryption: {e}")
     
     def is_available(self):
+        """Returns True if encryption can be used."""
+
         return self.cipher is not None
     
     def encrypt(self, password: str) -> str:
+        """Encrypts a plain text value."""
+
         if not self.is_available():
             raise ValueError("Encryption not available - ENCRYPTION_KEY is missing or invalid")
         try:
@@ -191,6 +201,8 @@ class SecretEncryption:
             raise
     
     def decrypt(self, encrypted_password: str) -> str:
+        """Decrypts a value encrypted with encrypt()."""
+
         if not self.is_available():
             raise ValueError("Decryption not available - ENCRYPTION_KEY is missing or invalid")
         try:
@@ -209,10 +221,11 @@ encryption = SecretEncryption(encryption_key)
 # --------------------
 #   TOTP secret storage
 # --------------------
-# Plain base32 secrets from older versions are still accepted and re-encrypted on the next login
 TOTP_PLAIN_RE = re.compile(r'^[A-Z2-7]{16,64}=*$')
 
 def encrypt_totp_secret(secret):
+    """Encrypts a TOTP secret for storage (plain text if no key is configured)."""
+
     if encryption.is_available():
         return encryption.encrypt(secret)
     logger.warning("ENCRYPTION_KEY missing — TOTP secret is stored unencrypted")
@@ -220,7 +233,8 @@ def encrypt_totp_secret(secret):
 
 
 def decrypt_totp_secret(stored):
-    """Returns (secret, needs_reencrypt)."""
+    """Returns (secret, needs_reencrypt) for a stored TOTP secret."""
+
     if not stored:
         return None, False
     if TOTP_PLAIN_RE.match(stored):
@@ -235,11 +249,11 @@ def decrypt_totp_secret(stored):
         return None, False
 
 
-# Accept the previous/next 30 s step too (clock drift), but every step only once
 TOTP_VALID_WINDOW = 1
 
 def match_totp_counter(secret, code):
-    """Returns the time step the code belongs to, or None if it doesn't match."""
+    """Returns the time step a TOTP code belongs to (±1 step), or None."""
+
     code = (code or "").strip()
     if not re.fullmatch(r'\d{6}', code):
         return None
@@ -252,11 +266,11 @@ def match_totp_counter(secret, code):
 
 
 def consume_totp_code(cur, username, secret, code):
-    """Checks the code and marks its time step as used. A code (or an older one) can't be used twice."""
+    """Checks a TOTP code and marks it as used, so it can't be used twice."""
+
     counter = match_totp_counter(secret, code)
     if counter is None:
         return False
-    # Atomic: only succeeds if this step is newer than the last one used, so parallel requests can't reuse it
     cur.execute("""
         UPDATE user SET totp_last_counter = %s
         WHERE name = %s AND (totp_last_counter IS NULL OR totp_last_counter < %s)
@@ -264,11 +278,23 @@ def consume_totp_code(cur, username, secret, code):
     return cur.rowcount == 1
 
 
-flask_key = secret_config.get("FLASK_KEY")
-db_user = secret_config.get("DB_USER")
-db_pw = secret_config.get("DB_PW")
-db_ip = secret_config.get("DB_IP")
-db_port = int(secret_config.get("DB_PORT") or 3306)
+REQUIRED_SECRET_KEYS = ("FLASK_KEY", "DB_USER", "DB_PW", "DB_IP", "DB_PORT")
+
+missing_secret_keys = [key for key in REQUIRED_SECRET_KEYS if not secret_config.get(key)]
+if missing_secret_keys:
+    logger.critical(f"secret.env is missing required values: {', '.join(missing_secret_keys)} — NetPAC can't start")
+    raise SystemExit(f"NetPAC: secret.env is missing required values: {', '.join(missing_secret_keys)}")
+
+try:
+    db_port = int(secret_config["DB_PORT"])
+except ValueError:
+    logger.critical(f"DB_PORT in secret.env is not a number: {secret_config['DB_PORT']!r} — NetPAC can't start")
+    raise SystemExit("NetPAC: DB_PORT in secret.env must be a number")
+
+flask_key = secret_config["FLASK_KEY"]
+db_user = secret_config["DB_USER"]
+db_pw = secret_config["DB_PW"]
+db_ip = secret_config["DB_IP"]
 
 
 # --------------------
@@ -276,6 +302,7 @@ db_port = int(secret_config.get("DB_PORT") or 3306)
 # --------------------
 app = Flask(__name__)
 bcrypt = Bcrypt(app)
+DUMMY_PASSWORD_HASH = bcrypt.generate_password_hash(uuid.uuid4().hex).decode('utf-8')
 app.secret_key = flask_key
 app.config['ENV'] = 'production'
 app.config['DEBUG'] = False
@@ -291,6 +318,8 @@ app.jinja_env.filters['fromjson'] = json.loads
 #   Local frontend libraries (static/vendor, see update_vendor.py)
 # --------------------
 def load_vendor_manifest():
+    """Loads the list of local frontend libraries from static/vendor/manifest.json."""
+
     try:
         with open(os.path.join(dir_path, "static", "vendor", "manifest.json"), "r", encoding="utf-8") as f:
             return {name: lib for name, lib in json.load(f).items() if not name.startswith("_")}
@@ -304,6 +333,8 @@ VENDOR_LIBS = load_vendor_manifest()
 _static_hashes = {}
 
 def static_file_hash(filename):
+    """Returns a short content hash of a static file for cache busting."""
+
     if filename not in _static_hashes:
         try:
             with open(os.path.join(dir_path, "static", filename), "rb") as f:
@@ -316,7 +347,11 @@ def static_file_hash(filename):
 
 @app.context_processor
 def inject_app_info():
+    """Provides version, static_file() and limits to all templates."""
+
     def static_file(filename):
+        """Returns the URL of a static file with its cache-busting hash."""
+
         return url_for("static", filename=filename, v=static_file_hash(filename))
     return {"app_version": APP_VERSION, "static_file": static_file,
             "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH}
@@ -324,7 +359,11 @@ def inject_app_info():
 
 @app.context_processor
 def inject_vendor():
+    """Provides vendor() to all templates."""
+
     def vendor(name, key):
+        """Returns the URL of a file from a local frontend library."""
+
         lib = VENDOR_LIBS.get(name)
         if not lib or key not in lib.get("files", {}):
             logger.error(f"Unknown vendor file: {name}/{key}")
@@ -342,6 +381,8 @@ app.wsgi_app = ProxyFix(
 )
 
 def get_real_ip():
+    """Returns the client IP (behind nginx, resolved by ProxyFix)."""
+
     return request.remote_addr
 
 limiter = Limiter(
@@ -355,6 +396,8 @@ limiter = Limiter(
 #   Define Radius
 # --------------------
 def load_radius_config():
+    """Loads the RADIUS settings (without the secret)."""
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT server, port, encrypted_secret, timeout FROM radius WHERE id = 1")
@@ -374,7 +417,32 @@ def load_radius_config():
     }
 
 
+RADIUS_ENFORCE_MA = "enforce_ma" in inspect.signature(Client.__init__).parameters
+RADIUS_TIMEOUT_HINT = ("No valid reply from the RADIUS server — it is unreachable, the shared secret is wrong, "
+                       "or the server doesn't send a Message-Authenticator (required against BlastRADIUS)")
+
+if not RADIUS_ENFORCE_MA:
+    logger.warning("The installed pyrad version can't require a Message-Authenticator in RADIUS replies "
+                   "(BlastRADIUS, CVE-2024-3596). Update pyrad (e.g. 2.6.0) to close this.")
+
+
+def make_radius_client(server_host, server_port, secret, timeout):
+    """Creates a RADIUS client that requires a Message-Authenticator if supported."""
+
+    options = {"enforce_ma": True} if RADIUS_ENFORCE_MA else {}
+    return Client(
+        server=server_host,
+        authport=server_port,
+        secret=secret.encode(),
+        dict=Dictionary(f"{dir_path}/dictionary"),
+        timeout=timeout,
+        **options
+    )
+
+
 def get_radius_secret():
+    """Returns the decrypted RADIUS shared secret, or None."""
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("SELECT encrypted_secret FROM radius WHERE id = 1")
@@ -402,11 +470,12 @@ NOTIFY_JOB_TYPES = ('all', 'python', 'ansible')
 NOTIFY_SMTP_SECURITY = ('starttls', 'ssl', 'none')
 NOTIFY_SEND_TIMEOUT = 10
 NOTIFY_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
-# Room IDs up to room version 11: !opaque:server — from room version 12 on: !hash (no server part)
 NOTIFY_MATRIX_ROOM_RE = re.compile(r'^![^:\s]+(:\S+)?$')
 
 
 def load_notification_settings(with_secrets=False):
+    """Loads SMTP/Matrix settings, optionally with decrypted password and token."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -451,6 +520,8 @@ def load_notification_settings(with_secrets=False):
 
 
 def send_notification_mail(cfg, to_addr, subject, body):
+    """Sends a notification e-mail via SMTP."""
+
     if not cfg['smtp_host'] or not cfg['smtp_from']:
         raise ValueError("SMTP host and sender address are not configured")
 
@@ -477,6 +548,8 @@ def send_notification_mail(cfg, to_addr, subject, body):
 
 
 def send_notification_matrix(cfg, room_id, body, html_body, txn_id):
+    """Sends a notification message to a Matrix room."""
+
     if not cfg['matrix_homeserver'] or not cfg.get('matrix_token'):
         raise ValueError("Matrix homeserver and access token are not configured")
 
@@ -498,7 +571,6 @@ def send_notification_matrix(cfg, room_id, body, html_body, txn_id):
         with urllib.request.urlopen(req, timeout=NOTIFY_SEND_TIMEOUT) as resp:
             resp.read()
     except urllib.error.HTTPError as e:
-        # Matrix returns {"errcode": "...", "error": "..."} — surface it instead of a bare "403 Forbidden"
         try:
             details = json.loads(e.read().decode(errors="replace"))
             reason = f"{details.get('errcode', 'unknown')}: {details.get('error', '')}".strip(": ")
@@ -508,6 +580,8 @@ def send_notification_matrix(cfg, room_id, body, html_body, txn_id):
 
 
 def send_notification(cfg, channel, target, subject, body, html_body, txn_id):
+    """Sends a notification via the given channel (email or matrix)."""
+
     if channel == 'email':
         send_notification_mail(cfg, target, subject, body)
     elif channel == 'matrix':
@@ -517,6 +591,8 @@ def send_notification(cfg, channel, target, subject, body, html_body, txn_id):
 
 
 def format_duration(seconds):
+    """Formats seconds as a short duration like '1m 23s'."""
+
     if seconds is None:
         return "-"
     minutes, sec = divmod(int(seconds), 60)
@@ -529,6 +605,8 @@ def format_duration(seconds):
 
 
 def build_job_notification(cfg, job_id, job):
+    """Builds subject, plain text and HTML of a job notification."""
+
     status = job['status']
     dry_run = " (dry run)" if job['ansible_dry_run'] else ""
     subject = f"[NetPAC] {NOTIFY_STATUS_ICONS.get(status, '')} {status} – {job['script_name']}{dry_run} (#{job_id})"
@@ -557,6 +635,8 @@ def build_job_notification(cfg, job_id, job):
 
 
 def _notify_job_finished_worker(job_id):
+    """Sends the notifications for a finished job (once per job)."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -607,6 +687,8 @@ def _notify_job_finished_worker(job_id):
 
 
 def notify_job_finished(job_id):
+    """Starts sending the notifications for a finished job in the background."""
+
     thread = threading.Thread(target=_notify_job_finished_worker, args=(job_id,), daemon=True)
     thread.start()
 
@@ -615,6 +697,8 @@ def notify_job_finished(job_id):
 #   SQL Config
 # --------------------
 def get_db():
+    """Opens a new database connection."""
+
     return pymysql.connect(
         user=db_user,
         password=db_pw,
@@ -628,7 +712,6 @@ def get_db():
 # --------------------
 #   Schedule Config
 # --------------------
-# Credentials are URL-encoded so special characters (@ : / # …) in the password don't break the URL
 jobstore_url = (f"mysql+pymysql://{urllib.parse.quote_plus(db_user or '')}:{urllib.parse.quote_plus(db_pw or '')}"
                 f"@{db_ip}:{db_port}/{db_database}")
 jobstores = {'default': SQLAlchemyJobStore(url=jobstore_url)}
@@ -638,6 +721,8 @@ scheduler.start(paused=True)
 scheduler_logger.info("Scheduler initialized in paused mode (web worker) — job execution handled by netpac-scheduler.service")
 
 def parse_schedule(expression):
+    """Splits a cron expression into the fields APScheduler expects."""
+
     parts = expression.split()
     return {
         'minute': parts[0],
@@ -648,6 +733,7 @@ def parse_schedule(expression):
     }
 
 def trigger_schedule_job(job_id, script_name, user_id, target, variables, secrets_json, use_venv=False, job_type='python'):
+    """Runs a scheduled script or playbook (called by the scheduler)."""
 
     conn = get_db()
     cur = conn.cursor()
@@ -727,6 +813,8 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
 SCHEDULE_JOB_COLUMNS = "job_id, script_name, user_id, target, variables, credential, use_venv, job_type, schedule_expression"
 
 def register_schedule_job(job_id, script_name, user_id, target, variables, secrets_json, use_venv, job_type, schedule_expression):
+    """Adds or replaces a schedule in APScheduler."""
+
     scheduler.add_job(
         trigger_schedule_job,
         trigger='cron',
@@ -748,6 +836,8 @@ def register_schedule_job(job_id, script_name, user_id, target, variables, secre
 
 
 def load_jobs_from_db():
+    """Registers all active schedules from the database (scheduler start)."""
+
     scheduler_logger.info("Loading jobs from DB...")
     try:
         conn = get_db()
@@ -774,7 +864,6 @@ def load_jobs_from_db():
 # --------------------
 TOOL_PATH_PREFIX = '/usr/bin:/usr/local/bin:'
 
-# Scripts and playbooks only get these variables from the NetPAC process (plus the ones set per job)
 JOB_ENV_WHITELIST = (
     'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TMPDIR',
     'http_proxy', 'https_proxy', 'no_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
@@ -783,7 +872,8 @@ JOB_ENV_WHITELIST = (
 )
 
 def tool_env(**extra):
-    """Environment for NetPAC's own tools (pip, git, ansible-galaxy, mysqldump …)."""
+    """Environment for NetPAC's own tools (pip, git, ansible-galaxy, mysqldump)."""
+
     env = os.environ.copy()
     env['PATH'] = TOOL_PATH_PREFIX + env.get('PATH', '')
     env.update(extra)
@@ -791,7 +881,8 @@ def tool_env(**extra):
 
 
 def job_env(**extra):
-    """Minimal environment for user scripts and playbooks — nothing outside the whitelist is passed on."""
+    """Minimal environment for user scripts and playbooks (whitelist only)."""
+
     env = {key: value for key, value in os.environ.items() if key in JOB_ENV_WHITELIST}
     env['PATH'] = TOOL_PATH_PREFIX + env.get('PATH', '')
     env.update(extra)
@@ -807,15 +898,16 @@ GIT_DIR = "/var/lib/netpac/git"
 PLAYBOOK_EXTENSIONS = ('.yml', '.yaml')
 
 def is_safe_path(target: str, base_dir: str) -> bool:
-    # realpath resolves ".." and symlinks, so nothing can point outside base_dir
+    """Returns True if a path stays inside base_dir (symlinks resolved)."""
+
     base_dir = os.path.realpath(base_dir)
     target = os.path.realpath(target)
     return target == base_dir or target.startswith(base_dir + os.sep)
 
 
 def resolve_repo_path(subpath, local_dir):
-    """Maps a UI path to (base_dir, real_path). Paths starting with "git/" point into the Git checkout.
-    real_path is None if the path would leave base_dir."""
+    """Maps a UI path (local or git/...) to (base_dir, real path); real path is None if unsafe."""
+
     if subpath == "git" or subpath.startswith("git/"):
         base_dir = os.path.realpath(GIT_DIR)
         rel_path = subpath[len("git"):].lstrip("/")
@@ -830,18 +922,21 @@ def resolve_repo_path(subpath, local_dir):
 
 
 def is_in_git_metadata(path, base_dir):
-    """True for anything inside a .git folder (checked on the resolved path, so symlinks into .git count too)."""
+    """Returns True if a path lies inside a .git folder."""
+
     return ".git" in os.path.relpath(path, base_dir).split(os.sep)
 
 
 def is_listable(path, base_dir):
-    # Hides symlinks that point outside the folder (or into .git) — they can't be opened or run anyway
+    """Returns True if a file may be shown in lists (no symlink out of the folder or into .git)."""
+
     real = os.path.realpath(path)
     return is_safe_path(real, base_dir) and not is_in_git_metadata(real, os.path.realpath(base_dir))
 
 
 def list_repo_files(local_dir, extensions):
-    """Sorted relative paths of all matching files; files from the Git checkout are prefixed with "git/"."""
+    """Lists all matching files of a folder and the Git checkout (prefixed 'git/')."""
+
     result = []
     roots = [(local_dir, "")]
     if os.path.exists(GIT_DIR):
@@ -858,6 +953,8 @@ def list_repo_files(local_dir, extensions):
 
 
 def list_dir_entries(target, subpath, base_dir):
+    """Lists the entries of one folder for the file browser."""
+
     entries = []
     for name in (sorted(os.listdir(target)) if os.path.isdir(target) else []):
         if name == '.git' or not is_listable(os.path.join(target, name), base_dir):
@@ -871,7 +968,8 @@ def list_dir_entries(target, subpath, base_dir):
 
 
 def load_secret_choices():
-    """Name and username of all secrets for the selection fields (never the password)."""
+    """Returns name and username of all secrets for selection fields."""
+
     if not encryption.is_available():
         return []
     conn = get_db()
@@ -885,7 +983,8 @@ def load_secret_choices():
 
 
 def parse_extra_vars(raw):
-    """Parses "Key=Value" lines into a dict."""
+    """Parses 'Key=Value' lines into a dict."""
+
     extra_vars = {}
     for line in (raw or "").splitlines():
         if "=" in line:
@@ -903,6 +1002,8 @@ STALE_JOB_NO_PID_SECONDS = 600
 JOB_CANCELLED_NOTE = "\n[NetPAC] Job was cancelled.\n"
 
 def is_process_alive(pid: int) -> bool:
+    """Returns True if a process with this PID exists."""
+
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -913,6 +1014,8 @@ def is_process_alive(pid: int) -> bool:
 
 
 def reap_stale_jobs():
+    """Marks running jobs whose process is gone as failed."""
+
     conn = get_db()
     cur = conn.cursor()
     reaped = []
@@ -956,13 +1059,47 @@ _last_reap = 0.0
 _reap_lock = threading.Lock()
 
 def reap_stale_jobs_throttled():
-    # The job page polls the status every second — cleaning up on every poll is unnecessary DB load
+    """Runs reap_stale_jobs() at most every few seconds per worker."""
+
     global _last_reap
     with _reap_lock:
         if time.time() - _last_reap < REAP_THROTTLE_SECONDS:
             return
         _last_reap = time.time()
     reap_stale_jobs()
+
+
+HISTORY_RETENTION_DAYS = 180
+HISTORY_CLEANUP_BATCH = 1000
+
+
+def cleanup_job_history():
+    """Deletes finished jobs older than HISTORY_RETENTION_DAYS from the job history."""
+
+    deleted = 0
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        while True:
+            cur.execute("""
+                DELETE FROM history_jobs
+                WHERE status <> 'running'
+                AND COALESCE(finished_at, started_at) < DATE_SUB(NOW(), INTERVAL %s DAY)
+                LIMIT %s
+            """, (HISTORY_RETENTION_DAYS, HISTORY_CLEANUP_BATCH))
+            conn.commit()
+            deleted += cur.rowcount
+            if cur.rowcount < HISTORY_CLEANUP_BATCH:
+                break
+    except Exception as e:
+        scheduler_logger.error(f"Job history cleanup failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+    if deleted:
+        scheduler_logger.info(f"Job history cleanup: {deleted} jobs older than {HISTORY_RETENTION_DAYS} days deleted")
+    return deleted
 
 
 # --------------------
@@ -974,21 +1111,19 @@ MAX_SCRIPT_VARS = 10
 # --------------------
 #   Input validation
 # --------------------
-MAX_USERNAME_LENGTH = 100       # user.name is VARCHAR(100)
-MAX_HOSTNAME_LENGTH = 255       # hosts.hostname is VARCHAR(255)
+MAX_USERNAME_LENGTH = 100
+MAX_HOSTNAME_LENGTH = 255
 
-# Hostname, FQDN or IP address — no spaces, so nothing else can end up in the Ansible inventory line
 HOSTNAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]*\Z')
-# Install: name with optional extras/version spec (e.g. requests[socks]>=2.31) — never starting with "-" (pip options)
 PIP_INSTALL_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-\[\],<>=!~]*\Z')
-# Uninstall/update: plain package name only
 PIP_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-]*\Z')
-# Install: namespace.name with optional version spec (e.g. cisco.ios:>=5.0.0); uninstall/update use COLLECTION_NAME_RE
 COLLECTION_INSTALL_RE = re.compile(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+(:[A-Za-z0-9._<>=!*,\-]+)?\Z')
 COLLECTION_NAME_RE = re.compile(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\Z')
 
 
 def validate_hostname(hostname):
+    """Returns an error message if the hostname is invalid, else None."""
+
     if not hostname:
         return "Hostname is required"
     if len(hostname) > MAX_HOSTNAME_LENGTH:
@@ -998,6 +1133,8 @@ def validate_hostname(hostname):
     return None
 
 def parse_var_count(value) -> int:
+    """Returns the number of script variables, limited to MAX_SCRIPT_VARS."""
+
     try:
         count = int(value or 0)
     except (TypeError, ValueError):
@@ -1009,6 +1146,8 @@ def parse_var_count(value) -> int:
 #   Validate password
 # --------------------
 def validate_password(password: str) -> str | None:
+    """Returns an error message if the password is too weak, else None."""
+
     if len(password) < 8:
         return "Password must be at least 8 characters"
     if not re.search(r'[A-Z]', password):
@@ -1017,7 +1156,6 @@ def validate_password(password: str) -> str | None:
         return "Password must contain at least one lowercase letter"
     if not re.search(r'[0-9]', password):
         return "Password must contain at least one number"
-    # Any character that is neither a letter nor a digit counts (e.g. - _ + = / ~ or a space)
     if not re.search(r'[^A-Za-z0-9]', password):
         return "Password must contain at least one special character"
     return None
@@ -1037,7 +1175,11 @@ login_manager.login_message_category = "warning"
 #   Define user
 # --------------------
 class User(UserMixin):
+    """Logged-in user for Flask-Login."""
+
     def __init__(self, username):
+        """Creates the user object for a username."""
+
         self.id = username
         self.username = username
 
@@ -1045,17 +1187,53 @@ class User(UserMixin):
 # --------------------
 #   Load user
 # --------------------
-@login_manager.user_loader
-def load_user(user_id):
+def auth_fingerprint(password_hash, totp_secret):
+    """Returns a fingerprint that changes when password or TOTP secret change."""
+
+    data = f"{password_hash or ''}|{totp_secret or ''}".encode()
+    return hmac.new(flask_key.encode(), data, hashlib.sha256).hexdigest()[:32]
+
+
+def load_auth_row(cur, username):
+    """Loads password hash and TOTP secret of a user."""
+
+    cur.execute("SELECT password, totp_secret FROM user WHERE name = %s", (username,))
+    return cur.fetchone()
+
+
+def remember_auth_state(username):
+    """Stores the current fingerprint in the session."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT 1 FROM user WHERE name = %s", (user_id,))
-        exists = cur.fetchone() is not None
+        row = load_auth_row(cur, username)
     finally:
         cur.close()
         conn.close()
-    return User(user_id) if exists else None
+    if row:
+        session["auth_fp"] = auth_fingerprint(*row)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Loads the user for each request; logs out sessions with an outdated fingerprint."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        row = load_auth_row(cur, user_id)
+    finally:
+        cur.close()
+        conn.close()
+
+    if row is None:
+        return None
+
+    if not hmac.compare_digest(session.get("auth_fp", ""), auth_fingerprint(*row)):
+        return None
+
+    return User(user_id)
 
 
 # --------------------
@@ -1064,6 +1242,8 @@ def load_user(user_id):
 @app.route("/", methods=["GET", "POST"])
 @limiter.limit("5 per minute", methods=["POST"])
 def login():
+    """Login page: checks the password (local or RADIUS) and continues with TOTP."""
+
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
@@ -1075,7 +1255,6 @@ def login():
             return redirect(url_for("login"))
 
         if len(username) > MAX_USERNAME_LENGTH:
-            # Such a user can't exist (and a RADIUS user couldn't be created) — treat it like wrong credentials
             flash("Invalid login details!", "danger")
             return redirect(url_for("login"))
         
@@ -1088,8 +1267,9 @@ def login():
                 cur.execute(sql, (username,))
                 row = cur.fetchone()
                 
-                if row is None:
-                    logger.warning(f"Login attempt for non-existent user: {sanitize_log(username)}")
+                if row is None or not row[0]:
+                    bcrypt.check_password_hash(DUMMY_PASSWORD_HASH, password)
+                    logger.warning(f"Login attempt for non-existent or non-local user: {sanitize_log(username)} (IP: {get_real_ip()})")
                     flash("Invalid login details!", "danger")
                     return redirect(url_for("login"))
                 
@@ -1126,13 +1306,8 @@ def login():
                 return redirect(url_for("login"))
 
             try:
-                srv = Client(
-                    server=radius_cfg['server_host'],
-                    authport=radius_cfg['server_port'],
-                    secret=radius_secret.encode(),
-                    dict=Dictionary(f"{dir_path}/dictionary"),
-                    timeout=radius_cfg['timeout']
-                )
+                srv = make_radius_client(radius_cfg['server_host'], radius_cfg['server_port'],
+                                         radius_secret, radius_cfg['timeout'])
 
                 req = srv.CreateAuthPacket(
                     code=pyrad.packet.AccessRequest,
@@ -1182,6 +1357,9 @@ def login():
                 logger.warning(f"Failed login attempt from IP: {get_real_ip()}")
                 flash("Invalid login credentials", "danger")
                 
+            except RadiusTimeout:
+                logger.error(f"RADIUS login failed: {RADIUS_TIMEOUT_HINT}")
+                flash("Login error occurred!", "danger")
             except Exception as e:
                 logger.error(f"RADIUS error: {e}")
                 flash("Login error occurred!", "danger")
@@ -1197,6 +1375,8 @@ def login():
 @app.route("/totp/setup", methods=["GET", "POST"])
 @limiter.limit("5 per minute", methods=["POST"])
 def totp_setup():
+    """Shows the TOTP QR code and activates TOTP after the first valid code."""
+
     if "pre_auth_user" not in session:
         return redirect(url_for("login"))
 
@@ -1253,6 +1433,7 @@ def totp_setup():
             session.pop("pre_auth_user", None)
             user = User(username)
             login_user(user)
+            remember_auth_state(username)
             session.permanent = True
             logger.info(f"Successful TOTP setup and login: {sanitize_log(username)} (method: {method})")
             return redirect(url_for("dashboard"))
@@ -1284,6 +1465,8 @@ def totp_setup():
 @app.route("/totp/verify", methods=["GET", "POST"])
 @limiter.limit("5 per minute", methods=["POST"])
 def totp_verify():
+    """Checks the TOTP code and completes the login."""
+
     if "pre_auth_user" not in session:
         return redirect(url_for("login"))
 
@@ -1305,7 +1488,6 @@ def totp_verify():
             if not totp_secret:
                 session.clear()
                 if row and row[0]:
-                    # Secret exists but can't be decrypted (key lost/changed) — say so instead of silently looping
                     flash("Your two-factor secret can't be read on the server. Contact your administrator.", "danger")
                 return redirect(url_for("login"))
 
@@ -1328,6 +1510,7 @@ def totp_verify():
             session.pop("pre_auth_user", None)
             user = User(username)
             login_user(user)
+            remember_auth_state(username)
             session.permanent = True
             logger.info(f"Successful login: {sanitize_log(username)} (method: {method})")
             return redirect(url_for("dashboard"))
@@ -1342,6 +1525,8 @@ def totp_verify():
 # --------------------
 @app.route("/totp/abort", methods=["POST"])
 def totp_abort():
+    """Aborts the login and clears the session."""
+
     session.clear()
     return redirect(url_for("login"))
 
@@ -1351,6 +1536,8 @@ def totp_abort():
 # --------------------
 @app.route('/favicon.ico')
 def favicon():
+    """Serves the favicon."""
+
     return send_from_directory(os.path.join(app.root_path, 'static'),'favicon.ico', mimetype='image/vnd.microsoft.icon')
 
 
@@ -1360,7 +1547,11 @@ def favicon():
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    """Dashboard with job statistics and charts."""
+
     def load_md(filename):
+        """Loads a Markdown file from static/ as HTML."""
+
         path = os.path.join(dir_path, "static", filename)
         try:
             with open(path, "r") as f:
@@ -1464,6 +1655,8 @@ def dashboard():
 @app.route("/groups")
 @login_required
 def groups():
+    """Lists all host groups."""
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -1483,13 +1676,16 @@ def groups():
 
 
 def normalize_group_vars(raw):
-    # Stored as one "key=value" per line, so values may contain commas
+    """Normalises group variables to one 'key=value' per line."""
+
     return "\n".join(line.strip() for line in raw.splitlines() if "=" in line and line.strip())
 
 
 @app.route("/groups", methods=["POST"])
 @login_required
 def add_group():
+    """Creates a host group."""
+
     name = request.form.get("name", "").strip()
     ansible_vars = normalize_group_vars(request.form.get("ansible_vars", ""))
 
@@ -1523,6 +1719,8 @@ def add_group():
 @app.route("/groups/edit/<int:group_id>", methods=["POST"])
 @login_required
 def edit_group(group_id):
+    """Updates the Ansible variables of a group."""
+
     ansible_vars = normalize_group_vars(request.form.get("ansible_vars", ""))
 
     conn = get_db()
@@ -1555,6 +1753,8 @@ def edit_group(group_id):
 @app.route("/groups/delete", methods=["POST"])
 @login_required
 def delete_group():
+    """Deletes a host group."""
+
     group_id = request.form.get("group_id", "").strip()
 
     if not group_id:
@@ -1585,6 +1785,8 @@ def delete_group():
 
 
 def load_host_group_names(cur, group_id=None):
+    """Returns {hostname: 'group1,group2'}, optionally for one group only."""
+
     sql = """
         SELECT h.hostname, COALESCE(GROUP_CONCAT(g.name ORDER BY g.name SEPARATOR ','), '')
         FROM hosts h
@@ -1606,6 +1808,8 @@ def load_host_group_names(cur, group_id=None):
 @app.route("/hosts/<int:group_id>")
 @login_required
 def hosts_by_group(group_id):
+    """Lists the hosts of one group."""
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -1651,6 +1855,8 @@ def hosts_by_group(group_id):
 @app.route("/hosts")
 @login_required
 def hosts():
+    """Lists all hosts."""
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -1671,6 +1877,8 @@ def hosts():
 @app.route("/hosts", methods=["POST"])
 @login_required
 def add_host():
+    """Creates a host with its groups."""
+
     hostname = request.form.get("Hostname", "").strip()
     description = request.form.get("Description", "").strip()
     group_ids = request.form.getlist("group_ids")
@@ -1719,6 +1927,8 @@ def add_host():
 @app.route("/update_host", methods=["POST"])
 @login_required
 def update_host():
+    """Updates name, description and groups of a host."""
+
     original_hostname = request.form.get("OriginalHostname", "").strip()
     hostname = request.form.get("Hostname", "").strip()
     description = request.form.get("Description", "").strip()
@@ -1766,6 +1976,8 @@ def update_host():
 @app.route("/hosts/edit/bulk", methods=["POST"])
 @login_required
 def bulk_update_hosts():
+    """Adds groups and/or sets the description for several hosts."""
+
     host_ids = request.form.getlist("host_ids")
     description = request.form.get("Description", "").strip()
     group_ids = request.form.getlist("group_ids")
@@ -1806,6 +2018,8 @@ def bulk_update_hosts():
 @app.route("/hosts/toggle/<int:host_id>", methods=["POST"])
 @login_required
 def toggle_host(host_id):
+    """Activates or deactivates a host."""
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -1837,6 +2051,8 @@ def toggle_host(host_id):
 @app.route("/hosts/delete", methods=["POST"])
 @login_required
 def delete_host():
+    """Deletes a host."""
+
     hostname = request.form.get("hostname", "").strip()
 
     if not hostname:
@@ -1871,6 +2087,8 @@ def delete_host():
 GIT_CONFIG_FILE = f"{dir_path}/git_config.json"
 
 def load_git_config():
+    """Loads the Git repository settings from git_config.json."""
+
     if os.path.exists(GIT_CONFIG_FILE):
         try:
             with open(GIT_CONFIG_FILE, "r") as f:
@@ -1881,6 +2099,8 @@ def load_git_config():
 
 
 def build_git_env(token: str) -> dict:
+    """Environment for git with the access token as auth header."""
+
     env = tool_env(GIT_TERMINAL_PROMPT='0')
     if token:
         basic = base64.b64encode(f"oauth2:{token}".encode()).decode()
@@ -1896,6 +2116,8 @@ def build_git_env(token: str) -> dict:
 @app.route("/scripts")
 @login_required
 def scripts():
+    """Script overview with folders and all Python scripts."""
+
     if not os.path.isdir(SCRIPTS_DIR):
         logger.error(f"Script directory {SCRIPTS_DIR} does not exist")
         flash(f"Script directory {SCRIPTS_DIR} does not exist — run setup.sh again or create it", "warning")
@@ -1914,6 +2136,8 @@ def scripts():
 @app.route("/scripts/<path:subpath>")
 @login_required
 def view_script(subpath):
+    """Shows a script folder or a script with the run form."""
+
     base_dir, target = resolve_repo_path(subpath, SCRIPTS_DIR)
 
     if target is None:
@@ -1940,6 +2164,8 @@ def view_script(subpath):
 @app.route("/run_scripts/<path:subpath>", methods=["POST"])
 @login_required
 def run_script(subpath):
+    """Starts a Python script as a background job."""
+
     _, target_path = resolve_repo_path(subpath, SCRIPTS_DIR)
 
     if target_path is None:
@@ -2018,6 +2244,7 @@ def run_script(subpath):
 #   Background Script execution
 # --------------------
 def execute_script_background(job_id, filename, target, variables, use_venv, secret_1, secret_2, secret_3):
+    """Runs a Python script and stores output and result in the job history."""
 
     exec_logger.info(f"Background executing: {filename}")
 
@@ -2040,6 +2267,8 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
     cur = conn.cursor()
 
     def append_live_output(text):
+        """Appends new output to the job while it is running."""
+
         try:
             live_conn = get_db()
             live_cur = live_conn.cursor()
@@ -2096,7 +2325,6 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
                 env[f'SECRET_{num}_USERNAME'] = username
                 env[f'SECRET_{num}_PASSWORD'] = decrypted
 
-        # mkstemp creates the file with 0600, so other local users can't read the host list
         fd, temp_hostfile = tempfile.mkstemp(prefix="netpac_hosts_", suffix=".txt")
         with os.fdopen(fd, "w") as f:
             for t in targets:
@@ -2193,6 +2421,8 @@ VENV_PIP = os.path.join(VENV_DIR, 'bin', 'pip')
 @app.route("/venv")
 @login_required
 def venv_manager():
+    """Lists the packages of the Python venv."""
+
     packages = []
     venv_exists = os.path.exists(VENV_PIP)
     
@@ -2213,6 +2443,8 @@ def venv_manager():
 @app.route("/venv/install", methods=["POST"])
 @login_required
 def venv_install():
+    """Installs a package into the venv."""
+
     package = request.form.get("package", "").strip()
     
     if not package:
@@ -2244,6 +2476,8 @@ def venv_install():
 @app.route("/venv/uninstall", methods=["POST"])
 @login_required
 def venv_uninstall():
+    """Removes a package from the venv."""
+
     package = request.form.get("package", "").strip()
 
     if not package:
@@ -2275,6 +2509,8 @@ def venv_uninstall():
 @app.route("/venv/update", methods=["POST"])
 @login_required
 def venv_update():
+    """Updates a package in the venv."""
+
     package = request.form.get("package", "").strip()
 
     if not package:
@@ -2306,6 +2542,8 @@ def venv_update():
 @app.route("/venv/update_all", methods=["POST"])
 @login_required
 def venv_update_all():
+    """Updates all outdated packages in the venv."""
+
     env = tool_env()
 
     result = subprocess.run(
@@ -2337,6 +2575,8 @@ def venv_update_all():
 @app.route("/scripts/sync", methods=["POST"])
 @login_required
 def sync_scripts():
+    """Clones or pulls the configured Git repository."""
+
     git_config  = load_git_config()
     repo_url    = git_config.get("repo_url", "")
     branch      = git_config.get("branch", "main")
@@ -2403,6 +2643,8 @@ def sync_scripts():
 @app.route("/playbooks/<path:subpath>")
 @login_required
 def browse_playbooks(subpath):
+    """Shows a playbook folder or a playbook with the run form."""
+
     base_dir, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
     if target is None:
@@ -2442,6 +2684,8 @@ def browse_playbooks(subpath):
 @app.route("/playbook_graph/<path:subpath>", methods=["POST"])
 @login_required
 def playbook_graph(subpath):
+    """Generates a graph of a playbook with ansible-playbook-grapher."""
+
     _, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
     if target is None:
@@ -2477,7 +2721,8 @@ def playbook_graph(subpath):
 GRAPH_DIR = "/var/lib/netpac/graphs"
 
 def resolve_graph_path(filename):
-    """Returns (graph_dir, svg_path) or aborts with 403/404."""
+    """Returns (graph_dir, svg_path) of a graph or aborts with 403/404."""
+
     graph_dir = os.path.realpath(GRAPH_DIR)
     graph_path = os.path.realpath(os.path.join(graph_dir, filename + ".svg"))
 
@@ -2494,6 +2739,8 @@ def resolve_graph_path(filename):
 @app.route("/playbook_graph/view/<filename>")
 @login_required
 def view_playbook_graph(filename):
+    """Page that shows a playbook graph."""
+
     resolve_graph_path(filename)
     return render_template("playbook_graph.html", filename=filename)
 
@@ -2501,9 +2748,10 @@ def view_playbook_graph(filename):
 @app.route("/playbook_graph/raw/<filename>.svg")
 @login_required
 def raw_playbook_graph(filename):
+    """Serves the graph SVG with a CSP that blocks scripts."""
+
     graph_dir, graph_path = resolve_graph_path(filename)
 
-    # The SVG is built from playbook content — never let scripts inside it run, even when opened directly
     response = make_response(send_from_directory(graph_dir, os.path.basename(graph_path), mimetype="image/svg+xml"))
     response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -2513,6 +2761,8 @@ def raw_playbook_graph(filename):
 @app.route("/playbook_syntax_check/<path:subpath>", methods=["POST"])
 @login_required
 def playbook_syntax_check(subpath):
+    """Runs ansible-playbook --syntax-check on a playbook."""
+
     _, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
     if target is None:
@@ -2543,6 +2793,8 @@ def playbook_syntax_check(subpath):
 @app.route("/run_playbook/<path:subpath>", methods=["POST"])
 @login_required
 def run_playbook(subpath):
+    """Starts a playbook as a background job."""
+
     _, target_path = resolve_repo_path(subpath, PLAYBOOKS_DIR)
     dry_run = request.form.get("dry_run") == "on"
 
@@ -2618,6 +2870,8 @@ def run_playbook(subpath):
 @app.route("/playbook_templates")
 @login_required
 def playbook_templates():
+    """Lists all playbook templates."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -2633,7 +2887,8 @@ def playbook_templates():
 
 
 def parse_playbook_target(form):
-    """Returns (target, error). Running on the NetPAC server itself must be chosen explicitly."""
+    """Returns (target, error); localhost must be chosen explicitly."""
+
     if form.get("run_local") == "on":
         return "localhost", None
     target = form.get("target", "").strip()
@@ -2645,6 +2900,8 @@ def parse_playbook_target(form):
 @app.route("/playbook_templates/create", methods=["POST"])
 @login_required
 def create_playbook_template():
+    """Creates a playbook template."""
+
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     playbook_path = request.form.get("playbook_path", "").strip()
@@ -2687,6 +2944,8 @@ def create_playbook_template():
 @app.route("/playbook_templates/edit/<int:template_id>", methods=["POST"])
 @login_required
 def edit_playbook_template(template_id):
+    """Updates a playbook template."""
+
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     playbook_path = request.form.get("playbook_path", "").strip()
@@ -2730,6 +2989,8 @@ def edit_playbook_template(template_id):
 @app.route("/playbook_templates/delete/<int:template_id>", methods=["POST"])
 @login_required
 def delete_playbook_template(template_id):
+    """Deletes a playbook template."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -2751,6 +3012,8 @@ def delete_playbook_template(template_id):
 @app.route("/playbook_templates/launch/<int:template_id>", methods=["POST"])
 @login_required
 def launch_playbook_template(template_id):
+    """Starts a playbook from a template as a background job."""
+
     dry_run = request.form.get("dry_run") == "on"
 
     conn = get_db()
@@ -2784,7 +3047,6 @@ def launch_playbook_template(template_id):
         return redirect(url_for("history", mode="ansible"))
 
     if not target:
-        # Templates from older versions may have no target — don't silently run them on the NetPAC server
         flash(f"Template '{name}' has no target. Edit it and enter a target or choose localhost explicitly.", "danger")
         return redirect(url_for("playbook_templates"))
 
@@ -2829,6 +3091,8 @@ def launch_playbook_template(template_id):
 #   Background Playbook execution
 # --------------------
 def execute_playbook_background(job_id, filename, target, extra_vars_str, secret_1, secret_2, secret_3, dry_run=False):
+    """Runs a playbook and stores output and result in the job history."""
+
     exec_logger.info(f"Background executing playbook: {filename}" + (" (DRY RUN)" if dry_run else ""))
 
 
@@ -2844,6 +3108,8 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     cur = conn.cursor()
 
     def append_live_output(text):
+        """Appends new output to the job while it is running."""
+
         try:
             live_conn = get_db()
             live_cur = live_conn.cursor()
@@ -3027,6 +3293,8 @@ ANSIBLE_GALAXY = shutil.which("ansible-galaxy") or "/usr/bin/ansible-galaxy"
 @app.route("/ansible_collections")
 @login_required
 def ansible_collections():
+    """Lists installed Ansible collections."""
+
     collections = []
     system_collections = []
 
@@ -3062,6 +3330,8 @@ def ansible_collections():
 @app.route("/ansible_collections/install", methods=["POST"])
 @login_required
 def ansible_collections_install():
+    """Installs an Ansible collection."""
+
     collection = request.form.get("collection", "").strip()
 
     if not collection:
@@ -3091,6 +3361,8 @@ def ansible_collections_install():
 @app.route("/ansible_collections/uninstall", methods=["POST"])
 @login_required
 def ansible_collections_uninstall():
+    """Removes a user-installed Ansible collection."""
+
     collection = request.form.get("collection", "").strip()
 
     if not collection:
@@ -3123,6 +3395,8 @@ def ansible_collections_uninstall():
 @app.route("/ansible_collections/update", methods=["POST"])
 @login_required
 def ansible_collections_update():
+    """Updates an Ansible collection."""
+
     collection = request.form.get("collection", "").strip()
 
     if not COLLECTION_NAME_RE.match(collection):
@@ -3151,6 +3425,8 @@ def ansible_collections_update():
 @app.route("/ansible_collections/update_all", methods=["POST"])
 @login_required
 def ansible_collections_update_all():
+    """Updates all user-installed Ansible collections."""
+
     result = subprocess.run(
         [ANSIBLE_GALAXY, 'collection', 'list', '--format', 'json'],
         capture_output=True, text=True,
@@ -3188,6 +3464,8 @@ def ansible_collections_update_all():
 @app.route("/history")
 @login_required
 def history():
+    """Job history with search and pagination."""
+
     reap_stale_jobs()
 
     page = max(1, request.args.get("page", 1, type=int))
@@ -3269,6 +3547,8 @@ def history():
 @app.route("/history/<int:job_id>")
 @login_required
 def history_detail(job_id):
+    """Details and output of one job."""
+
     conn = get_db()
     cur = conn.cursor()
     
@@ -3314,6 +3594,8 @@ def history_detail(job_id):
 @app.route("/history/<int:job_id>/status")
 @login_required
 def history_job_status(job_id):
+    """Returns status and output of a job as JSON (live view)."""
+
     reap_stale_jobs_throttled()
 
     conn = get_db()
@@ -3337,6 +3619,8 @@ def history_job_status(job_id):
 @app.route("/history/<int:job_id>/cancel", methods=["POST"])
 @login_required
 def cancel_job(job_id):
+    """Stops a running job."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -3389,6 +3673,8 @@ def cancel_job(job_id):
 @app.route('/export_history_txt/<int:job_id>')
 @login_required
 def export_history_txt(job_id):
+    """Downloads the output of a job as a text file."""
+
     conn = get_db()
     cur = conn.cursor()
     
@@ -3422,6 +3708,8 @@ def export_history_txt(job_id):
 @app.route("/schedule")
 @login_required
 def schedule():
+    """Lists all schedules with the form for new ones."""
+
     conn = get_db()
     cur = conn.cursor()
     
@@ -3439,6 +3727,7 @@ def schedule():
 @app.route("/schedule/add", methods=["POST"])
 @login_required
 def add_schedule():
+    """Creates a schedule and registers it in the scheduler."""
 
     job_type = request.form.get("job_type", "python").strip()
     script_name = request.form.get("script_name", "").strip()
@@ -3536,6 +3825,8 @@ def add_schedule():
 @app.route("/schedule/toggle/<int:cron_id>", methods=["POST"])
 @login_required
 def toggle_schedule(cron_id):
+    """Activates or deactivates a schedule."""
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -3578,6 +3869,8 @@ def toggle_schedule(cron_id):
 @app.route("/schedule/delete/<int:cron_id>", methods=["POST"])
 @login_required
 def delete_schedule(cron_id):
+    """Deletes a schedule."""
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -3609,7 +3902,8 @@ def delete_schedule(cron_id):
 @app.route("/settings", methods=["GET", "POST"])
 @login_required
 def settings():
-    output = None
+    """Settings page with all tabs."""
+
     active_tab = request.args.get("tab", "user")
     
     log_dir = "/var/log/netpac"
@@ -3670,7 +3964,7 @@ def settings():
     notification_config = load_notification_settings()
     notification_rules = load_notification_rules()
 
-    return render_template("settings.html", output=output, logs=log_files, git_config=git_config,
+    return render_template("settings.html", logs=log_files, git_config=git_config,
                         user_method=user_method, users=users, backups=backup_files,
                         active_tab=active_tab, radius_config=radius_config, ssl_info=ssl_info_data,
                         notification_config=notification_config, notification_rules=notification_rules,
@@ -3680,6 +3974,8 @@ def settings():
 @app.route("/settings/git", methods=["POST"])
 @login_required
 def save_git_config():
+    """Saves the Git repository settings."""
+
     repo_url     = request.form.get("repo_url", "").strip()
     branch       = request.form.get("branch", "main").strip()
     token_input  = request.form.get("access_token", "").strip()
@@ -3692,7 +3988,7 @@ def save_git_config():
         flash("The URL must begin with https://", "danger")
         return redirect(url_for("settings", tab="git"))
 
-    if not re.match(r'^[a-zA-Z0-9_\-/\.]+$', branch):
+    if not re.match(r'^[A-Za-z0-9][A-Za-z0-9_\-/.]*\Z', branch):
         flash("Invalid branch name", "danger")
         return redirect(url_for("settings", tab="git"))
 
@@ -3732,6 +4028,8 @@ def save_git_config():
 @app.route("/settings/logs/<filename>")
 @login_required
 def view_log(filename):
+    """Shows the last 50 lines of a log file."""
+
     log_dir = os.path.realpath("/var/log/netpac")
     safe_filename = secure_filename(filename)
 
@@ -3781,7 +4079,8 @@ def view_log(filename):
 @app.route("/settings/change_password", methods=["POST"])
 @login_required
 def change_password():
-    # Passwords are used exactly as typed (no strip) — the login doesn't strip either
+    """Changes the password of the logged-in local user."""
+
     current_password = request.form.get("current_password", "")
     new_password = request.form.get("new_password", "")
     confirm_password = request.form.get("confirm_password", "")
@@ -3824,7 +4123,8 @@ def change_password():
         cur.execute("UPDATE user SET password = %s WHERE name = %s", (new_hash, current_user.id))
         conn.commit()
         session.pop('default_pw_warning', None)
-        flash("Password changed successfully", "success")
+        remember_auth_state(current_user.id)
+        flash("Password changed successfully — all other sessions have been logged out", "success")
         logger.info(f"Password changed for user: {current_user.id}")
 
     except Exception as e:
@@ -3841,6 +4141,8 @@ def change_password():
 @app.route("/settings/add_user", methods=["POST"])
 @login_required
 def add_user():
+    """Creates a local user (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -3893,6 +4195,8 @@ def add_user():
 @app.route("/settings/delete_user", methods=["POST"])
 @login_required
 def delete_user():
+    """Deletes a user (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -3925,6 +4229,8 @@ def delete_user():
 @app.route("/settings/radius", methods=["POST"])
 @login_required
 def save_radius_config():
+    """Saves the RADIUS settings (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -3984,6 +4290,8 @@ def save_radius_config():
 @app.route("/settings/radius/test", methods=["POST"])
 @login_required
 def test_radius_config():
+    """Tests the RADIUS settings with a login attempt (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -4015,13 +4323,7 @@ def test_radius_config():
             return jsonify({"success": False, "message": "No secret provided and none saved yet"}), 400
 
     try:
-        srv = Client(
-            server=server_host,
-            authport=server_port,
-            secret=radius_secret.encode(),
-            dict=Dictionary(f"{dir_path}/dictionary"),
-            timeout=timeout
-        )
+        srv = make_radius_client(server_host, server_port, radius_secret, timeout)
 
         req = srv.CreateAuthPacket(
             code=pyrad.packet.AccessRequest,
@@ -4038,6 +4340,9 @@ def test_radius_config():
         else:
             return jsonify({"success": False, "message": f"Access-Reject received for '{test_username}'"})
 
+    except RadiusTimeout:
+        logger.error(f"RADIUS test failed: {RADIUS_TIMEOUT_HINT}")
+        return jsonify({"success": False, "message": RADIUS_TIMEOUT_HINT}), 504
     except Exception as e:
         logger.error(f"RADIUS test failed: Error: {e!r}")
         return jsonify({"success": False, "message": f"Error: {e!r}"}), 500
@@ -4047,6 +4352,8 @@ def test_radius_config():
 #   Notification settings & rules
 # --------------------
 def load_notification_rules():
+    """Loads all notification rules."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -4067,6 +4374,8 @@ def load_notification_rules():
 
 
 def parse_notification_rule_form():
+    """Returns (rule data, error) from the rule form."""
+
     name = request.form.get("name", "").strip()
     channel = request.form.get("channel", "").strip()
     target = request.form.get("target", "").strip()
@@ -4098,6 +4407,8 @@ def parse_notification_rule_form():
 @app.route("/settings/notifications", methods=["POST"])
 @login_required
 def save_notification_settings():
+    """Saves the SMTP and Matrix settings."""
+
     smtp_host = request.form.get("smtp_host", "").strip()
     smtp_port = request.form.get("smtp_port", "587").strip() or "587"
     smtp_security = request.form.get("smtp_security", "starttls").strip()
@@ -4171,6 +4482,8 @@ def save_notification_settings():
 @app.route("/settings/notifications/rules", methods=["POST"])
 @login_required
 def create_notification_rule():
+    """Creates a notification rule."""
+
     data, error = parse_notification_rule_form()
     if error:
         flash(error, "danger")
@@ -4202,6 +4515,8 @@ def create_notification_rule():
 @app.route("/settings/notifications/rules/edit/<int:rule_id>", methods=["POST"])
 @login_required
 def edit_notification_rule(rule_id):
+    """Updates a notification rule."""
+
     data, error = parse_notification_rule_form()
     if error:
         flash(error, "danger")
@@ -4210,7 +4525,6 @@ def edit_notification_rule(rule_id):
     conn = get_db()
     cur = conn.cursor()
     try:
-        # rowcount is 0 for an unchanged save, so check existence separately
         cur.execute("SELECT 1 FROM notification_rules WHERE rule_id = %s", (rule_id,))
         if not cur.fetchone():
             flash("Notification rule not found", "danger")
@@ -4240,6 +4554,8 @@ def edit_notification_rule(rule_id):
 @app.route("/settings/notifications/rules/toggle/<int:rule_id>", methods=["POST"])
 @login_required
 def toggle_notification_rule(rule_id):
+    """Activates or deactivates a notification rule."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -4263,6 +4579,8 @@ def toggle_notification_rule(rule_id):
 @app.route("/settings/notifications/rules/delete/<int:rule_id>", methods=["POST"])
 @login_required
 def delete_notification_rule(rule_id):
+    """Deletes a notification rule."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -4288,6 +4606,8 @@ def delete_notification_rule(rule_id):
 @limiter.limit("5 per minute", methods=["POST"])
 @login_required
 def test_notification_rule(rule_id):
+    """Sends a test notification for a rule."""
+
     conn = get_db()
     cur = conn.cursor()
     try:
@@ -4320,6 +4640,8 @@ def test_notification_rule(rule_id):
 #   SSL Certs
 # ---------------------
 def get_ssl_info():
+    """Returns subject, issuer and expiry of the installed certificate."""
+
     cert_path = os.path.join(SSL_CERT_DIR, "netpac.crt")
     info = {"exists": False}
 
@@ -4346,6 +4668,8 @@ def get_ssl_info():
 @app.route("/settings/ssl/upload", methods=["POST"])
 @login_required
 def upload_ssl_cert():
+    """Replaces the TLS certificate and key (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -4416,18 +4740,23 @@ ERROR_MESSAGES = {
 
 
 def request_log_context():
-    user = current_user.id if current_user and current_user.is_authenticated else "-"
+    """Returns method, URL, IP and user of the request for log lines."""
+
+    try:
+        user = current_user.id if current_user and current_user.is_authenticated else "-"
+    except Exception:
+        user = "?"
     return f"{request.method} {sanitize_log(request.url)} (IP: {get_real_ip()}, user: {user})"
 
 
 @app.errorhandler(Exception)
 def handle_error(e):
+    """Logs an error in one line and shows the error page."""
+
     if isinstance(e, HTTPException):
-        # Expected client errors (404, 403, 429 …): one line, no traceback
         error_code = e.code or 500
         logger.warning(f"HTTP {error_code}: {request_log_context()}")
     else:
-        # The file handler strips tracebacks (TracebackInfoFilter), so log where the error happened
         error_code = 500
         frame = traceback.extract_tb(e.__traceback__)[-1] if e.__traceback__ else None
         location = f" at {os.path.basename(frame.filename)}:{frame.lineno} in {frame.name}()" if frame else ""
@@ -4442,6 +4771,8 @@ def handle_error(e):
 #   Secrets
 # ---------------------
 def find_secret_usages(cur, secret_name):
+    """Lists schedules and templates that use a secret."""
+
     usages = []
 
     cur.execute("SELECT job_id, script_name, credential FROM schedule_jobs")
@@ -4465,6 +4796,7 @@ def find_secret_usages(cur, secret_name):
 @app.route("/secrets")
 @login_required
 def secrets():
+    """Lists all secrets (without passwords)."""
 
     if not encryption.is_available():
         flash("The Secrets feature is not available. ENCRYPTION_KEY is missing or invalid.", "danger")
@@ -4502,6 +4834,7 @@ def secrets():
 @app.route("/secrets/create", methods=["GET", "POST"])
 @login_required
 def create_secret():
+    """Creates a secret."""
 
     if not encryption.is_available():
         flash("The Secrets feature is not available. ENCRYPTION_KEY is missing or invalid.", "danger")
@@ -4549,6 +4882,7 @@ def create_secret():
 @app.route("/secrets/edit/<int:secret_id>", methods=["GET", "POST"])
 @login_required
 def edit_secret(secret_id):
+    """Updates a secret (password only if a new one is entered)."""
 
     if not encryption.is_available():
         flash("The Secrets feature is not available. ENCRYPTION_KEY is missing or invalid.", "danger")
@@ -4635,7 +4969,8 @@ def edit_secret(secret_id):
 @app.route("/secrets/delete/<int:secret_id>", methods=["POST"])
 @login_required
 def delete_secret(secret_id):
-    
+    """Deletes a secret."""
+
     if not encryption.is_available():
         flash("The Secrets feature is not available. ENCRYPTION_KEY is missing or invalid.", "danger")
         return redirect(url_for("secrets"))
@@ -4684,7 +5019,8 @@ def delete_secret(secret_id):
 
 
 def ensure_backup_dir():
-    """Backups contain password hashes and encrypted secrets — only the NetPAC user may read them."""
+    """Creates the backup folder and restricts it to the NetPAC user."""
+
     try:
         os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
         os.chmod(BACKUP_DIR, 0o700)
@@ -4695,15 +5031,17 @@ def ensure_backup_dir():
 
 
 def open_private(path):
-    """Opens a file for writing that only the owner can read (0600), regardless of the umask."""
+    """Opens a file for writing that only the owner can read (0600)."""
+
     return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
 
 
-# Also fixes backups created by older versions with world-readable permissions
 ensure_backup_dir()
 
 
 def run_backup_background(backup_type, filename, output_path, tables):
+    """Creates a database backup with mysqldump."""
+
     mysqldump = shutil.which("mysqldump") or "/usr/bin/mysqldump"
 
     env = tool_env()
@@ -4739,6 +5077,8 @@ def run_backup_background(backup_type, filename, output_path, tables):
 @app.route("/settings/backup", methods=["POST"])
 @login_required
 def create_backup():
+    """Starts a hosts or full backup (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -4782,6 +5122,8 @@ def create_backup():
 @app.route("/settings/backup/download/<filename>")
 @login_required
 def download_backup(filename):
+    """Downloads a backup file (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -4802,6 +5144,8 @@ def download_backup(filename):
 @app.route("/settings/backup/delete", methods=["POST"])
 @login_required
 def delete_backup():
+    """Deletes a backup file (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -4831,6 +5175,8 @@ def delete_backup():
 @app.route("/settings/backup/restore", methods=["POST"])
 @login_required
 def restore_backup():
+    """Restores a backup after password and TOTP check (admin only)."""
+
     if current_user.id != 'admin':
         abort(403)
 
@@ -4926,6 +5272,8 @@ def restore_backup():
         return redirect(url_for("settings", tab="backup"))
 
     def import_sql(path):
+        """Imports an SQL file; returns (ok, error)."""
+
         try:
             with open(path, "r") as f:
                 result = subprocess.run(
@@ -4968,6 +5316,8 @@ def restore_backup():
 @app.route("/health")
 @login_required
 def health():
+    """System health page (database, scheduler, venv, collections)."""
+
     checks = {}
     
     try:
@@ -5122,6 +5472,7 @@ def health():
 # ---------------------
 @app.before_request
 def check_default_password():
+    """Warns the admin while the default password is still set."""
 
     if not current_user.is_authenticated or current_user.id != 'admin':
         return
@@ -5149,12 +5500,13 @@ LONG_JOB_CHECK_INTERVAL = 60
 
 @app.before_request
 def check_long_running_jobs():
+    """Warns about jobs running longer than 3 hours (at most once per minute)."""
+
     if request.endpoint in (None, 'static', 'favicon', 'apple_touch_icon', 'history_job_status', 'raw_playbook_graph'):
         return
     if not current_user.is_authenticated:
         return
 
-    # Runs at most once per minute and session instead of on every request
     now = time.time()
     if now - session.get('long_job_checked_at', 0) < LONG_JOB_CHECK_INTERVAL:
         return
@@ -5195,6 +5547,8 @@ def check_long_running_jobs():
 @app.route('/apple-touch-icon.png')
 @app.route('/apple-touch-icon-precomposed.png')
 def apple_touch_icon():
+    """Serves the Apple touch icon."""
+
     return send_from_directory(app.static_folder, 'apple-touch-icon.png')
 
 
@@ -5204,6 +5558,8 @@ def apple_touch_icon():
 @app.route("/logout", methods=["POST"])
 @login_required
 def logout():
+    """Logs out and clears the session."""
+
     logout_user()
     session.clear()
     flash("Logged out", "success")
