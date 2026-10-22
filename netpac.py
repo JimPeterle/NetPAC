@@ -9,12 +9,13 @@ import pyrad.packet
 import pymysql
 import os
 import subprocess
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 import markdown
 from markupsafe import Markup
 from flask_bcrypt import Bcrypt
 import logging
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import HTTPException
 from flask_limiter import Limiter
 from flask import abort
 from flask_wtf.csrf import CSRFProtect
@@ -25,6 +26,8 @@ import re
 import threading
 import json
 import hashlib
+import hmac
+import traceback
 from cryptography.fernet import Fernet
 import base64
 import sys
@@ -45,7 +48,9 @@ from collections import defaultdict
 from datetime import date, timedelta
 from flask import jsonify
 import urllib
+import urllib.parse
 import urllib.request
+import urllib.error
 import smtplib
 import ssl
 from email.message import EmailMessage
@@ -55,7 +60,7 @@ from email.message import EmailMessage
 #   Configuration variables
 # --------------------
 dir_path = os.path.dirname(os.path.realpath(__file__))
-APP_VERSION = "5.0.0"
+APP_VERSION = "6.1.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
@@ -127,7 +132,9 @@ file_handler.addFilter(TracebackInfoFilter())
 # -----------------------------------------
 #   Load .env file and map them to variable
 # -----------------------------------------
-load_dotenv(f"{dir_path}/secret.env")
+# Read into a dict instead of os.environ, so child processes (scripts, playbooks, pip, git …)
+# never inherit ENCRYPTION_KEY, FLASK_KEY or the DB credentials
+secret_config = dotenv_values(f"{dir_path}/secret.env")
 
 
 # -----------------------------------------
@@ -135,7 +142,7 @@ load_dotenv(f"{dir_path}/secret.env")
 # -----------------------------------------
 def ensure_encryption_key():
     
-    existing_key = os.getenv("ENCRYPTION_KEY")
+    existing_key = secret_config.get("ENCRYPTION_KEY")
     if not existing_key:
         logger.error("ENCRYPTION_KEY not found in secret.env")
         logger.error("The Secrets feature will be disabled.")
@@ -197,11 +204,71 @@ class SecretEncryption:
 #   secret.env parameter
 # --------------------
 encryption = SecretEncryption(encryption_key)
-flask_key = os.getenv("FLASK_KEY")
-db_user = os.getenv("DB_USER")
-db_pw = os.getenv("DB_PW")
-db_ip = os.getenv("DB_IP")
-db_port = int(os.getenv("DB_PORT"))
+
+
+# --------------------
+#   TOTP secret storage
+# --------------------
+# Plain base32 secrets from older versions are still accepted and re-encrypted on the next login
+TOTP_PLAIN_RE = re.compile(r'^[A-Z2-7]{16,64}=*$')
+
+def encrypt_totp_secret(secret):
+    if encryption.is_available():
+        return encryption.encrypt(secret)
+    logger.warning("ENCRYPTION_KEY missing — TOTP secret is stored unencrypted")
+    return secret
+
+
+def decrypt_totp_secret(stored):
+    """Returns (secret, needs_reencrypt)."""
+    if not stored:
+        return None, False
+    if TOTP_PLAIN_RE.match(stored):
+        return stored, encryption.is_available()
+    try:
+        return encryption.decrypt(stored), False
+    except Exception as e:
+        logger.critical(
+            f"Cannot decrypt TOTP secret ({type(e).__name__}) — ENCRYPTION_KEY in secret.env is missing or was changed. "
+            "Affected users can't log in until their TOTP is reset, see README 'Lost or changed ENCRYPTION_KEY'."
+        )
+        return None, False
+
+
+# Accept the previous/next 30 s step too (clock drift), but every step only once
+TOTP_VALID_WINDOW = 1
+
+def match_totp_counter(secret, code):
+    """Returns the time step the code belongs to, or None if it doesn't match."""
+    code = (code or "").strip()
+    if not re.fullmatch(r'\d{6}', code):
+        return None
+    totp = pyotp.TOTP(secret)
+    current = int(time.time()) // totp.interval
+    for counter in range(current - TOTP_VALID_WINDOW, current + TOTP_VALID_WINDOW + 1):
+        if hmac.compare_digest(totp.generate_otp(counter), code):
+            return counter
+    return None
+
+
+def consume_totp_code(cur, username, secret, code):
+    """Checks the code and marks its time step as used. A code (or an older one) can't be used twice."""
+    counter = match_totp_counter(secret, code)
+    if counter is None:
+        return False
+    # Atomic: only succeeds if this step is newer than the last one used, so parallel requests can't reuse it
+    cur.execute("""
+        UPDATE user SET totp_last_counter = %s
+        WHERE name = %s AND (totp_last_counter IS NULL OR totp_last_counter < %s)
+    """, (counter, username, counter))
+    return cur.rowcount == 1
+
+
+flask_key = secret_config.get("FLASK_KEY")
+db_user = secret_config.get("DB_USER")
+db_pw = secret_config.get("DB_PW")
+db_ip = secret_config.get("DB_IP")
+db_port = int(secret_config.get("DB_PORT") or 3306)
 
 
 # --------------------
@@ -251,7 +318,8 @@ def static_file_hash(filename):
 def inject_app_info():
     def static_file(filename):
         return url_for("static", filename=filename, v=static_file_hash(filename))
-    return {"app_version": APP_VERSION, "static_file": static_file}
+    return {"app_version": APP_VERSION, "static_file": static_file,
+            "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH}
 
 
 @app.context_processor
@@ -426,8 +494,17 @@ def send_notification_matrix(cfg, room_id, body, html_body, txn_id):
         method="PUT",
         headers={"Authorization": f"Bearer {cfg['matrix_token']}", "Content-Type": "application/json"}
     )
-    with urllib.request.urlopen(req, timeout=NOTIFY_SEND_TIMEOUT) as resp:
-        resp.read()
+    try:
+        with urllib.request.urlopen(req, timeout=NOTIFY_SEND_TIMEOUT) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        # Matrix returns {"errcode": "...", "error": "..."} — surface it instead of a bare "403 Forbidden"
+        try:
+            details = json.loads(e.read().decode(errors="replace"))
+            reason = f"{details.get('errcode', 'unknown')}: {details.get('error', '')}".strip(": ")
+        except Exception:
+            reason = e.reason
+        raise RuntimeError(f"Matrix server returned HTTP {e.code} ({reason})") from None
 
 
 def send_notification(cfg, channel, target, subject, body, html_body, txn_id):
@@ -524,9 +601,9 @@ def _notify_job_finished_worker(job_id):
     for rule_id, rule_name, channel, target in rules:
         try:
             send_notification(cfg, channel, target, subject, body, html_body, f"netpac-{job_id}-{rule_id}")
-            exec_logger.info(f"Notification for job {job_id} ({job['status']}) sent via rule '{rule_name}' ({channel})")
+            exec_logger.info(f"Notification for job {job_id} ({job['status']}) sent via rule '{sanitize_log(rule_name)}' ({channel})")
         except Exception as e:
-            exec_logger.error(f"Notification for job {job_id} via rule '{rule_name}' ({channel}) failed: {e!r}")
+            exec_logger.error(f"Notification for job {job_id} via rule '{sanitize_log(rule_name)}' ({channel}) failed: {sanitize_log(repr(e))}")
 
 
 def notify_job_finished(job_id):
@@ -551,7 +628,10 @@ def get_db():
 # --------------------
 #   Schedule Config
 # --------------------
-jobstores = {'default': SQLAlchemyJobStore(url=f'mysql+pymysql://{db_user}:{db_pw}@{db_ip}/{db_database}')}
+# Credentials are URL-encoded so special characters (@ : / # …) in the password don't break the URL
+jobstore_url = (f"mysql+pymysql://{urllib.parse.quote_plus(db_user or '')}:{urllib.parse.quote_plus(db_pw or '')}"
+                f"@{db_ip}:{db_port}/{db_database}")
+jobstores = {'default': SQLAlchemyJobStore(url=jobstore_url)}
 
 scheduler = BackgroundScheduler(jobstores=jobstores)
 scheduler.start(paused=True)
@@ -644,12 +724,35 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
     thread.daemon = True
     thread.start()
 
+SCHEDULE_JOB_COLUMNS = "job_id, script_name, user_id, target, variables, credential, use_venv, job_type, schedule_expression"
+
+def register_schedule_job(job_id, script_name, user_id, target, variables, secrets_json, use_venv, job_type, schedule_expression):
+    scheduler.add_job(
+        trigger_schedule_job,
+        trigger='cron',
+        id=str(job_id),
+        max_instances=1,
+        replace_existing=True,
+        kwargs={
+            'job_id': job_id,
+            'script_name': script_name,
+            'user_id': user_id,
+            'target': target,
+            'variables': variables,
+            'secrets_json': secrets_json,
+            'use_venv': bool(use_venv),
+            'job_type': job_type or 'python'
+        },
+        **parse_schedule(schedule_expression)
+    )
+
+
 def load_jobs_from_db():
     scheduler_logger.info("Loading jobs from DB...")
     try:
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM schedule_jobs WHERE is_active = TRUE")
+        cur.execute(f"SELECT {SCHEDULE_JOB_COLUMNS} FROM schedule_jobs WHERE is_active = TRUE")
         jobs = cur.fetchall()
         scheduler_logger.info(f"Found {len(jobs)} active jobs")
         cur.close()
@@ -657,25 +760,8 @@ def load_jobs_from_db():
 
         for job in jobs:
             try:
-                scheduler.add_job(
-                    trigger_schedule_job,
-                    trigger='cron',
-                    id=str(job[0]),     
-                    max_instances=1,
-                    replace_existing=True,
-                    kwargs={
-                        'job_id': job[0],
-                        'script_name': job[1],
-                        'user_id': job[2],       
-                        'target': job[3],      
-                        'variables': job[4],    
-                        'secrets_json': job[8],
-                        'use_venv': bool(job[9]) if job[9] is not None else False,
-                        'job_type': job[10] if len(job) > 10 and job[10] else 'python'
-                    },
-                    **parse_schedule(job[7])
-                )
-                scheduler_logger.info(f"Job-ID {job[0]} loaded: {job[1]} with schedule plan {job[7]}")
+                register_schedule_job(*job)
+                scheduler_logger.info(f"Job-ID {job[0]} loaded: {job[1]} with schedule plan {job[8]}")
             except Exception as e:
                 scheduler_logger.error(f"Error loading job {job[0]}: {e}")
 
@@ -684,12 +770,130 @@ def load_jobs_from_db():
 
 
 # --------------------
+#   Environment for child processes
+# --------------------
+TOOL_PATH_PREFIX = '/usr/bin:/usr/local/bin:'
+
+# Scripts and playbooks only get these variables from the NetPAC process (plus the ones set per job)
+JOB_ENV_WHITELIST = (
+    'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'TZ', 'TMPDIR',
+    'http_proxy', 'https_proxy', 'no_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+    'REQUESTS_CA_BUNDLE', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+    'ANSIBLE_CONFIG', 'ANSIBLE_COLLECTIONS_PATH', 'ANSIBLE_COLLECTIONS_PATHS',
+)
+
+def tool_env(**extra):
+    """Environment for NetPAC's own tools (pip, git, ansible-galaxy, mysqldump …)."""
+    env = os.environ.copy()
+    env['PATH'] = TOOL_PATH_PREFIX + env.get('PATH', '')
+    env.update(extra)
+    return env
+
+
+def job_env(**extra):
+    """Minimal environment for user scripts and playbooks — nothing outside the whitelist is passed on."""
+    env = {key: value for key, value in os.environ.items() if key in JOB_ENV_WHITELIST}
+    env['PATH'] = TOOL_PATH_PREFIX + env.get('PATH', '')
+    env.update(extra)
+    return env
+
+
+# --------------------
 #   Validate path
 # --------------------
+SCRIPTS_DIR = "/var/lib/netpac/scripts"
+PLAYBOOKS_DIR = "/var/lib/netpac/playbooks"
+GIT_DIR = "/var/lib/netpac/git"
+PLAYBOOK_EXTENSIONS = ('.yml', '.yaml')
+
 def is_safe_path(target: str, base_dir: str) -> bool:
-    base_dir = os.path.abspath(base_dir)
-    target = os.path.abspath(target)
+    # realpath resolves ".." and symlinks, so nothing can point outside base_dir
+    base_dir = os.path.realpath(base_dir)
+    target = os.path.realpath(target)
     return target == base_dir or target.startswith(base_dir + os.sep)
+
+
+def resolve_repo_path(subpath, local_dir):
+    """Maps a UI path to (base_dir, real_path). Paths starting with "git/" point into the Git checkout.
+    real_path is None if the path would leave base_dir."""
+    if subpath == "git" or subpath.startswith("git/"):
+        base_dir = os.path.realpath(GIT_DIR)
+        rel_path = subpath[len("git"):].lstrip("/")
+    else:
+        base_dir = os.path.realpath(local_dir)
+        rel_path = subpath
+
+    target = os.path.realpath(os.path.join(base_dir, rel_path))
+    if not is_safe_path(target, base_dir) or is_in_git_metadata(target, base_dir):
+        return base_dir, None
+    return base_dir, target
+
+
+def is_in_git_metadata(path, base_dir):
+    """True for anything inside a .git folder (checked on the resolved path, so symlinks into .git count too)."""
+    return ".git" in os.path.relpath(path, base_dir).split(os.sep)
+
+
+def is_listable(path, base_dir):
+    # Hides symlinks that point outside the folder (or into .git) — they can't be opened or run anyway
+    real = os.path.realpath(path)
+    return is_safe_path(real, base_dir) and not is_in_git_metadata(real, os.path.realpath(base_dir))
+
+
+def list_repo_files(local_dir, extensions):
+    """Sorted relative paths of all matching files; files from the Git checkout are prefixed with "git/"."""
+    result = []
+    roots = [(local_dir, "")]
+    if os.path.exists(GIT_DIR):
+        roots.append((GIT_DIR, "git/"))
+
+    for base, prefix in roots:
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d != '.git']
+            for file in files:
+                full_path = os.path.join(root, file)
+                if file.endswith(extensions) and is_listable(full_path, base):
+                    result.append(prefix + os.path.relpath(full_path, base))
+    return sorted(result)
+
+
+def list_dir_entries(target, subpath, base_dir):
+    entries = []
+    for name in (sorted(os.listdir(target)) if os.path.isdir(target) else []):
+        if name == '.git' or not is_listable(os.path.join(target, name), base_dir):
+            continue
+        entries.append({
+            "name": name,
+            "is_dir": os.path.isdir(os.path.join(target, name)),
+            "path": os.path.join(subpath, name) if subpath else name
+        })
+    return entries
+
+
+def load_secret_choices():
+    """Name and username of all secrets for the selection fields (never the password)."""
+    if not encryption.is_available():
+        return []
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT name, username FROM secrets ORDER BY name")
+        return [{'name': row[0], 'username': row[1]} for row in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+
+def parse_extra_vars(raw):
+    """Parses "Key=Value" lines into a dict."""
+    extra_vars = {}
+    for line in (raw or "").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            key, value = key.strip(), value.strip()
+            if key:
+                extra_vars[key] = value
+    return extra_vars
 
 
 # --------------------
@@ -747,10 +951,51 @@ def reap_stale_jobs():
         notify_job_finished(job_id)
 
 
+REAP_THROTTLE_SECONDS = 10
+_last_reap = 0.0
+_reap_lock = threading.Lock()
+
+def reap_stale_jobs_throttled():
+    # The job page polls the status every second — cleaning up on every poll is unnecessary DB load
+    global _last_reap
+    with _reap_lock:
+        if time.time() - _last_reap < REAP_THROTTLE_SECONDS:
+            return
+        _last_reap = time.time()
+    reap_stale_jobs()
+
+
 # --------------------
 #   Validate script variable count
 # --------------------
 MAX_SCRIPT_VARS = 10
+
+
+# --------------------
+#   Input validation
+# --------------------
+MAX_USERNAME_LENGTH = 100       # user.name is VARCHAR(100)
+MAX_HOSTNAME_LENGTH = 255       # hosts.hostname is VARCHAR(255)
+
+# Hostname, FQDN or IP address — no spaces, so nothing else can end up in the Ansible inventory line
+HOSTNAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]*\Z')
+# Install: name with optional extras/version spec (e.g. requests[socks]>=2.31) — never starting with "-" (pip options)
+PIP_INSTALL_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-\[\],<>=!~]*\Z')
+# Uninstall/update: plain package name only
+PIP_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-]*\Z')
+# Install: namespace.name with optional version spec (e.g. cisco.ios:>=5.0.0); uninstall/update use COLLECTION_NAME_RE
+COLLECTION_INSTALL_RE = re.compile(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+(:[A-Za-z0-9._<>=!*,\-]+)?\Z')
+COLLECTION_NAME_RE = re.compile(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\Z')
+
+
+def validate_hostname(hostname):
+    if not hostname:
+        return "Hostname is required"
+    if len(hostname) > MAX_HOSTNAME_LENGTH:
+        return f"Hostname is too long (max. {MAX_HOSTNAME_LENGTH} characters)"
+    if not HOSTNAME_RE.match(hostname):
+        return "Hostname may only contain letters, numbers, dots, colons, dashes and underscores (no spaces)"
+    return None
 
 def parse_var_count(value) -> int:
     try:
@@ -772,7 +1017,8 @@ def validate_password(password: str) -> str | None:
         return "Password must contain at least one lowercase letter"
     if not re.search(r'[0-9]', password):
         return "Password must contain at least one number"
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+    # Any character that is neither a letter nor a digit counts (e.g. - _ + = / ~ or a space)
+    if not re.search(r'[^A-Za-z0-9]', password):
         return "Password must contain at least one special character"
     return None
 
@@ -826,6 +1072,11 @@ def login():
 
         if not username or not password:
             flash("Username and password required", "danger")
+            return redirect(url_for("login"))
+
+        if len(username) > MAX_USERNAME_LENGTH:
+            # Such a user can't exist (and a RADIUS user couldn't be created) — treat it like wrong credentials
+            flash("Invalid login details!", "danger")
             return redirect(url_for("login"))
         
         if auth_mode == "local":
@@ -974,11 +1225,14 @@ def totp_setup():
         if not secret:
             return redirect(url_for("totp_setup"))
 
-        totp = pyotp.TOTP(secret)
-        if totp.verify(code):
+        counter = match_totp_counter(secret, code)
+        if counter is not None:
             conn = get_db()
             cur = conn.cursor()
-            cur.execute("UPDATE user SET totp_secret = %s, totp_confirmed = TRUE WHERE name = %s AND NOT COALESCE(totp_confirmed, FALSE)", (secret, username))
+            cur.execute("""
+                UPDATE user SET totp_secret = %s, totp_confirmed = TRUE, totp_last_counter = %s
+                WHERE name = %s AND NOT COALESCE(totp_confirmed, FALSE)
+            """, (encrypt_totp_secret(secret), counter, username))
             updated = cur.rowcount
             conn.commit()
 
@@ -1043,19 +1297,34 @@ def totp_verify():
 
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("SELECT totp_secret, method FROM user WHERE name = %s", (username,))
-        row = cur.fetchone()
-        cur.close()
-        conn.close()
-        
-        if not row or not row[0]:
-            session.clear()
-            return redirect(url_for("login"))
+        try:
+            cur.execute("SELECT totp_secret, method FROM user WHERE name = %s", (username,))
+            row = cur.fetchone()
 
-        method = row[1]
+            totp_secret, needs_reencrypt = decrypt_totp_secret(row[0] if row else None)
+            if not totp_secret:
+                session.clear()
+                if row and row[0]:
+                    # Secret exists but can't be decrypted (key lost/changed) — say so instead of silently looping
+                    flash("Your two-factor secret can't be read on the server. Contact your administrator.", "danger")
+                return redirect(url_for("login"))
 
-        totp = pyotp.TOTP(row[0])
-        if totp.verify(code or ""):
+            method = row[1]
+            code_ok = consume_totp_code(cur, username, totp_secret, code)
+            conn.commit()
+
+            if code_ok and needs_reencrypt:
+                try:
+                    cur.execute("UPDATE user SET totp_secret = %s WHERE name = %s", (encrypt_totp_secret(totp_secret), username))
+                    conn.commit()
+                    logger.info(f"TOTP secret of {sanitize_log(username)} migrated to encrypted storage")
+                except Exception as e:
+                    logger.error(f"Could not re-encrypt TOTP secret of {sanitize_log(username)}: {e}")
+        finally:
+            cur.close()
+            conn.close()
+
+        if code_ok:
             session.pop("pre_auth_user", None)
             user = User(username)
             login_user(user)
@@ -1063,7 +1332,7 @@ def totp_verify():
             logger.info(f"Successful login: {sanitize_log(username)} (method: {method})")
             return redirect(url_for("dashboard"))
         else:
-            flash("Invalid code", "danger")
+            flash("Invalid or already used code — wait for the next code", "danger")
 
     return render_template("totp_verify.html")
 
@@ -1213,14 +1482,16 @@ def groups():
     return render_template("groups.html", groups=groups)
 
 
+def normalize_group_vars(raw):
+    # Stored as one "key=value" per line, so values may contain commas
+    return "\n".join(line.strip() for line in raw.splitlines() if "=" in line and line.strip())
+
+
 @app.route("/groups", methods=["POST"])
 @login_required
 def add_group():
     name = request.form.get("name", "").strip()
-    ansible_vars_raw = request.form.get("ansible_vars", "").strip()
-
-    ansible_vars_lines = [line.strip() for line in ansible_vars_raw.splitlines() if line.strip()]
-    ansible_vars = ",".join(ansible_vars_lines)
+    ansible_vars = normalize_group_vars(request.form.get("ansible_vars", ""))
 
     if not name:
         flash("Group name is required", "danger")
@@ -1252,10 +1523,7 @@ def add_group():
 @app.route("/groups/edit/<int:group_id>", methods=["POST"])
 @login_required
 def edit_group(group_id):
-    ansible_vars_raw = request.form.get("ansible_vars", "").strip()
-
-    if ansible_vars_raw:
-        ansible_vars = "\n".join(v.strip() for v in ansible_vars_raw.split(",") if v.strip())
+    ansible_vars = normalize_group_vars(request.form.get("ansible_vars", ""))
 
     conn = get_db()
     cur = conn.cursor()
@@ -1271,6 +1539,7 @@ def edit_group(group_id):
             (ansible_vars, group_id)
         )
         conn.commit()
+        logger.info(f"Group '{sanitize_log(row[0])}' updated by {current_user.id}")
         flash(f"Group '{row[0]}' updated", "success")
     except Exception as e:
         logger.error(f"Error updating group: {e}")
@@ -1361,6 +1630,8 @@ def hosts_by_group(group_id):
         cur.execute("SELECT group_id, name, ansible_vars FROM host_groups ORDER BY name")
         available_groups = cur.fetchall()
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Exception on hosts_by_group: {type(e).__name__}: {e}")
         all_hosts = []
@@ -1404,8 +1675,9 @@ def add_host():
     description = request.form.get("Description", "").strip()
     group_ids = request.form.getlist("group_ids")
 
-    if not hostname:
-        flash("Hostname is required", "danger")
+    error = validate_hostname(hostname)
+    if error:
+        flash(error, "danger")
         return redirect(url_for("hosts"))
 
     conn = get_db()
@@ -1426,7 +1698,7 @@ def add_host():
                 cur.execute("INSERT INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", (host_id, gid))
 
         conn.commit()
-        logger.info(f"Host {hostname} added with groups {group_ids} by {current_user.id}")
+        logger.info(f"Host '{sanitize_log(hostname)}' added with groups {group_ids} by {current_user.id}")
         flash(f"Host '{hostname}' added", "success")
 
     except pymysql.IntegrityError as e:
@@ -1452,6 +1724,11 @@ def update_host():
     description = request.form.get("Description", "").strip()
     group_ids = request.form.getlist("group_ids")
 
+    error = validate_hostname(hostname)
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("hosts"))
+
     conn = get_db()
     cur = conn.cursor()
 
@@ -1472,7 +1749,7 @@ def update_host():
                 cur.execute("INSERT INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", (host_id, gid))
 
         conn.commit()
-        logger.info(f"Host {hostname} updated with groups {group_ids}")
+        logger.info(f"Host '{sanitize_log(original_hostname)}' updated (now '{sanitize_log(hostname)}', groups {group_ids}) by {current_user.id}")
         flash(f"Host '{hostname}' updated", "success")
 
     except Exception as e:
@@ -1512,7 +1789,7 @@ def bulk_update_hosts():
                     cur.execute("INSERT IGNORE INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", (host_id, gid))
 
         conn.commit()
-        logger.info(f"Bulk updated hosts {host_ids} with description '{description}' and groups {group_ids}")
+        logger.info(f"Bulk updated hosts {host_ids} with description '{sanitize_log(description)}' and groups {group_ids} by {current_user.id}")
         flash(f"Bulk updated {len(host_ids)} hosts", "success")
 
     except Exception as e:
@@ -1542,10 +1819,13 @@ def toggle_host(host_id):
         cur.execute("UPDATE hosts SET is_active = NOT is_active WHERE host_id = %s", (host_id,))
         conn.commit()
 
+        logger.info(f"Host {host_id} {'deactivated' if row[0] else 'activated'} by {current_user.id}")
         flash("Host updated", "success")
 
+    except HTTPException:
+        raise
     except Exception as e:
-        scheduler_logger.error(f"Error toggling host: {e}")
+        logger.error(f"Error toggling host {host_id}: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -1573,10 +1853,10 @@ def delete_host():
 
         cur.execute("DELETE FROM hosts WHERE host_id = %s", (row[0],))
         conn.commit()
-        logger.info(f"Host {hostname} successfully deleted")
+        logger.info(f"Host '{sanitize_log(hostname)}' deleted by {current_user.id}")
 
     except Exception as e:
-        logger.error(f"Error deleting host {hostname}: {e}")
+        logger.error(f"Error deleting host '{sanitize_log(hostname)}': {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -1601,8 +1881,7 @@ def load_git_config():
 
 
 def build_git_env(token: str) -> dict:
-    env = os.environ.copy()
-    env['GIT_TERMINAL_PROMPT'] = '0'
+    env = tool_env(GIT_TERMINAL_PROMPT='0')
     if token:
         basic = base64.b64encode(f"oauth2:{token}".encode()).decode()
         env['GIT_CONFIG_COUNT'] = '1'
@@ -1617,106 +1896,41 @@ def build_git_env(token: str) -> dict:
 @app.route("/scripts")
 @login_required
 def scripts():
-    base_dir = "/var/lib/netpac/scripts"
-    git_dir = "/var/lib/netpac/git"
-    git_config = load_git_config()
+    if not os.path.isdir(SCRIPTS_DIR):
+        logger.error(f"Script directory {SCRIPTS_DIR} does not exist")
+        flash(f"Script directory {SCRIPTS_DIR} does not exist — run setup.sh again or create it", "warning")
 
-    entries = []
-    if not os.path.isdir(base_dir):
-        logger.error(f"Script directory {base_dir} does not exist")
-        flash(f"Script directory {base_dir} does not exist — run setup.sh again or create it", "warning")
+    entries = [e for e in list_dir_entries(SCRIPTS_DIR, "", SCRIPTS_DIR) if e["is_dir"] or e["name"].endswith('.py')]
+    if os.path.exists(GIT_DIR):
+        entries.append({"name": "git", "is_dir": True, "path": "git"})
 
-    for name in (sorted(os.listdir(base_dir)) if os.path.isdir(base_dir) else []):
-        full = os.path.join(base_dir, name)
-        if os.path.isdir(full) or name.endswith('.py'):
-            entries.append({
-                "name": name,
-                "is_dir": os.path.isdir(full),
-                "path": name
-            })
+    all_scripts = [{"name": os.path.basename(path), "path": path, "is_dir": False}
+                   for path in list_repo_files(SCRIPTS_DIR, ('.py',))]
 
-    if os.path.exists(git_dir):
-        entries.append({
-            "name": "git",
-            "is_dir": True,
-            "path": "git"
-        })
-
-    all_scripts = []
-    for root, dirs, files in os.walk(base_dir):
-        dirs[:] = [d for d in dirs if d != '.git']
-        for file in sorted(files):
-            if file.endswith('.py'):
-                full_path = os.path.join(root, file)
-                relative_path = os.path.relpath(full_path, base_dir)
-                all_scripts.append({"name": file, "path": relative_path, "is_dir": False})
-
-    if os.path.exists(git_dir):
-        for root, dirs, files in os.walk(git_dir):
-            dirs[:] = [d for d in dirs if d != '.git']
-            for file in sorted(files):
-                if file.endswith('.py'):
-                    full_path = os.path.join(root, file)
-                    relative_path = "git/" + os.path.relpath(full_path, git_dir)
-                    all_scripts.append({"name": file, "path": relative_path, "is_dir": False})
-
-    all_scripts = sorted(all_scripts, key=lambda x: x['path'])
-
-    return render_template("scripts.html", entries=entries, git_config=git_config, current_path="", all_scripts=all_scripts)
+    return render_template("scripts.html", entries=entries, git_config=load_git_config(), current_path="", all_scripts=all_scripts)
 
 
 @app.route("/scripts/", defaults={"subpath": ""})
 @app.route("/scripts/<path:subpath>")
 @login_required
 def view_script(subpath):
-    scripts_base = os.path.abspath("/var/lib/netpac/scripts")
-    git_base = os.path.abspath("/var/lib/netpac/git")
+    base_dir, target = resolve_repo_path(subpath, SCRIPTS_DIR)
 
-    if subpath == "git" or subpath.startswith("git/"):
-        base_dir = git_base
-        rel_subpath = subpath[len("git"):].lstrip("/")
-    else:
-        base_dir = scripts_base
-        rel_subpath = subpath
-
-    target = os.path.abspath(os.path.join(base_dir, rel_subpath))
-
-    if not is_safe_path(target, base_dir):
-        logger.warning(f"Path traversal attempt detected: {subpath}")
+    if target is None:
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
     if not os.path.exists(target):
         abort(404)
 
     if os.path.isdir(target):
-        entries = []
-        for name in sorted(os.listdir(target)):
-            if name == '.git':
-                continue
-            full = os.path.join(target, name)
-            entries.append({
-                "name": name,
-                "is_dir": os.path.isdir(full),
-                "path": os.path.join(subpath, name) if subpath else name
-            })
-        return render_template("scripts.html", entries=entries, current_path=subpath, git_config=load_git_config())
+        return render_template("scripts.html", entries=list_dir_entries(target, subpath, base_dir), current_path=subpath, git_config=load_git_config())
 
     try:
         with open(target, "r", encoding="utf-8") as f:
             content = f.read()
 
-        secrets = []
-        if encryption.is_available():
-            conn = get_db()
-            cur = conn.cursor()
-            try:
-                cur.execute("SELECT name, username FROM secrets ORDER BY name")
-                secrets = [{'name': row[0], 'username': row[1]} for row in cur.fetchall()]
-            finally:
-                cur.close()
-                conn.close()
-
-        return render_template("view_script.html", filename=subpath, content=content, secrets=secrets)
+        return render_template("view_script.html", filename=subpath, content=content, secrets=load_secret_choices())
 
     except Exception as e:
         logger.error(f"Error reading script {subpath}: {e}")
@@ -1726,11 +1940,10 @@ def view_script(subpath):
 @app.route("/run_scripts/<path:subpath>", methods=["POST"])
 @login_required
 def run_script(subpath):
-    base_dir = os.path.abspath("/var/lib/netpac/scripts")
-    target_path = os.path.abspath(os.path.join(base_dir, subpath))
-       
-    if not is_safe_path(target_path, base_dir):
-        logger.warning(f"Path traversal attempt detected: {subpath}")
+    _, target_path = resolve_repo_path(subpath, SCRIPTS_DIR)
+
+    if target_path is None:
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
     
     reap_stale_jobs()
@@ -1796,6 +2009,7 @@ def run_script(subpath):
     thread.daemon = True
     thread.start()
 
+    logger.info(f"Script '{sanitize_log(safe_filename)}' started as job #{job_id} by {current_user.id}")
     flash(f"Script '{safe_filename}' started (Job #{job_id})", "success")
     return redirect(url_for("history", mode="python"))
 
@@ -1818,9 +2032,7 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
     output_script = ""
     status = "completed"
     temp_hostfile = None
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
-    env['PYTHONUNBUFFERED'] = '1'
+    env = job_env(PYTHONUNBUFFERED='1')
 
     process = None 
 
@@ -1884,31 +2096,22 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
                 env[f'SECRET_{num}_USERNAME'] = username
                 env[f'SECRET_{num}_PASSWORD'] = decrypted
 
-        temp_hostfile = tempfile.gettempdir() + f"/netpac_hosts_{uuid.uuid4().hex}.txt"
-        with open(temp_hostfile, "w") as f:
+        # mkstemp creates the file with 0600, so other local users can't read the host list
+        fd, temp_hostfile = tempfile.mkstemp(prefix="netpac_hosts_", suffix=".txt")
+        with os.fdopen(fd, "w") as f:
             for t in targets:
                 f.write(t[0] + "\n")
 
-        base_dir_scripts = os.path.realpath("/var/lib/netpac/scripts")
-        git_base = os.path.realpath("/var/lib/netpac/git")
+        _, script_path = resolve_repo_path(filename, SCRIPTS_DIR)
 
-        if filename == "git" or filename.startswith("git/"):
-            base_dir = git_base
-            rel_filename = filename[len("git"):].lstrip("/")
-        else:
-            base_dir = base_dir_scripts
-            rel_filename = filename
-
-        script_path = os.path.realpath(os.path.join(base_dir, rel_filename))
-
-        if not is_safe_path(script_path, base_dir):
+        if script_path is None:
             raise ValueError("Invalid script path")
 
-        if not os.path.exists(script_path):
+        if not os.path.isfile(script_path):
             raise FileNotFoundError(f"Script not found: {filename}")
 
         env['NETPAC_HOSTFILE'] = temp_hostfile
-        script_dir = os.path.dirname(os.path.abspath(script_path))
+        script_dir = os.path.dirname(script_path)
 
         args = [python, '-u', script_path]
         for i in range(1, var_count + 1):
@@ -1994,8 +2197,7 @@ def venv_manager():
     venv_exists = os.path.exists(VENV_PIP)
     
     if venv_exists:
-        env = os.environ.copy()
-        env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+        env = tool_env()
 
         result = subprocess.run(
             [VENV_PIP, 'list', '--format=json'],
@@ -2017,12 +2219,11 @@ def venv_install():
         flash("Package name required", "danger")
         return redirect(url_for("venv_manager"))
 
-    if not re.match(r'^[a-zA-Z0-9_\-\.\[\]>=<!]+$', package):
+    if not PIP_INSTALL_RE.match(package):
         flash("Invalid package name", "danger")
         return redirect(url_for("venv_manager"))
 
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    env = tool_env()
 
     result = subprocess.run(
         [VENV_PIP, 'install', package],
@@ -2031,8 +2232,10 @@ def venv_install():
     )
 
     if result.returncode == 0:
+        logger.info(f"venv package '{package}' installed by {current_user.id}")
         flash(f"Package '{package}' installed successfully", "success")
     else:
+        logger.error(f"venv package '{package}' install failed (by {current_user.id}): {sanitize_log(result.stderr)}")
         flash(f"Failed to install '{package}': {result.stderr}", "danger")
 
     return redirect(url_for("venv_manager"))
@@ -2047,8 +2250,11 @@ def venv_uninstall():
         flash("Package name required", "danger")
         return redirect(url_for("venv_manager"))
 
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    if not PIP_NAME_RE.match(package):
+        flash("Invalid package name", "danger")
+        return redirect(url_for("venv_manager"))
+
+    env = tool_env()
 
     result = subprocess.run(
         [VENV_PIP, 'uninstall', '-y', package],
@@ -2057,8 +2263,10 @@ def venv_uninstall():
     )
 
     if result.returncode == 0:
+        logger.info(f"venv package '{sanitize_log(package)}' removed by {current_user.id}")
         flash(f"Package '{package}' removed", "success")
     else:
+        logger.error(f"venv package '{sanitize_log(package)}' removal failed (by {current_user.id}): {sanitize_log(result.stderr)}")
         flash(f"Failed to remove '{package}': {result.stderr}", "danger")
 
     return redirect(url_for("venv_manager"))
@@ -2073,8 +2281,11 @@ def venv_update():
         flash("Package name required", "danger")
         return redirect(url_for("venv_manager"))
 
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    if not PIP_NAME_RE.match(package):
+        flash("Invalid package name", "danger")
+        return redirect(url_for("venv_manager"))
+
+    env = tool_env()
 
     result = subprocess.run(
         [VENV_PIP, 'install', '--upgrade', package],
@@ -2083,8 +2294,10 @@ def venv_update():
     )
 
     if result.returncode == 0:
+        logger.info(f"venv package '{sanitize_log(package)}' updated by {current_user.id}")
         flash(f"Package '{package}' updated", "success")
     else:
+        logger.error(f"venv package '{sanitize_log(package)}' update failed (by {current_user.id}): {sanitize_log(result.stderr)}")
         flash(f"Failed to update '{package}': {result.stderr}", "danger")
 
     return redirect(url_for("venv_manager"))
@@ -2093,8 +2306,7 @@ def venv_update():
 @app.route("/venv/update_all", methods=["POST"])
 @login_required
 def venv_update_all():
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    env = tool_env()
 
     result = subprocess.run(
         [VENV_PIP, 'list', '--outdated', '--format=json'],
@@ -2110,8 +2322,10 @@ def venv_update_all():
                 capture_output=True, text=True,
                 env=env
             )
+        logger.info(f"venv: {len(outdated)} packages updated by {current_user.id}")
         flash(f"Updated {len(outdated)} packages", "success")
     else:
+        logger.error(f"venv update check failed (by {current_user.id}): {sanitize_log(result.stderr)}")
         flash("Failed to check for updates", "danger")
 
     return redirect(url_for("venv_manager"))
@@ -2127,7 +2341,7 @@ def sync_scripts():
     repo_url    = git_config.get("repo_url", "")
     branch      = git_config.get("branch", "main")
     token_enc   = git_config.get("token_encrypted", "")
-    git_dir = "/var/lib/netpac/git"
+    git_dir = GIT_DIR
 
     if not repo_url:
         flash("No Git repository has been configured. Please set it up in the settings first.", "warning")
@@ -2189,20 +2403,10 @@ def sync_scripts():
 @app.route("/playbooks/<path:subpath>")
 @login_required
 def browse_playbooks(subpath):
-    playbooks_base = os.path.realpath("/var/lib/netpac/playbooks")
-    git_base = os.path.realpath("/var/lib/netpac/git")
+    base_dir, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
-    if subpath == "git" or subpath.startswith("git/"):
-        base_dir = git_base
-        rel_subpath = subpath[len("git"):].lstrip("/")
-    else:
-        base_dir = playbooks_base
-        rel_subpath = subpath
-
-    target = os.path.realpath(os.path.join(base_dir, rel_subpath))
-
-    if not is_safe_path(target, base_dir):
-        logger.warning(f"Path traversal attempt detected: {subpath}")
+    if target is None:
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
     if subpath == "" and not os.path.isdir(target):
@@ -2212,83 +2416,21 @@ def browse_playbooks(subpath):
         abort(404)
 
     if subpath == "" or os.path.isdir(target):
-        entries = []
-        for name in (sorted(os.listdir(target)) if os.path.isdir(target) else []):
-            if name == '.git':
-                continue
-            full = os.path.join(target, name)
-            entries.append({
-                "name": name,
-                "is_dir": os.path.isdir(full),
-                "path": os.path.join(subpath, name) if subpath else name
-            })
+        entries = list_dir_entries(target, subpath, base_dir)
+        if subpath == "" and os.path.exists(GIT_DIR):
+            entries.append({"name": "git", "is_dir": True, "path": "git"})
 
-        if subpath == "" and os.path.exists(git_base):
-            entries.append({
-                "name": "git",
-                "is_dir": True,
-                "path": "git"
-            })
+        all_playbooks = [{"name": os.path.basename(path), "path": path, "is_dir": False}
+                         for path in list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)]
 
-        all_playbooks = []
+        return render_template("playbooks.html", entries=entries, all_playbooks=all_playbooks, secrets=load_secret_choices(), current_path=subpath, git_config=load_git_config())
 
-        for root, dirs, files in os.walk(playbooks_base):
-            dirs[:] = [d for d in dirs if d != '.git']
-            for file in sorted(files):
-                if file.endswith('.yml') or file.endswith('.yaml'):
-                    full_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(full_path, playbooks_base)
-                    all_playbooks.append({
-                        "name": file,
-                        "path": relative_path,
-                        "is_dir": False
-                    })
-
-        if os.path.exists(git_base):
-            for root, dirs, files in os.walk(git_base):
-                dirs[:] = [d for d in dirs if d != '.git']
-                for file in sorted(files):
-                    if file.endswith('.yml') or file.endswith('.yaml'):
-                        full_path = os.path.join(root, file)
-                        relative_path = "git/" + os.path.relpath(full_path, git_base)
-                        all_playbooks.append({
-                            "name": file,
-                            "path": relative_path,
-                            "is_dir": False
-                        })
-
-        all_playbooks = sorted(all_playbooks, key=lambda x: x['path'])
-
-        secrets = []
-        if encryption.is_available():
-            conn = get_db()
-            cur = conn.cursor()
-            try:
-                cur.execute("SELECT name, username FROM secrets ORDER BY name")
-                secrets = [{'name': r[0], 'username': r[1]} for r in cur.fetchall()]
-            finally:
-                cur.close()
-                conn.close()
-
-        return render_template("playbooks.html", entries=entries, all_playbooks=all_playbooks, secrets=secrets, current_path=subpath, git_config=load_git_config())
-
-    elif os.path.isfile(target) and (target.endswith('.yml') or target.endswith('.yaml')):
+    elif os.path.isfile(target) and target.endswith(PLAYBOOK_EXTENSIONS):
         try:
             with open(target, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            secrets = []
-            if encryption.is_available():
-                conn = get_db()
-                cur = conn.cursor()
-                try:
-                    cur.execute("SELECT name, username FROM secrets ORDER BY name")
-                    secrets = [{'name': r[0], 'username': r[1]} for r in cur.fetchall()]
-                finally:
-                    cur.close()
-                    conn.close()
-
-            return render_template("view_playbook.html", filename=subpath, content=content, secrets=secrets)
+            return render_template("view_playbook.html", filename=subpath, content=content, secrets=load_secret_choices())
 
         except Exception as e:
             logger.error(f"Error reading playbook {subpath}: {e}")
@@ -2300,27 +2442,16 @@ def browse_playbooks(subpath):
 @app.route("/playbook_graph/<path:subpath>", methods=["POST"])
 @login_required
 def playbook_graph(subpath):
-    playbooks_base = os.path.realpath("/var/lib/netpac/playbooks")
-    git_base = os.path.realpath("/var/lib/netpac/git")
+    _, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
-    if subpath == "git" or subpath.startswith("git/"):
-        base_dir = git_base
-        rel_subpath = subpath[len("git"):].lstrip("/")
-    else:
-        base_dir = playbooks_base
-        rel_subpath = subpath
-
-    target = os.path.realpath(os.path.join(base_dir, rel_subpath))
-
-    if not is_safe_path(target, base_dir):
-        logger.warning(f"Path traversal attempt detected: {subpath}")
+    if target is None:
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
-    graph_dir = "/var/lib/netpac/graphs"
-    os.makedirs(graph_dir, exist_ok=True)
-    
+    os.makedirs(GRAPH_DIR, exist_ok=True)
+
     graph_name = subpath.replace("/", "_").replace(".yml", "").replace(".yaml", "")
-    output_path = os.path.join(graph_dir, graph_name)
+    output_path = os.path.join(GRAPH_DIR, graph_name)
 
     grapher = os.path.join(dir_path, "venv", "bin", "ansible-playbook-grapher")
 
@@ -2328,8 +2459,7 @@ def playbook_graph(subpath):
         flash("ansible-playbook-grapher is not installed. Install it manually over the Web-Interface -> Python -> Environment", "danger")
         return redirect(url_for("browse_playbooks", subpath=subpath))
     
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    env = tool_env()
 
     result = subprocess.run(
         [grapher, target, "-o", output_path],
@@ -2344,42 +2474,49 @@ def playbook_graph(subpath):
     return redirect(url_for("view_playbook_graph", filename=graph_name))
 
 
+GRAPH_DIR = "/var/lib/netpac/graphs"
+
+def resolve_graph_path(filename):
+    """Returns (graph_dir, svg_path) or aborts with 403/404."""
+    graph_dir = os.path.realpath(GRAPH_DIR)
+    graph_path = os.path.realpath(os.path.join(graph_dir, filename + ".svg"))
+
+    if not is_safe_path(graph_path, graph_dir):
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(filename)}")
+        abort(403)
+
+    if not os.path.isfile(graph_path):
+        abort(404)
+
+    return graph_dir, graph_path
+
+
 @app.route("/playbook_graph/view/<filename>")
 @login_required
 def view_playbook_graph(filename):
-    graph_dir = os.path.abspath("/var/lib/netpac/graphs")
-    graph_path = os.path.abspath(os.path.join(graph_dir, filename + ".svg"))
-    
-    if not is_safe_path(graph_path, graph_dir):
-        logger.warning(f"Path traversal attempt detected: {filename}")
-        abort(403)
-    
-    if not os.path.exists(graph_path):
-        abort(404)
-    
-    with open(graph_path, "r") as f:
-        svg_content = f.read()
-    
-    return render_template("playbook_graph.html", svg=svg_content, filename=filename)
+    resolve_graph_path(filename)
+    return render_template("playbook_graph.html", filename=filename)
+
+
+@app.route("/playbook_graph/raw/<filename>.svg")
+@login_required
+def raw_playbook_graph(filename):
+    graph_dir, graph_path = resolve_graph_path(filename)
+
+    # The SVG is built from playbook content — never let scripts inside it run, even when opened directly
+    response = make_response(send_from_directory(graph_dir, os.path.basename(graph_path), mimetype="image/svg+xml"))
+    response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @app.route("/playbook_syntax_check/<path:subpath>", methods=["POST"])
 @login_required
 def playbook_syntax_check(subpath):
-    playbooks_base = os.path.realpath("/var/lib/netpac/playbooks")
-    git_base = os.path.realpath("/var/lib/netpac/git")
+    _, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
-    if subpath == "git" or subpath.startswith("git/"):
-        base_dir = git_base
-        rel_subpath = subpath[len("git"):].lstrip("/")
-    else:
-        base_dir = playbooks_base
-        rel_subpath = subpath
-
-    target = os.path.realpath(os.path.join(base_dir, rel_subpath))
-
-    if not is_safe_path(target, base_dir):
-        logger.warning(f"Path traversal attempt detected: {subpath}")
+    if target is None:
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
     if not os.path.exists(target):
@@ -2387,8 +2524,7 @@ def playbook_syntax_check(subpath):
 
     ansible = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
 
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    env = tool_env()
 
     result = subprocess.run(
         [ansible, '--syntax-check', target],
@@ -2407,12 +2543,11 @@ def playbook_syntax_check(subpath):
 @app.route("/run_playbook/<path:subpath>", methods=["POST"])
 @login_required
 def run_playbook(subpath):
-    base_dir = os.path.abspath("/var/lib/netpac/playbooks")
-    target_path = os.path.abspath(os.path.join(base_dir, subpath))
+    _, target_path = resolve_repo_path(subpath, PLAYBOOKS_DIR)
     dry_run = request.form.get("dry_run") == "on"
 
-    if not is_safe_path(target_path, base_dir):
-        logger.warning(f"Path traversal attempt detected: {subpath}")
+    if target_path is None:
+        logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
     reap_stale_jobs()
@@ -2441,14 +2576,7 @@ def run_playbook(subpath):
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
 
-    extra_vars_raw = request.form.get("extra_vars_raw", "").strip()
-    extra_vars = {}
-    for line in extra_vars_raw.splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            k, v = k.strip(), v.strip()
-            if k:
-                extra_vars[k] = v
+    extra_vars = parse_extra_vars(request.form.get("extra_vars_raw", ""))
     extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
     variables = json.dumps({"extra_vars": extra_vars})
@@ -2479,6 +2607,7 @@ def run_playbook(subpath):
     thread.daemon = True
     thread.start()
 
+    logger.info(f"Playbook '{sanitize_log(subpath)}' started as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     flash(f"Playbook '{subpath}' started {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
@@ -2499,39 +2628,18 @@ def playbook_templates():
         cur.close()
         conn.close()
 
-    playbooks_base = os.path.realpath("/var/lib/netpac/playbooks")
-    git_base = os.path.realpath("/var/lib/netpac/git")
+    return render_template("playbook_templates.html", templates=templates,
+                           playbooks=list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS), secrets=load_secret_choices())
 
-    playbooks = []
-    for root, dirs, files in os.walk(playbooks_base):
-        dirs[:] = [d for d in dirs if d != '.git']
-        for file in sorted(files):
-            if file.endswith('.yml') or file.endswith('.yaml'):
-                rel = os.path.relpath(os.path.join(root, file), playbooks_base)
-                playbooks.append(rel)
 
-    if os.path.exists(git_base):
-        for root, dirs, files in os.walk(git_base):
-            dirs[:] = [d for d in dirs if d != '.git']
-            for file in sorted(files):
-                if file.endswith('.yml') or file.endswith('.yaml'):
-                    rel = "git/" + os.path.relpath(os.path.join(root, file), git_base)
-                    playbooks.append(rel)
-
-    playbooks = sorted(playbooks)
-
-    secrets = []
-    if encryption.is_available():
-        conn = get_db()
-        cur = conn.cursor()
-        try:
-            cur.execute("SELECT name, username FROM secrets ORDER BY name")
-            secrets = [{'name': r[0], 'username': r[1]} for r in cur.fetchall()]
-        finally:
-            cur.close()
-            conn.close()
-
-    return render_template("playbook_templates.html", templates=templates, playbooks=playbooks, secrets=secrets)
+def parse_playbook_target(form):
+    """Returns (target, error). Running on the NetPAC server itself must be chosen explicitly."""
+    if form.get("run_local") == "on":
+        return "localhost", None
+    target = form.get("target", "").strip()
+    if not target:
+        return None, "Please enter a target or choose 'Run on the NetPAC server (localhost)'"
+    return target, None
 
 
 @app.route("/playbook_templates/create", methods=["POST"])
@@ -2540,7 +2648,6 @@ def create_playbook_template():
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     playbook_path = request.form.get("playbook_path", "").strip()
-    target = request.form.get("target", "").strip()
     extra_vars = request.form.get("extra_vars", "").strip()
     secret_1 = request.form.get("secret_1", "").strip()
     secret_2 = request.form.get("secret_2", "").strip()
@@ -2550,15 +2657,21 @@ def create_playbook_template():
         flash("Name and Playbook are required", "danger")
         return redirect(url_for("playbook_templates"))
 
+    target, error = parse_playbook_target(request.form)
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("playbook_templates"))
+
     conn = get_db()
     cur = conn.cursor()
     try:
         cur.execute("""
-            INSERT INTO playbook_templates 
+            INSERT INTO playbook_templates
             (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, created_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, current_user.id))
         conn.commit()
+        logger.info(f"Template '{sanitize_log(name)}' ({sanitize_log(playbook_path)}) created by {current_user.id}")
         flash(f"Template '{name}' created", "success")
     except Exception as e:
         conn.rollback()
@@ -2577,25 +2690,35 @@ def edit_playbook_template(template_id):
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     playbook_path = request.form.get("playbook_path", "").strip()
-    target = request.form.get("target", "").strip()
     extra_vars = request.form.get("extra_vars", "").strip()
     secret_1 = request.form.get("secret_1", "").strip()
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
 
+    if not name or not playbook_path:
+        flash("Name and Playbook are required", "danger")
+        return redirect(url_for("playbook_templates"))
+
+    target, error = parse_playbook_target(request.form)
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("playbook_templates"))
+
     conn = get_db()
     cur = conn.cursor()
     try:
         cur.execute("""
-            UPDATE playbook_templates 
-            SET name=%s, description=%s, playbook_path=%s, target=%s, 
+            UPDATE playbook_templates
+            SET name=%s, description=%s, playbook_path=%s, target=%s,
                 extra_vars=%s, secret_1=%s, secret_2=%s, secret_3=%s
             WHERE template_id=%s
         """, (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, template_id))
         conn.commit()
+        logger.info(f"Template {template_id} ('{sanitize_log(name)}') updated by {current_user.id}")
         flash(f"Template '{name}' updated", "success")
     except Exception as e:
         conn.rollback()
+        logger.error(f"Failed to update template {template_id}: {e}")
         flash("Failed to update template", "danger")
     finally:
         cur.close()
@@ -2612,6 +2735,7 @@ def delete_playbook_template(template_id):
     try:
         cur.execute("DELETE FROM playbook_templates WHERE template_id = %s", (template_id,))
         conn.commit()
+        logger.info(f"Template {template_id} deleted by {current_user.id}")
         flash("Template deleted", "success")
     except Exception as e:
         conn.rollback()
@@ -2660,16 +2784,11 @@ def launch_playbook_template(template_id):
         return redirect(url_for("history", mode="ansible"))
 
     if not target:
-        target = "localhost"
+        # Templates from older versions may have no target — don't silently run them on the NetPAC server
+        flash(f"Template '{name}' has no target. Edit it and enter a target or choose localhost explicitly.", "danger")
+        return redirect(url_for("playbook_templates"))
 
-    extra_vars = {}
-    if extra_vars_raw:
-        for line in extra_vars_raw.splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                k, v = k.strip(), v.strip()
-                if k:
-                    extra_vars[k] = v
+    extra_vars = parse_extra_vars(extra_vars_raw)
     extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
     variables = json.dumps({"extra_vars": extra_vars, "template": name})
@@ -2701,6 +2820,7 @@ def launch_playbook_template(template_id):
     thread.daemon = True
     thread.start()
 
+    logger.info(f"Template '{sanitize_log(name)}' launched as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     flash(f"Template '{name}' launched {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
@@ -2716,11 +2836,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     output_script = ""
     status = "completed"
     temp_inventory = None
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
-    env['PYTHONUNBUFFERED'] = '1'
-    env['ANSIBLE_FORCE_COLOR'] = '0'
-    env['ANSIBLE_STDOUT_CALLBACK'] = 'default'
+    env = job_env(PYTHONUNBUFFERED='1', ANSIBLE_FORCE_COLOR='0', ANSIBLE_STDOUT_CALLBACK='default')
 
     ansible = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
 
@@ -2793,8 +2909,8 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                 env[f'SECRET_{num}_USERNAME'] = username
                 env[f'SECRET_{num}_PASSWORD'] = decrypted
 
-        temp_inventory = tempfile.gettempdir() + f"/netpac_inventory_{uuid.uuid4().hex}.ini"
-        with open(temp_inventory, "w") as f:
+        fd, temp_inventory = tempfile.mkstemp(prefix="netpac_inventory_", suffix=".ini")
+        with os.fdopen(fd, "w") as f:
             f.write("[targets]\n")
             for t in targets:
                 if t[0] == "localhost":
@@ -2813,27 +2929,17 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                         f.write(h + "\n")
 
                     f.write(f"\n[{group_name}:vars]\n")
-                    for var in group_vars_raw.split(","):
+                    for var in group_vars_raw.splitlines():
                         var = var.strip()
                         if "=" in var:
                             f.write(var + "\n")
 
-        playbook_base = os.path.realpath("/var/lib/netpac/playbooks")
-        git_base = os.path.realpath("/var/lib/netpac/git")
+        _, playbook_path = resolve_repo_path(filename, PLAYBOOKS_DIR)
 
-        if filename == "git" or filename.startswith("git/"):
-            base_dir = git_base
-            rel_filename = filename[len("git"):].lstrip("/")
-        else:
-            base_dir = playbook_base
-            rel_filename = filename
-
-        playbook_path = os.path.realpath(os.path.join(base_dir, rel_filename))
-
-        if not is_safe_path(playbook_path, base_dir):
+        if playbook_path is None:
             raise ValueError("Invalid playbook path")
 
-        if not os.path.exists(playbook_path):
+        if not os.path.isfile(playbook_path):
             raise FileNotFoundError(f"Playbook not found: {filename}")
 
         args = [ansible, playbook_path, '-i', temp_inventory]
@@ -2844,7 +2950,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         if dry_run:
             args += ['--check', '--diff']
 
-        playbook_dir = os.path.dirname(os.path.abspath(playbook_path))
+        playbook_dir = os.path.dirname(playbook_path)
 
         process = subprocess.Popen(
             args,
@@ -2917,7 +3023,6 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
 #   Ansible Collections
 # --------------------
 ANSIBLE_GALAXY = shutil.which("ansible-galaxy") or "/usr/bin/ansible-galaxy"
-COLLECTION_NAME_RE = re.compile(r'^[a-zA-Z0-9_]+\.[a-zA-Z0-9_]+$')
 
 @app.route("/ansible_collections")
 @login_required
@@ -2928,7 +3033,7 @@ def ansible_collections():
     result = subprocess.run(
         [ANSIBLE_GALAXY, 'collection', 'list', '--format', 'json'],
         capture_output=True, text=True,
-        env={**os.environ, 'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', '')}
+        env=tool_env()
     )
 
     if result.returncode == 0:
@@ -2963,19 +3068,21 @@ def ansible_collections_install():
         flash("Collection name required", "danger")
         return redirect(url_for("ansible_collections"))
 
-    if not re.match(r'^[a-zA-Z0-9_\.\-]+$', collection):
-        flash("Invalid collection name", "danger")
+    if not COLLECTION_INSTALL_RE.match(collection):
+        flash("Invalid collection name (expected namespace.name, optionally namespace.name:version)", "danger")
         return redirect(url_for("ansible_collections"))
 
     result = subprocess.run(
         [ANSIBLE_GALAXY, 'collection', 'install', collection],
         capture_output=True, text=True,
-        env={**os.environ, 'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', '')}
+        env=tool_env()
     )
 
     if result.returncode == 0:
+        logger.info(f"Ansible collection '{collection}' installed by {current_user.id}")
         flash(f"Collection '{collection}' installed", "success")
     else:
+        logger.error(f"Ansible collection '{collection}' install failed (by {current_user.id}): {sanitize_log(result.stderr)}")
         flash(f"Failed to install '{collection}': {result.stderr}", "danger")
 
     return redirect(url_for("ansible_collections"))
@@ -3005,6 +3112,7 @@ def ansible_collections_uninstall():
                 removed = True
 
     if removed:
+        logger.info(f"Ansible collection '{collection}' removed by {current_user.id}")
         flash(f"Collection '{collection}' removed", "success")
     else:
         flash(f"Collection '{collection}' not found in user-installed collections (may be a system package)", "danger")
@@ -3022,9 +3130,7 @@ def ansible_collections_update():
         return redirect(url_for("ansible_collections"))
 
     netpac_home = pwd.getpwuid(os.getuid()).pw_dir
-    env = {**os.environ,
-        'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', ''),
-        'ANSIBLE_COLLECTIONS_PATH': f'{netpac_home}/.ansible/collections:/usr/lib/python3/dist-packages/ansible_collections'}
+    env = tool_env(ANSIBLE_COLLECTIONS_PATH=f'{netpac_home}/.ansible/collections:/usr/lib/python3/dist-packages/ansible_collections')
 
     result = subprocess.run(
         [ANSIBLE_GALAXY, 'collection', 'install', collection, '--upgrade'],
@@ -3033,8 +3139,10 @@ def ansible_collections_update():
     )
 
     if result.returncode == 0:
+        logger.info(f"Ansible collection '{collection}' updated by {current_user.id}")
         flash(f"Collection '{collection}' updated", "success")
     else:
+        logger.error(f"Ansible collection '{collection}' update failed (by {current_user.id}): {sanitize_log(result.stderr)}")
         flash(f"Failed to update '{collection}': {result.stderr}", "danger")
 
     return redirect(url_for("ansible_collections"))
@@ -3046,7 +3154,7 @@ def ansible_collections_update_all():
     result = subprocess.run(
         [ANSIBLE_GALAXY, 'collection', 'list', '--format', 'json'],
         capture_output=True, text=True,
-        env={**os.environ, 'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', '')}
+        env=tool_env()
     )
 
     if result.returncode == 0:
@@ -3060,11 +3168,13 @@ def ansible_collections_update_all():
                     subprocess.run(
                         [ANSIBLE_GALAXY, 'collection', 'install', name, '--upgrade'],
                         capture_output=True, text=True,
-                        env={**os.environ, 'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', '')}
+                        env=tool_env()
                     )
                     count += 1
+            logger.info(f"Ansible: {count} collections updated by {current_user.id}")
             flash(f"Updated {count} collections", "success")
         except Exception as e:
+            logger.error(f"Ansible collection update failed (by {current_user.id}): {e}")
             flash(f"Failed to update collections: {e}", "danger")
     else:
         flash("Failed to list collections", "danger")
@@ -3204,7 +3314,7 @@ def history_detail(job_id):
 @app.route("/history/<int:job_id>/status")
 @login_required
 def history_job_status(job_id):
-    reap_stale_jobs()
+    reap_stale_jobs_throttled()
 
     conn = get_db()
     cur = conn.cursor()
@@ -3318,42 +3428,12 @@ def schedule():
     cur.execute("SELECT * FROM schedule_jobs ORDER BY created_at DESC")
     jobs = cur.fetchall()
 
-    cur.execute("SELECT name, username FROM secrets ORDER BY name")
-    secrets = [{'name': row[0], 'username': row[1]} for row in cur.fetchall()]
-    
     cur.close()
     conn.close()
 
-    scripts = []
-    base_dir = "/var/lib/netpac/scripts"
-    for root, dirs, files in os.walk(base_dir):
-        dirs[:] = [d for d in dirs if d != '.git']
-        for file in sorted(files):
-            if file.endswith('.py'):
-                full_path = os.path.join(root, file)
-                relative_path = os.path.relpath(full_path, base_dir)
-                scripts.append(relative_path)
-    scripts = sorted(scripts)
-
-    playbooks_base = os.path.realpath("/var/lib/netpac/playbooks")
-    git_base = os.path.realpath("/var/lib/netpac/git")
-    playbooks = []
-    for root, dirs, files in os.walk(playbooks_base):
-        dirs[:] = [d for d in dirs if d != '.git']
-        for file in sorted(files):
-            if file.endswith('.yml') or file.endswith('.yaml'):
-                rel = os.path.relpath(os.path.join(root, file), playbooks_base)
-                playbooks.append(rel)
-    if os.path.exists(git_base):
-        for root, dirs, files in os.walk(git_base):
-            dirs[:] = [d for d in dirs if d != '.git']
-            for file in sorted(files):
-                if file.endswith('.yml') or file.endswith('.yaml'):
-                    rel = "git/" + os.path.relpath(os.path.join(root, file), git_base)
-                    playbooks.append(rel)
-    playbooks = sorted(playbooks)
-
-    return render_template("schedule.html", jobs=jobs, secrets=secrets, scripts=scripts, playbooks=playbooks)
+    return render_template("schedule.html", jobs=jobs, secrets=load_secret_choices(),
+                           scripts=list_repo_files(SCRIPTS_DIR, ('.py',)),
+                           playbooks=list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS))
 
 
 @app.route("/schedule/add", methods=["POST"])
@@ -3368,18 +3448,18 @@ def add_schedule():
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
 
-    if job_type == "ansible" and not target:
-        target = "localhost"
+    if job_type not in ("python", "ansible"):
+        flash("Invalid job type", "danger")
+        return redirect(url_for("schedule"))
 
     if job_type == "ansible":
-        extra_vars_raw = request.form.get("extra_vars_raw", "").strip()
-        extra_vars = {}
-        for line in extra_vars_raw.splitlines():
-            if "=" in line:
-                k, v = line.split("=", 1)
-                k, v = k.strip(), v.strip()
-                if k:
-                    extra_vars[k] = v
+        target, error = parse_playbook_target(request.form)
+        if error:
+            flash(error, "danger")
+            return redirect(url_for("schedule"))
+
+    if job_type == "ansible":
+        extra_vars = parse_extra_vars(request.form.get("extra_vars_raw", ""))
         variables = json.dumps({"extra_vars": extra_vars})
         use_venv = 0
     else:
@@ -3436,28 +3516,14 @@ def add_schedule():
         """, (script_name, current_user.id, target, schedule, variables, secrets_json, use_venv, job_type))
         cron_id = cur.lastrowid
 
-        scheduler.add_job(
-            trigger_schedule_job,
-            trigger='cron',
-            id=str(cron_id),
-            replace_existing=True,
-            kwargs={
-                'job_id': cron_id,
-                'script_name': script_name,
-                'user_id': current_user.id,
-                'target': target,
-                'variables': variables,
-                'secrets_json': secrets_json,
-                'use_venv': bool(use_venv),
-                'job_type': job_type
-            },
-            **parse_schedule(schedule)
-        )
+        register_schedule_job(cron_id, script_name, current_user.id, target, variables,
+                              secrets_json, use_venv, job_type, schedule)
         conn.commit()
+        logger.info(f"Schedule #{cron_id} ({sanitize_log(script_name)}, '{schedule}') added by {current_user.id}")
         flash("Schedule added", "success")
 
     except Exception as e:
-        scheduler_logger.error(f"Error adding schedule: {e}")
+        logger.error(f"Error adding schedule: {e}")
         conn.rollback()
         flash("Error adding schedule", "danger")
     finally:
@@ -3485,25 +3551,8 @@ def toggle_schedule(cron_id):
         conn.commit()
 
         if new_status:
-            cur.execute("SELECT * FROM schedule_jobs WHERE job_id = %s", (cron_id,))
-            job = cur.fetchone()
-            scheduler.add_job(
-                trigger_schedule_job,
-                trigger='cron',
-                id=str(cron_id),
-                replace_existing=True,
-                kwargs={
-                    'job_id': cron_id,
-                    'script_name': job[1],
-                    'user_id': job[2],
-                    'target': job[3],
-                    'variables': job[4],
-                    'secrets_json': job[8],
-                    'use_venv': bool(job[9]) if job[9] is not None else False,
-                    'job_type': job[10] if len(job) > 10 and job[10] else 'python'
-                },
-                **parse_schedule(job[7])
-            )
+            cur.execute(f"SELECT {SCHEDULE_JOB_COLUMNS} FROM schedule_jobs WHERE job_id = %s", (cron_id,))
+            register_schedule_job(*cur.fetchone())
         else:
             try:
                 scheduler.remove_job(str(cron_id))
@@ -3511,10 +3560,13 @@ def toggle_schedule(cron_id):
             except Exception as e:
                 scheduler_logger.error(f"Could not remove job {cron_id}: {e}")
 
+        logger.info(f"Schedule #{cron_id} {'activated' if new_status else 'deactivated'} by {current_user.id}")
         flash("Schedule updated", "success")
 
+    except HTTPException:
+        raise
     except Exception as e:
-        scheduler_logger.error(f"Error toggling schedule: {e}")
+        logger.error(f"Error toggling schedule {cron_id}: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -3538,10 +3590,11 @@ def delete_schedule(cron_id):
         except Exception:
             pass
 
+        logger.info(f"Schedule #{cron_id} deleted by {current_user.id}")
         flash("Schedule deleted", "success")
 
     except Exception as e:
-        scheduler_logger.error(f"Error deleting schedule: {e}")
+        logger.error(f"Error deleting schedule {cron_id}: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -3728,9 +3781,10 @@ def view_log(filename):
 @app.route("/settings/change_password", methods=["POST"])
 @login_required
 def change_password():
-    current_password = request.form.get("current_password", "").strip()
-    new_password = request.form.get("new_password", "").strip()
-    confirm_password = request.form.get("confirm_password", "").strip()
+    # Passwords are used exactly as typed (no strip) — the login doesn't strip either
+    current_password = request.form.get("current_password", "")
+    new_password = request.form.get("new_password", "")
+    confirm_password = request.form.get("confirm_password", "")
 
     if not current_password or not new_password or not confirm_password:
         flash("All fields are required", "danger")
@@ -3791,11 +3845,15 @@ def add_user():
         abort(403)
 
     username = request.form.get("username", "").strip()
-    password = request.form.get("password", "").strip()
+    password = request.form.get("password", "")
     method = "local"
 
     if not username or not password:
         flash("Username and password are required", "danger")
+        return redirect(url_for("settings", tab="user"))
+
+    if len(username) > MAX_USERNAME_LENGTH:
+        flash(f"Username is too long (max. {MAX_USERNAME_LENGTH} characters)", "danger")
         return redirect(url_for("settings", tab="user"))
 
     error = validate_password(password)
@@ -4152,6 +4210,12 @@ def edit_notification_rule(rule_id):
     conn = get_db()
     cur = conn.cursor()
     try:
+        # rowcount is 0 for an unchanged save, so check existence separately
+        cur.execute("SELECT 1 FROM notification_rules WHERE rule_id = %s", (rule_id,))
+        if not cur.fetchone():
+            flash("Notification rule not found", "danger")
+            return redirect(url_for("settings", tab="notifications"))
+
         cur.execute("""
             UPDATE notification_rules
             SET name = %s, channel = %s, target = %s, on_completed = %s, on_failed = %s,
@@ -4160,7 +4224,7 @@ def edit_notification_rule(rule_id):
         """, (data['name'], data['channel'], data['target'], data['on_completed'], data['on_failed'],
               data['on_timeout'], data['on_cancelled'], data['job_type'], data['is_active'], rule_id))
         conn.commit()
-        logger.info(f"Notification rule {rule_id} updated by {current_user.id}")
+        logger.info(f"Notification rule {rule_id} ('{sanitize_log(data['name'])}') updated by {current_user.id}")
         flash(f"Notification rule '{data['name']}' updated", "success")
     except Exception as e:
         logger.error(f"Error updating notification rule {rule_id}: {e}")
@@ -4181,7 +4245,10 @@ def toggle_notification_rule(rule_id):
     try:
         cur.execute("UPDATE notification_rules SET is_active = NOT is_active WHERE rule_id = %s", (rule_id,))
         conn.commit()
-        logger.info(f"Notification rule {rule_id} toggled by {current_user.id}")
+        if cur.rowcount == 0:
+            flash("Notification rule not found", "danger")
+        else:
+            logger.info(f"Notification rule {rule_id} toggled by {current_user.id}")
     except Exception as e:
         logger.error(f"Error toggling notification rule {rule_id}: {e}")
         conn.rollback()
@@ -4201,8 +4268,11 @@ def delete_notification_rule(rule_id):
     try:
         cur.execute("DELETE FROM notification_rules WHERE rule_id = %s", (rule_id,))
         conn.commit()
-        logger.info(f"Notification rule {rule_id} deleted by {current_user.id}")
-        flash("Notification rule deleted", "success")
+        if cur.rowcount == 0:
+            flash("Notification rule not found", "danger")
+        else:
+            logger.info(f"Notification rule {rule_id} deleted by {current_user.id}")
+            flash("Notification rule deleted", "success")
     except Exception as e:
         logger.error(f"Error deleting notification rule {rule_id}: {e}")
         conn.rollback()
@@ -4215,6 +4285,7 @@ def delete_notification_rule(rule_id):
 
 
 @app.route("/settings/notifications/rules/test/<int:rule_id>", methods=["POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 @login_required
 def test_notification_rule(rule_id):
     conn = get_db()
@@ -4240,7 +4311,7 @@ def test_notification_rule(rule_id):
         logger.info(f"Test notification for rule {rule_id} ({channel}) sent by {current_user.id}")
         flash(f"Test notification sent to {target}", "success")
     except Exception as e:
-        logger.error(f"Test notification for rule {rule_id} ({channel}) failed: {e!r}")
+        logger.error(f"Test notification for rule {rule_id} ({channel}) failed: {sanitize_log(repr(e))}")
         flash(f"Test notification failed: {e}", "danger")
 
     return redirect(url_for("settings", tab="notifications"))
@@ -4334,38 +4405,37 @@ def upload_ssl_cert():
 # ---------------------
 #   Server error route
 # ---------------------
-@app.errorhandler(404)
-def not_found_error(error):
-    logger.error(f"404 Error - URL: {request.url} - Method: {request.method} - IP: {get_real_ip()}")
-    logger.error(f"Referrer: {request.referrer}")
-    logger.error(f"User-Agent: {request.headers.get('User-Agent')}")
-    
-    return render_template("error.html", 
-                         error_code=404, 
-                         error_message="Page not found"), 404
+ERROR_MESSAGES = {
+    400: "Invalid Request",
+    403: "Access Denied",
+    404: "Page Not Found",
+    405: "Method Not Allowed",
+    429: "Too Many Requests — please wait a moment",
+    500: "Internal Server Error",
+}
+
+
+def request_log_context():
+    user = current_user.id if current_user and current_user.is_authenticated else "-"
+    return f"{request.method} {sanitize_log(request.url)} (IP: {get_real_ip()}, user: {user})"
 
 
 @app.errorhandler(Exception)
 def handle_error(e):
-    error_code = getattr(e, 'code', 500)
-    
-    logger.error(f"Error {error_code}: {type(e).__name__}: {str(e)}")
-    logger.error(f"URL: {request.url}")
-    logger.error(f"Method: {request.method}")
-    logger.error(f"Traceback:", exc_info=True)
-    
-    error_messages = {
-        400: "Invalid Request",
-        403: "Access Denied",
-        404: "Page Not Found",
-        500: "Internal Server Error"
-    }
-    
-    error_message = error_messages.get(error_code, "An error has occurred")
-    
-    return render_template("error.html", 
-                         error_code=error_code, 
-                         error_message=error_message), error_code
+    if isinstance(e, HTTPException):
+        # Expected client errors (404, 403, 429 …): one line, no traceback
+        error_code = e.code or 500
+        logger.warning(f"HTTP {error_code}: {request_log_context()}")
+    else:
+        # The file handler strips tracebacks (TracebackInfoFilter), so log where the error happened
+        error_code = 500
+        frame = traceback.extract_tb(e.__traceback__)[-1] if e.__traceback__ else None
+        location = f" at {os.path.basename(frame.filename)}:{frame.lineno} in {frame.name}()" if frame else ""
+        logger.error(f"Unhandled {type(e).__name__}{location}: {sanitize_log(str(e))} — {request_log_context()}")
+
+    return render_template("error.html",
+                           error_code=error_code,
+                           error_message=ERROR_MESSAGES.get(error_code, "An error has occurred")), error_code
 
 
 # ---------------------
@@ -4457,7 +4527,7 @@ def create_secret():
             cur.execute(sql_query, (name, username, encrypted_password, description))
             conn.commit()
             
-            logger.info(f"Secret '{name}' created by {current_user.id}")
+            logger.info(f"Secret '{sanitize_log(name)}' created by {current_user.id}")
             flash(f"Secret '{name}' successfully created!", "success")
             return redirect(url_for("secrets"))
 
@@ -4533,7 +4603,7 @@ def edit_secret(secret_id):
                     cur.execute(sql_update, (name, username, description, secret_id))
                 
                 conn.commit()
-                logger.info(f"Secret '{name}' (ID: {secret_id}) updated by {current_user.id}")
+                logger.info(f"Secret '{sanitize_log(name)}' (ID: {secret_id}) updated by {current_user.id}")
                 flash(f"Secret '{name}' has been updated", "success")
 
                 if name != secret['name']:
@@ -4589,7 +4659,7 @@ def delete_secret(secret_id):
         cur.execute(sql_delete, (secret_id,))
         conn.commit()
         
-        logger.info(f"Secret '{secret_name}' (ID: {secret_id}) deleted by {current_user.id}")
+        logger.info(f"Secret '{sanitize_log(secret_name)}' (ID: {secret_id}) deleted by {current_user.id}")
         flash(f"Secret '{secret_name}' was deleted", "success")
 
         usages = find_secret_usages(cur, secret_name)
@@ -4613,14 +4683,33 @@ def delete_secret(secret_id):
 # --------------------
 
 
+def ensure_backup_dir():
+    """Backups contain password hashes and encrypted secrets — only the NetPAC user may read them."""
+    try:
+        os.makedirs(BACKUP_DIR, mode=0o700, exist_ok=True)
+        os.chmod(BACKUP_DIR, 0o700)
+        for path in glob.glob(os.path.join(BACKUP_DIR, "*.sql")):
+            os.chmod(path, 0o600)
+    except OSError as e:
+        logger.error(f"Could not restrict permissions of {BACKUP_DIR}: {e}")
+
+
+def open_private(path):
+    """Opens a file for writing that only the owner can read (0600), regardless of the umask."""
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
+
+
+# Also fixes backups created by older versions with world-readable permissions
+ensure_backup_dir()
+
+
 def run_backup_background(backup_type, filename, output_path, tables):
     mysqldump = shutil.which("mysqldump") or "/usr/bin/mysqldump"
 
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    env = tool_env()
 
     try:
-        with open(output_path, "w") as f:
+        with open_private(output_path) as f:
             result = subprocess.run(
                 [mysqldump, f"--defaults-extra-file={DB_CNF_FILE}", "--single-transaction", "--routines", db_database] + tables,
                 stdout=f,
@@ -4659,7 +4748,7 @@ def create_backup():
         flash("Invalid backup type", "danger")
         return redirect(url_for("settings", tab="backup"))
 
-    os.makedirs(BACKUP_DIR, exist_ok=True)
+    ensure_backup_dir()
 
     if not os.path.exists(DB_CNF_FILE):
         flash("Database credentials file not found. Backup cannot be created.", "danger")
@@ -4783,14 +4872,23 @@ def restore_backup():
         flash("Incorrect password", "danger")
         return redirect(url_for("settings", tab="backup"))
 
+    totp_secret, _ = decrypt_totp_secret(totp_secret)
     if not totp_secret or not totp_confirmed:
         flash("TOTP is not set up or not confirmed for this account — cannot verify restore", "danger")
         return redirect(url_for("settings", tab="backup"))
 
-    totp = pyotp.TOTP(totp_secret)
-    if not totp.verify(totp_code, valid_window=1):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        code_ok = consume_totp_code(cur, current_user.id, totp_secret, totp_code)
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not code_ok:
         logger.warning(f"Failed restore attempt by {current_user.id}: wrong TOTP code")
-        flash("Incorrect TOTP code", "danger")
+        flash("Incorrect or already used TOTP code — wait for the next code", "danger")
         return redirect(url_for("settings", tab="backup"))
 
     is_hosts_backup = "hosts_backup" in safe_filename
@@ -4803,11 +4901,11 @@ def restore_backup():
     mysqldump = shutil.which("mysqldump") or "/usr/bin/mysqldump"
     mysql_bin = shutil.which("mysql") or "/usr/bin/mysql"
 
-    env = os.environ.copy()
-    env['PATH'] = '/usr/bin:/usr/local/bin:' + env.get('PATH', '')
+    env = tool_env()
+    ensure_backup_dir()
 
     try:
-        with open(safety_path, "w") as f:
+        with open_private(safety_path) as f:
             safety_args = [mysqldump, f"--defaults-extra-file={DB_CNF_FILE}", "--single-transaction", "--routines", db_database]
             if tables:
                 safety_args += tables
@@ -4959,7 +5057,7 @@ def health():
 
     try:
         checks['scripts_dir'] = {
-            'status': 'ok' if os.path.exists('/var/lib/netpac/scripts') else 'error'
+            'status': 'ok' if os.path.exists(SCRIPTS_DIR) else 'error'
         }
     except Exception as e:
         checks['scripts_dir'] = {'status': 'error', 'message': str(e)}
@@ -4994,7 +5092,7 @@ def health():
         checks['venv'] = {'status': 'error', 'message': str(e)}
 
     try:
-        env = {**os.environ, 'PATH': '/usr/bin:/usr/local/bin:' + os.environ.get('PATH', '')}
+        env = tool_env()
         result = subprocess.run(
             [ANSIBLE_GALAXY, 'collection', 'list', '--format', 'json'],
             capture_output=True, text=True, env=env
@@ -5047,17 +5145,25 @@ def check_default_password():
         conn.close()
 
 
+LONG_JOB_CHECK_INTERVAL = 60
+
 @app.before_request
 def check_long_running_jobs():
-    if request.endpoint in (None, 'static', 'favicon', 'apple_touch_icon'):
+    if request.endpoint in (None, 'static', 'favicon', 'apple_touch_icon', 'history_job_status', 'raw_playbook_graph'):
         return
     if not current_user.is_authenticated:
         return
 
+    # Runs at most once per minute and session instead of on every request
+    now = time.time()
+    if now - session.get('long_job_checked_at', 0) < LONG_JOB_CHECK_INTERVAL:
+        return
+    session['long_job_checked_at'] = now
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT job_id, script_name, pid, job_type, started_at
+        SELECT job_id, script_name, pid
         FROM history_jobs
         WHERE status = 'running'
         AND pid IS NOT NULL
@@ -5067,15 +5173,10 @@ def check_long_running_jobs():
     cur.close()
     conn.close()
 
-    for job_id, script_name, pid, job_type, started_at in long_running:
+    for job_id, script_name, pid in long_running:
         flash_key = f"long_job_warned_{job_id}"
         if session.get(flash_key):
             continue
-
-        if job_type == 'ansible':
-            base_dir = os.path.realpath("/var/lib/netpac/playbooks")
-        else:
-            base_dir = os.path.realpath("/var/lib/netpac/scripts")
 
         flash(
             Markup(

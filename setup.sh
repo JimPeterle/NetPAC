@@ -496,6 +496,8 @@ WorkingDirectory=$APP_DIR
 ExecStart=/usr/bin/python3 $APP_DIR/netpac_scheduler.py
 Restart=always
 
+PrivateTmp=true
+
 [Install]
 WantedBy=multi-user.target
 EOF
@@ -597,10 +599,48 @@ fi
 
 print_status "Nginx ${NGINX_VERSION:-unknown version} detected — using: $(echo "$NGINX_LISTEN_SSL" | tr -s ' \n' ' ')"
 
+# The security headers live in a snippet: nginx drops all server-level add_header lines in a
+# location that sets its own add_header (here: /static/), so both places include the snippet
+sudo mkdir -p /etc/nginx/snippets
+sudo tee /etc/nginx/snippets/netpac-security-headers.conf > /dev/null << 'HEADERS'
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+HEADERS
+
+# Shared proxy settings for every location that forwards to Gunicorn
+sudo tee /etc/nginx/snippets/netpac-proxy.conf > /dev/null << 'PROXY'
+proxy_pass http://netpac_backend;
+
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+
+proxy_read_timeout 300s;
+proxy_connect_timeout 300s;
+proxy_send_timeout 300s;
+
+proxy_http_version 1.1;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+PROXY
+
 sudo tee /etc/nginx/sites-available/netpac > /dev/null << EOF
 upstream netpac_backend {
     server 127.0.0.1:8443 fail_timeout=0;
 }
+
+# Login rate limit across all Gunicorn workers (Flask-Limiter only counts per worker).
+# Only POST requests get a key — an empty key is not limited, so opening the login page stays free.
+map \$request_method \$netpac_login_key {
+    POST    \$binary_remote_addr;
+    default "";
+}
+limit_req_zone \$netpac_login_key zone=netpac_login:10m rate=5r/m;
 
 server {
     listen 80;
@@ -619,39 +659,30 @@ server {
     ssl_ciphers HIGH:!aNULL:!MD5;
     ssl_prefer_server_ciphers on;
 
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'" always;
+    include /etc/nginx/snippets/netpac-security-headers.conf;
 
     access_log /var/log/nginx/netpac_access.log;
     error_log /var/log/nginx/netpac_error.log;
 
     client_max_body_size 16M;
 
+    limit_req_status 429;
+
+    # Login (/) and TOTP: 5 POSTs per minute and IP, a few typos in a row are allowed (burst)
+    location ~ ^/(totp/(verify|setup))?\$ {
+        limit_req zone=netpac_login burst=3 nodelay;
+        include /etc/nginx/snippets/netpac-proxy.conf;
+    }
+
     location / {
-        proxy_pass http://netpac_backend;
-
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        include /etc/nginx/snippets/netpac-proxy.conf;
     }
 
     location /static/ {
         alias $APP_DIR/static/;
         expires 30d;
         add_header Cache-Control "public, immutable";
+        include /etc/nginx/snippets/netpac-security-headers.conf;
     }
 }
 EOF

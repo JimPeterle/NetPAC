@@ -184,12 +184,12 @@
 
                 <div class="form-group">
                     <label class="form-label">Variables</label>
-                    <div id="varTableBody"></div>
+                    <div id="varTableBody" data-max="{{ max_script_vars }}"></div>
                     <button type="button" class="var-add-btn" id="varAddBtn" onclick="addVariable()">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                         Add variable
                     </button>
-                    <p class="var-max-hint" id="varMaxHint">0 / 10</p>
+                    <p class="var-max-hint" id="varMaxHint">0 / {{ max_script_vars }}</p>
                 </div>
                 <input type="hidden" name="varCount" id="varCountHidden" value="0">
 
@@ -239,7 +239,11 @@
 
             <div class="form-group">
                 <label class="form-label">Target (Group or Host, comma-separated)</label>
-                <input type="text" name="target" class="form-input" placeholder="Optional — leave empty for local execution">
+                <input type="text" name="target" id="scheduleTarget" class="form-input" placeholder="Optional for Python scripts">
+                <label id="scheduleRunLocalOption" style="display: none; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; margin-top: 8px;">
+                    <input type="checkbox" name="run_local" id="scheduleRunLocal" onchange="toggleScheduleRunLocal()" style="width: 16px; height: 16px; accent-color: var(--accent);">
+                    Run on the NetPAC server (localhost)
+                </label>
             </div>
 
             <div class="form-group">
@@ -345,6 +349,7 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ static_file('script_vars.js') }}"></script>
 <script>
 
     window.onclick = function(event) {
@@ -392,6 +397,22 @@
             document.getElementById('scriptNameHidden').required = false;
             document.getElementById('playbookNameHidden').required = true;
         }
+
+        // Playbooks need a target or an explicit choice to run on the NetPAC server
+        const isAnsible = type === 'ansible';
+        document.getElementById('scheduleRunLocalOption').style.display = isAnsible ? 'flex' : 'none';
+        document.getElementById('scheduleTarget').placeholder = isAnsible ? 'Group or Hostname' : 'Optional for Python scripts';
+        if (!isAnsible) document.getElementById('scheduleRunLocal').checked = false;
+        toggleScheduleRunLocal();
+    }
+
+    function toggleScheduleRunLocal() {
+        const isAnsible = document.getElementById('jobTypeHidden').value === 'ansible';
+        const local = isAnsible && document.getElementById('scheduleRunLocal').checked;
+        const target = document.getElementById('scheduleTarget');
+        target.style.display = local ? 'none' : '';
+        target.required = isAnsible && !local;
+        if (local) target.value = '';
     }
 
     function toggleScheduleFields(value) {
@@ -408,48 +429,6 @@
             document.getElementById('customField').style.display = 'block';
         }
     }
-
-    const MAX_VARS = 10;
-    let varCount = 0;
-
-    function updateHint() {
-        document.getElementById('varMaxHint').textContent = `${varCount} / ${MAX_VARS}`;
-        document.getElementById('varAddBtn').style.display = varCount >= MAX_VARS ? 'none' : 'flex';
-        document.getElementById('varCountHidden').value = varCount;
-    }
-
-    function addVariable() {
-        if (varCount >= MAX_VARS) return;
-        varCount++;
-        const tbody = document.getElementById('varTableBody');
-        const row = document.createElement('div');
-        row.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;';
-        row.innerHTML = `
-            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; width: 20px; text-align: center;">${varCount}</span>
-            <input type="text" name="variable${varCount}" data-field="value" placeholder="var" style="flex: 1; padding: 0.45rem 0.6rem; font-size: 0.875rem; border: 1px solid var(--border); border-radius: 6px; box-sizing: border-box;">
-            <button type="button" onclick="removeVariable(this)" style="background: none; border: none; cursor: pointer; color: var(--text-muted);">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-        `;
-        tbody.appendChild(row);
-        updateHint();
-    }
-
-    function removeVariable(btn) {
-        btn.closest('div').remove();
-        rebuildNames();
-    }
-
-    function rebuildNames() {
-        const rows = document.querySelectorAll('#varTableBody > div');
-        rows.forEach((row, i) => {
-            row.querySelector('span').textContent = i + 1;
-            row.querySelector('input[data-field="value"]').name = `variable${i + 1}`;
-        });
-        varCount = rows.length;
-        updateHint();
-    }
-
 
     const flatpickrScript = document.createElement('script');
     flatpickrScript.src = {{ vendor('flatpickr', 'js')|tojson }};

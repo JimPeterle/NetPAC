@@ -11,7 +11,8 @@
 </div>
 <div class="content-card">
     <div class="card-body" style="overflow-x: auto;">
-        {{ svg | safe }}
+        <img src="{{ url_for('raw_playbook_graph', filename=filename) }}" alt="Playbook graph of {{ filename }}" style="max-width: none; display: block;">
+
     </div>
 </div>
 {% endblock %}

@@ -47,14 +47,14 @@ CREATE TABLE `history_jobs` (
   `variables` longtext DEFAULT NULL,
   `status` enum('running','planned','completed','failed','timeout','cancelled') DEFAULT 'running',
   `output` longtext DEFAULT NULL,
-  `started_at` timestamp NULL DEFAULT current_timestamp(),
-  `finished_at` timestamp NULL DEFAULT NULL,
+  `started_at` datetime DEFAULT current_timestamp(),
+  `finished_at` datetime DEFAULT NULL,
   `duration` int(11) DEFAULT NULL,
   `credential` text DEFAULT NULL,
   `job_type` enum('python','ansible') DEFAULT 'python',
   `ansible_dry_run` tinyint(1) DEFAULT 0,
   `pid` int(11) DEFAULT NULL,
-  `notified_at` timestamp NULL DEFAULT NULL,
+  `notified_at` datetime DEFAULT NULL,
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`),
   KEY `idx_status` (`status`),
@@ -273,10 +273,11 @@ DROP TABLE IF EXISTS `user`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `user` (
-  `name` varchar(20) NOT NULL,
+  `name` varchar(100) NOT NULL,
   `password` varchar(255) DEFAULT NULL,
-  `totp_secret` varchar(32) DEFAULT NULL,
+  `totp_secret` text DEFAULT NULL,
   `totp_confirmed` tinyint(1) DEFAULT 0,
+  `totp_last_counter` bigint(20) DEFAULT NULL,
   `method` varchar(10) DEFAULT NULL,
   PRIMARY KEY (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

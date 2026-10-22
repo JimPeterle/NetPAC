@@ -141,9 +141,12 @@
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">Target</label>
-                    <input type="text" name="target" class="form-input" placeholder="Group or Hostname">
-                    <span class="form-hint">Leave empty if not needed</span>
+                    <label class="form-label">Target *</label>
+                    <input type="text" name="target" id="createTarget" class="form-input" placeholder="Group or Hostname" required>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; margin-top: 8px;">
+                        <input type="checkbox" name="run_local" id="createRunLocal" onchange="toggleRunLocal('create')" style="width: 16px; height: 16px; accent-color: var(--accent);">
+                        Run on the NetPAC server (localhost)
+                    </label>
                 </div>
 
                 <div class="form-group">
@@ -243,8 +246,12 @@
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Target</label>
-                    <input type="text" name="target" id="editTarget" class="form-input">
+                    <label class="form-label">Target *</label>
+                    <input type="text" name="target" id="editTarget" class="form-input" placeholder="Group or Hostname" required>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; margin-top: 8px;">
+                        <input type="checkbox" name="run_local" id="editRunLocal" onchange="toggleRunLocal('edit')" style="width: 16px; height: 16px; accent-color: var(--accent);">
+                        Run on the NetPAC server (localhost)
+                    </label>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Survey Variables</label>
@@ -340,12 +347,22 @@ function openEditModal(btn) {
     document.getElementById('editDescription').value = d.description;
     document.getElementById('editPlaybookSearch').value = d.playbook;
     document.getElementById('editPlaybookPathHidden').value = d.playbook;
-    document.getElementById('editTarget').value = d.target;
+    document.getElementById('editRunLocal').checked = d.target === 'localhost';
+    document.getElementById('editTarget').value = d.target === 'localhost' ? '' : d.target;
+    toggleRunLocal('edit');
     document.getElementById('editExtraVars').value = d.extravars;
     document.getElementById('editSecret1').value = d.secret1;
     document.getElementById('editSecret2').value = d.secret2;
     document.getElementById('editSecret3').value = d.secret3;
     openModalAnimated('editModalOverlay');
+}
+
+function toggleRunLocal(prefix) {
+    const local = document.getElementById(`${prefix}RunLocal`).checked;
+    const target = document.getElementById(`${prefix}Target`);
+    target.style.display = local ? 'none' : '';
+    target.required = !local;
+    if (local) target.value = '';
 }
 
 function closeEditModal() {

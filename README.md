@@ -179,7 +179,7 @@ CREATE TABLE `history_jobs` (
   `job_type` ENUM('python','ansible') DEFAULT 'python',
   `ansible_dry_run` TINYINT(1) DEFAULT 0,
   `pid` INT DEFAULT NULL,
-  `notified_at` TIMESTAMP NULL DEFAULT NULL,
+  `notified_at` DATETIME NULL DEFAULT NULL,
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`),
   KEY `idx_status` (`status`),
@@ -230,8 +230,9 @@ COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE `user` (
   `name` VARCHAR(100) NOT NULL,
   `password` VARCHAR(255) DEFAULT NULL,
-  `totp_secret` VARCHAR(32) DEFAULT NULL,
+  `totp_secret` TEXT DEFAULT NULL,
   `totp_confirmed` BOOLEAN DEFAULT FALSE,
+  `totp_last_counter` BIGINT DEFAULT NULL,
   `method` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`name`)
 ) ENGINE=InnoDB
@@ -354,13 +355,30 @@ cp secret_examples.env secret.env
 vim secret.env
 ```
 
-Generate the ENCRYPTION_KEY (encrypts the stored secrets in the database):
+Generate the ENCRYPTION_KEY (encrypts the stored secrets, tokens and TOTP secrets in the database):
 ```Bash
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 Keep a backup of secret.env. Without the ENCRYPTION_KEY, the stored secrets 
 can no longer be decrypted (Store the keys inside a Keepass).
+
+### Lost or changed ENCRYPTION_KEY
+
+The TOTP secrets of all users are encrypted with the ENCRYPTION_KEY as well. If the key is lost
+or changed, **nobody can log in anymore** (including `admin`): the login shows
+"Your two-factor secret can't be read on the server" and `netpac.log` contains a CRITICAL entry
+"Cannot decrypt TOTP secret".
+
+To regain access, reset the TOTP of the affected user in the database. On the next login,
+a new QR code is shown and TOTP is set up again:
+```sql
+UPDATE user SET totp_secret = NULL, totp_confirmed = FALSE, totp_last_counter = NULL WHERE name = 'admin';
+```
+
+Everything else encrypted with the old key is lost as well and has to be entered again:
+the passwords of all Secrets, the Git access token, the RADIUS shared secret and the
+SMTP password / Matrix token of the notifications.
 
 When everything is ready, the final step can be carried out.
 ```Bash

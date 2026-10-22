@@ -125,7 +125,7 @@
             <div style="padding: 1.5rem;">
                 <div class="form-group">
                     <label class="form-label">Hostname</label>
-                    <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" required autofocus>
+                    <input type="text" name="Hostname" class="form-input" placeholder="e.g SW-CORE-1" maxlength="255" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]*" title="Letters, numbers, dots, colons, dashes and underscores — no spaces" required autofocus>
                 </div>
 
                 <div class="form-group">
@@ -171,7 +171,7 @@
             <div style="padding: 1.5rem;">
                 <div class="form-group">
                     <label class="form-label">Hostname</label>
-                    <input type="text" name="Hostname" id="editHostnameInput" class="form-input" required>
+                    <input type="text" name="Hostname" id="editHostnameInput" class="form-input" maxlength="255" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]*" title="Letters, numbers, dots, colons, dashes and underscores — no spaces" required>
                 </div>
 
                 <div class="form-group">
