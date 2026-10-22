@@ -421,9 +421,13 @@ RADIUS_ENFORCE_MA = "enforce_ma" in inspect.signature(Client.__init__).parameter
 RADIUS_TIMEOUT_HINT = ("No valid reply from the RADIUS server — it is unreachable, the shared secret is wrong, "
                        "or the server doesn't send a Message-Authenticator (required against BlastRADIUS)")
 
-if not RADIUS_ENFORCE_MA:
-    logger.warning("The installed pyrad version can't require a Message-Authenticator in RADIUS replies "
-                   "(BlastRADIUS, CVE-2024-3596). Update pyrad (e.g. 2.6.0) to close this.")
+RADIUS_CAN_VERIFY_MA = hasattr(pyrad.packet.Packet, "verify_message_authenticator")
+RADIUS_MA_MISSING_HINT = ("The RADIUS reply has no valid Message-Authenticator — enable it on the RADIUS server "
+                          "(required against BlastRADIUS, CVE-2024-3596)")
+
+if not RADIUS_ENFORCE_MA and not RADIUS_CAN_VERIFY_MA:
+    logger.warning("The installed pyrad version can't verify the Message-Authenticator of RADIUS replies "
+                   "(BlastRADIUS, CVE-2024-3596). Update pyrad to close this.")
 
 
 def make_radius_client(server_host, server_port, secret, timeout):
@@ -438,6 +442,22 @@ def make_radius_client(server_host, server_port, secret, timeout):
         timeout=timeout,
         **options
     )
+
+
+def radius_reply_is_authentic(req, reply, secret):
+    """Returns True if a RADIUS reply carries a valid Message-Authenticator (BlastRADIUS protection)."""
+
+    if RADIUS_ENFORCE_MA or not RADIUS_CAN_VERIFY_MA:
+        return True
+    if not getattr(reply, "message_authenticator", None):
+        return False
+    try:
+        return reply.verify_message_authenticator(secret=secret.encode(),
+                                                  original_authenticator=req.authenticator,
+                                                  original_code=req.code)
+    except Exception as e:
+        logger.error(f"RADIUS Message-Authenticator check failed: {e}")
+        return False
 
 
 def get_radius_secret():
@@ -1319,6 +1339,11 @@ def login():
                 req.add_message_authenticator()
 
                 reply = srv.SendPacket(req)
+
+                if not radius_reply_is_authentic(req, reply, radius_secret):
+                    logger.warning(f"RADIUS login rejected for '{sanitize_log(username)}': {RADIUS_MA_MISSING_HINT}")
+                    flash("Login error occurred!", "danger")
+                    return redirect(url_for("login"))
                 
                 if reply.code == pyrad.packet.AccessAccept:
                     conn = get_db()
@@ -4333,6 +4358,10 @@ def test_radius_config():
         req["User-Password"] = req.PwCrypt(test_password)
         req.add_message_authenticator()
         reply = srv.SendPacket(req)
+
+        if not radius_reply_is_authentic(req, reply, radius_secret):
+            logger.error(f"RADIUS test failed: {RADIUS_MA_MISSING_HINT}")
+            return jsonify({"success": False, "message": RADIUS_MA_MISSING_HINT})
 
         if reply.code == pyrad.packet.AccessAccept:
             logger.info(f"RADIUS test successful for user '{sanitize_log(test_username)}' by {current_user.id}")
