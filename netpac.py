@@ -45,6 +45,10 @@ from collections import defaultdict
 from datetime import date, timedelta
 from flask import jsonify
 import urllib
+import urllib.request
+import smtplib
+import ssl
+from email.message import EmailMessage
 
 
 # --------------------
@@ -321,6 +325,218 @@ def get_radius_secret():
 
 
 # --------------------
+#   Notifications
+# --------------------
+NOTIFY_STATUSES = ('completed', 'failed', 'timeout', 'cancelled')
+NOTIFY_STATUS_ICONS = {'completed': '✅', 'failed': '❌', 'timeout': '⏱️', 'cancelled': '⛔'}
+NOTIFY_CHANNELS = ('email', 'matrix')
+NOTIFY_JOB_TYPES = ('all', 'python', 'ansible')
+NOTIFY_SMTP_SECURITY = ('starttls', 'ssl', 'none')
+NOTIFY_SEND_TIMEOUT = 10
+NOTIFY_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+NOTIFY_MATRIX_ROOM_RE = re.compile(r'^![^:\s]+:\S+$')
+
+
+def load_notification_settings(with_secrets=False):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT smtp_host, smtp_port, smtp_security, smtp_user, smtp_encrypted_password, smtp_from,
+                   matrix_homeserver, matrix_encrypted_token, base_url
+            FROM notification_settings WHERE id = 1
+        """)
+        row = cur.fetchone()
+    except Exception as e:
+        logger.error(f"Could not load notification settings: {e}")
+        row = None
+    finally:
+        cur.close()
+        conn.close()
+
+    if not row:
+        row = (None,) * 9
+
+    smtp_host, smtp_port, smtp_security, smtp_user, smtp_pw_enc, smtp_from, matrix_hs, matrix_token_enc, base_url = row
+    cfg = {
+        'smtp_host': smtp_host or '',
+        'smtp_port': smtp_port or 587,
+        'smtp_security': smtp_security or 'starttls',
+        'smtp_user': smtp_user or '',
+        'smtp_password_set': bool(smtp_pw_enc),
+        'smtp_from': smtp_from or '',
+        'matrix_homeserver': matrix_hs or '',
+        'matrix_token_set': bool(matrix_token_enc),
+        'base_url': base_url or '',
+    }
+
+    if with_secrets:
+        for key, enc in (('smtp_password', smtp_pw_enc), ('matrix_token', matrix_token_enc)):
+            cfg[key] = None
+            if enc:
+                try:
+                    cfg[key] = encryption.decrypt(enc)
+                except Exception as e:
+                    logger.error(f"Failed to decrypt notification {key}: {e}")
+    return cfg
+
+
+def send_notification_mail(cfg, to_addr, subject, body):
+    if not cfg['smtp_host'] or not cfg['smtp_from']:
+        raise ValueError("SMTP host and sender address are not configured")
+
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = cfg['smtp_from']
+    msg['To'] = to_addr
+    msg.set_content(body)
+
+    context = ssl.create_default_context()
+    if cfg['smtp_security'] == 'ssl':
+        server = smtplib.SMTP_SSL(cfg['smtp_host'], cfg['smtp_port'], timeout=NOTIFY_SEND_TIMEOUT, context=context)
+    else:
+        server = smtplib.SMTP(cfg['smtp_host'], cfg['smtp_port'], timeout=NOTIFY_SEND_TIMEOUT)
+
+    with server:
+        if cfg['smtp_security'] == 'starttls':
+            server.starttls(context=context)
+        if cfg['smtp_user']:
+            if not cfg.get('smtp_password'):
+                raise ValueError("SMTP user is set but no password is saved")
+            server.login(cfg['smtp_user'], cfg['smtp_password'])
+        server.send_message(msg)
+
+
+def send_notification_matrix(cfg, room_id, body, html_body, txn_id):
+    if not cfg['matrix_homeserver'] or not cfg.get('matrix_token'):
+        raise ValueError("Matrix homeserver and access token are not configured")
+
+    url = (f"{cfg['matrix_homeserver'].rstrip('/')}/_matrix/client/v3/rooms/"
+           f"{urllib.parse.quote(room_id, safe='')}/send/m.room.message/{urllib.parse.quote(txn_id, safe='')}")
+    payload = {
+        "msgtype": "m.text",
+        "body": body,
+        "format": "org.matrix.custom.html",
+        "formatted_body": html_body,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        method="PUT",
+        headers={"Authorization": f"Bearer {cfg['matrix_token']}", "Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=NOTIFY_SEND_TIMEOUT) as resp:
+        resp.read()
+
+
+def send_notification(cfg, channel, target, subject, body, html_body, txn_id):
+    if channel == 'email':
+        send_notification_mail(cfg, target, subject, body)
+    elif channel == 'matrix':
+        send_notification_matrix(cfg, target, body, html_body, txn_id)
+    else:
+        raise ValueError(f"Unknown notification channel: {channel}")
+
+
+def format_duration(seconds):
+    if seconds is None:
+        return "-"
+    minutes, sec = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {sec}s"
+    if minutes:
+        return f"{minutes}m {sec}s"
+    return f"{sec}s"
+
+
+def build_job_notification(cfg, job_id, job):
+    status = job['status']
+    dry_run = " (dry run)" if job['ansible_dry_run'] else ""
+    subject = f"[NetPAC] {NOTIFY_STATUS_ICONS.get(status, '')} {status} – {job['script_name']}{dry_run} (#{job_id})"
+
+    fields = [
+        ("Script", f"{job['script_name']} ({job['job_type']}){dry_run}"),
+        ("Target", job['target'] or "-"),
+        ("Started by", job['user_id']),
+        ("Started", str(job['started_at'] or "-")),
+        ("Finished", str(job['finished_at'] or "-")),
+        ("Duration", format_duration(job['duration'])),
+    ]
+    link = f"{cfg['base_url'].rstrip('/')}/history/{job_id}" if cfg['base_url'] else None
+
+    lines = [f"NetPAC job #{job_id} {status}", ""]
+    lines += [f"{label + ':':<12} {value}" for label, value in fields]
+    if link:
+        lines += ["", f"Details: {link}"]
+    body = "\n".join(lines)
+
+    html = [f"<b>{NOTIFY_STATUS_ICONS.get(status, '')} NetPAC job #{job_id} {Markup.escape(status)}</b><br>"]
+    html += [f"<b>{label}:</b> {Markup.escape(value)}<br>" for label, value in fields]
+    if link:
+        html.append(f'<a href="{Markup.escape(link)}">Open job details</a>')
+    return subject, body, "".join(html)
+
+
+def _notify_job_finished_worker(job_id):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        # Claim the notification atomically so a job is only reported once,
+        # even if several code paths (e.g. cancel + worker finally) finish it.
+        cur.execute("""
+            UPDATE history_jobs SET notified_at = NOW()
+            WHERE job_id = %s AND notified_at IS NULL AND status IN %s
+        """, (job_id, NOTIFY_STATUSES))
+        conn.commit()
+        if cur.rowcount != 1:
+            return
+
+        cur.execute("""
+            SELECT script_name, user_id, target, status, started_at, finished_at, duration, job_type, ansible_dry_run
+            FROM history_jobs WHERE job_id = %s
+        """, (job_id,))
+        row = cur.fetchone()
+        if not row:
+            return
+        job = dict(zip(['script_name', 'user_id', 'target', 'status', 'started_at', 'finished_at',
+                        'duration', 'job_type', 'ansible_dry_run'], row))
+
+        status_column = f"on_{job['status']}"
+        cur.execute(f"""
+            SELECT rule_id, name, channel, target FROM notification_rules
+            WHERE is_active = 1 AND {status_column} = 1
+            AND (job_type IS NULL OR job_type IN ('all', %s))
+        """, (job['job_type'],))
+        rules = cur.fetchall()
+    except Exception as e:
+        exec_logger.error(f"Notification lookup for job {job_id} failed: {e}")
+        return
+    finally:
+        cur.close()
+        conn.close()
+
+    if not rules:
+        return
+
+    cfg = load_notification_settings(with_secrets=True)
+    subject, body, html_body = build_job_notification(cfg, job_id, job)
+
+    for rule_id, rule_name, channel, target in rules:
+        try:
+            send_notification(cfg, channel, target, subject, body, html_body, f"netpac-{job_id}-{rule_id}")
+            exec_logger.info(f"Notification for job {job_id} ({job['status']}) sent via rule '{rule_name}' ({channel})")
+        except Exception as e:
+            exec_logger.error(f"Notification for job {job_id} via rule '{rule_name}' ({channel}) failed: {e!r}")
+
+
+def notify_job_finished(job_id):
+    # Sending can take a while (SMTP/HTTP timeouts) — never block the caller
+    thread = threading.Thread(target=_notify_job_finished_worker, args=(job_id,), daemon=True)
+    thread.start()
+
+
+# --------------------
 #   SQL Config
 # --------------------
 def get_db():
@@ -497,6 +713,7 @@ def is_process_alive(pid: int) -> bool:
 def reap_stale_jobs():
     conn = get_db()
     cur = conn.cursor()
+    reaped = []
     try:
         cur.execute("""
             SELECT job_id, pid, TIMESTAMPDIFF(SECOND, started_at, NOW())
@@ -519,12 +736,17 @@ def reap_stale_jobs():
                 WHERE job_id = %s AND status = 'running'
             """, ("\n[NetPAC] Job was interrupted (process no longer running, e.g. after a NetPAC restart).\n", job_id))
             exec_logger.warning(f"Job {job_id} marked as failed: process {pid} no longer running")
+            reaped.append(job_id)
         conn.commit()
     except Exception as e:
         exec_logger.error(f"Error while cleaning up stale jobs: {e}")
+        reaped = []
     finally:
         cur.close()
         conn.close()
+
+    for job_id in reaped:
+        notify_job_finished(job_id)
 
 
 # --------------------
@@ -1758,6 +1980,8 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
             cur.close()
             conn.close()
 
+        notify_job_finished(job_id)
+
 
 # --------------------
 #   VENV
@@ -2688,6 +2912,8 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             cur.close()
             conn.close()
 
+        notify_job_finished(job_id)
+
 
 # --------------------
 #   Ansible Collections
@@ -3038,6 +3264,7 @@ def cancel_job(job_id):
             WHERE job_id = %s AND status = 'running'
         """, (JOB_CANCELLED_NOTE, job_id))
         conn.commit()
+        notify_job_finished(job_id)
 
         logger.info(f"Job {job_id} (PID {pid}) cancelled by {current_user.id}")
         flash(f"Job #{job_id} cancelled", "success")
@@ -3389,9 +3616,14 @@ def settings():
 
     ssl_info_data = get_ssl_info()
 
-    return render_template("settings.html", output=output, logs=log_files, git_config=git_config, 
-                        user_method=user_method, users=users, backups=backup_files, 
-                        active_tab=active_tab, radius_config=radius_config, ssl_info=ssl_info_data)
+    notification_config = load_notification_settings()
+    notification_rules = load_notification_rules()
+
+    return render_template("settings.html", output=output, logs=log_files, git_config=git_config,
+                        user_method=user_method, users=users, backups=backup_files,
+                        active_tab=active_tab, radius_config=radius_config, ssl_info=ssl_info_data,
+                        notification_config=notification_config, notification_rules=notification_rules,
+                        notify_statuses=NOTIFY_STATUSES)
 
 
 @app.route("/settings/git", methods=["POST"])
@@ -3753,6 +3985,267 @@ def test_radius_config():
     except Exception as e:
         logger.error(f"RADIUS test failed: Error: {e!r}")
         return jsonify({"success": False, "message": f"Error: {e!r}"}), 500
+
+
+# --------------------
+#   Notification settings & rules
+# --------------------
+def load_notification_rules():
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT rule_id, name, channel, target, on_completed, on_failed, on_timeout, on_cancelled,
+                   job_type, is_active, created_by
+            FROM notification_rules ORDER BY name
+        """)
+        keys = ['rule_id', 'name', 'channel', 'target', 'on_completed', 'on_failed', 'on_timeout',
+                'on_cancelled', 'job_type', 'is_active', 'created_by']
+        return [dict(zip(keys, row)) for row in cur.fetchall()]
+    except Exception as e:
+        logger.error(f"Could not load notification rules: {e}")
+        return []
+    finally:
+        cur.close()
+        conn.close()
+
+
+def parse_notification_rule_form():
+    name = request.form.get("name", "").strip()
+    channel = request.form.get("channel", "").strip()
+    target = request.form.get("target", "").strip()
+    job_type = request.form.get("job_type", "all").strip()
+    statuses = {s: 1 if request.form.get(f"on_{s}") else 0 for s in NOTIFY_STATUSES}
+    is_active = 1 if request.form.get("is_active") else 0
+
+    if not name or len(name) > 100:
+        return None, "Name is required (max. 100 characters)"
+    if channel not in NOTIFY_CHANNELS:
+        return None, "Invalid notification channel"
+    if channel == 'email' and not NOTIFY_EMAIL_RE.match(target):
+        return None, "Please enter a valid e-mail address"
+    if channel == 'matrix' and not NOTIFY_MATRIX_ROOM_RE.match(target):
+        return None, "Please enter a valid Matrix room ID (e.g. !abc123:matrix.org)"
+    if len(target) > 255:
+        return None, "Target is too long (max. 255 characters)"
+    if job_type not in NOTIFY_JOB_TYPES:
+        return None, "Invalid job type"
+    if not any(statuses.values()):
+        return None, "Select at least one status to notify on"
+
+    return {
+        'name': name, 'channel': channel, 'target': target, 'job_type': job_type,
+        'is_active': is_active, **{f"on_{s}": v for s, v in statuses.items()}
+    }, None
+
+
+@app.route("/settings/notifications", methods=["POST"])
+@login_required
+def save_notification_settings():
+    smtp_host = request.form.get("smtp_host", "").strip()
+    smtp_port = request.form.get("smtp_port", "587").strip() or "587"
+    smtp_security = request.form.get("smtp_security", "starttls").strip()
+    smtp_user = request.form.get("smtp_user", "").strip()
+    smtp_password = request.form.get("smtp_password", "")
+    smtp_from = request.form.get("smtp_from", "").strip()
+    matrix_homeserver = request.form.get("matrix_homeserver", "").strip()
+    matrix_token = request.form.get("matrix_token", "").strip()
+    base_url = request.form.get("notify_base_url", "").strip()
+
+    try:
+        smtp_port = int(smtp_port)
+    except ValueError:
+        flash("SMTP port must be a number", "danger")
+        return redirect(url_for("settings", tab="notifications"))
+
+    if smtp_security not in NOTIFY_SMTP_SECURITY:
+        flash("Invalid SMTP security option", "danger")
+        return redirect(url_for("settings", tab="notifications"))
+    if smtp_from and not NOTIFY_EMAIL_RE.match(smtp_from):
+        flash("Sender address is not a valid e-mail address", "danger")
+        return redirect(url_for("settings", tab="notifications"))
+    for label, url in (("Matrix homeserver", matrix_homeserver), ("Base URL", base_url)):
+        if url and not url.startswith(("https://", "http://")):
+            flash(f"{label} must start with https:// or http://", "danger")
+            return redirect(url_for("settings", tab="notifications"))
+    if (smtp_password or matrix_token) and not encryption.is_available():
+        flash("ENCRYPTION_KEY is missing — passwords and tokens cannot be stored", "danger")
+        return redirect(url_for("settings", tab="notifications"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT smtp_encrypted_password, matrix_encrypted_token FROM notification_settings WHERE id = 1")
+        existing = cur.fetchone() or (None, None)
+
+        smtp_pw_enc = encryption.encrypt(smtp_password) if smtp_password else existing[0]
+        matrix_token_enc = encryption.encrypt(matrix_token) if matrix_token else existing[1]
+
+        cur.execute("""
+            INSERT INTO notification_settings
+                (id, smtp_host, smtp_port, smtp_security, smtp_user, smtp_encrypted_password, smtp_from,
+                 matrix_homeserver, matrix_encrypted_token, base_url)
+            VALUES (1, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                smtp_host = VALUES(smtp_host),
+                smtp_port = VALUES(smtp_port),
+                smtp_security = VALUES(smtp_security),
+                smtp_user = VALUES(smtp_user),
+                smtp_encrypted_password = VALUES(smtp_encrypted_password),
+                smtp_from = VALUES(smtp_from),
+                matrix_homeserver = VALUES(matrix_homeserver),
+                matrix_encrypted_token = VALUES(matrix_encrypted_token),
+                base_url = VALUES(base_url)
+        """, (smtp_host, smtp_port, smtp_security, smtp_user, smtp_pw_enc, smtp_from,
+              matrix_homeserver, matrix_token_enc, base_url))
+        conn.commit()
+        logger.info(f"Notification settings updated by {current_user.id}")
+        flash("Notification settings saved", "success")
+    except Exception as e:
+        logger.error(f"Error saving notification settings: {e}")
+        conn.rollback()
+        flash("Error saving notification settings", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("settings", tab="notifications"))
+
+
+@app.route("/settings/notifications/rules", methods=["POST"])
+@login_required
+def create_notification_rule():
+    data, error = parse_notification_rule_form()
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("settings", tab="notifications"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO notification_rules
+                (name, channel, target, on_completed, on_failed, on_timeout, on_cancelled, job_type, is_active, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (data['name'], data['channel'], data['target'], data['on_completed'], data['on_failed'],
+              data['on_timeout'], data['on_cancelled'], data['job_type'], data['is_active'], current_user.id))
+        conn.commit()
+        logger.info(f"Notification rule '{sanitize_log(data['name'])}' created by {current_user.id}")
+        flash(f"Notification rule '{data['name']}' created", "success")
+    except Exception as e:
+        logger.error(f"Error creating notification rule: {e}")
+        conn.rollback()
+        flash("Error creating notification rule", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("settings", tab="notifications"))
+
+
+@app.route("/settings/notifications/rules/edit/<int:rule_id>", methods=["POST"])
+@login_required
+def edit_notification_rule(rule_id):
+    data, error = parse_notification_rule_form()
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("settings", tab="notifications"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            UPDATE notification_rules
+            SET name = %s, channel = %s, target = %s, on_completed = %s, on_failed = %s,
+                on_timeout = %s, on_cancelled = %s, job_type = %s, is_active = %s
+            WHERE rule_id = %s
+        """, (data['name'], data['channel'], data['target'], data['on_completed'], data['on_failed'],
+              data['on_timeout'], data['on_cancelled'], data['job_type'], data['is_active'], rule_id))
+        conn.commit()
+        logger.info(f"Notification rule {rule_id} updated by {current_user.id}")
+        flash(f"Notification rule '{data['name']}' updated", "success")
+    except Exception as e:
+        logger.error(f"Error updating notification rule {rule_id}: {e}")
+        conn.rollback()
+        flash("Error updating notification rule", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("settings", tab="notifications"))
+
+
+@app.route("/settings/notifications/rules/toggle/<int:rule_id>", methods=["POST"])
+@login_required
+def toggle_notification_rule(rule_id):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("UPDATE notification_rules SET is_active = NOT is_active WHERE rule_id = %s", (rule_id,))
+        conn.commit()
+        logger.info(f"Notification rule {rule_id} toggled by {current_user.id}")
+    except Exception as e:
+        logger.error(f"Error toggling notification rule {rule_id}: {e}")
+        conn.rollback()
+        flash("Error toggling notification rule", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("settings", tab="notifications"))
+
+
+@app.route("/settings/notifications/rules/delete/<int:rule_id>", methods=["POST"])
+@login_required
+def delete_notification_rule(rule_id):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM notification_rules WHERE rule_id = %s", (rule_id,))
+        conn.commit()
+        logger.info(f"Notification rule {rule_id} deleted by {current_user.id}")
+        flash("Notification rule deleted", "success")
+    except Exception as e:
+        logger.error(f"Error deleting notification rule {rule_id}: {e}")
+        conn.rollback()
+        flash("Error deleting notification rule", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("settings", tab="notifications"))
+
+
+@app.route("/settings/notifications/rules/test/<int:rule_id>", methods=["POST"])
+@login_required
+def test_notification_rule(rule_id):
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT name, channel, target FROM notification_rules WHERE rule_id = %s", (rule_id,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not row:
+        abort(404)
+
+    name, channel, target = row
+    cfg = load_notification_settings(with_secrets=True)
+    subject = "[NetPAC] Test notification"
+    body = f"This is a test notification from NetPAC for rule '{name}', sent by {current_user.id}."
+    html_body = f"<b>NetPAC test notification</b><br>Rule <b>{Markup.escape(name)}</b>, sent by {Markup.escape(current_user.id)}."
+
+    try:
+        send_notification(cfg, channel, target, subject, body, html_body, f"netpac-test-{uuid.uuid4().hex}")
+        logger.info(f"Test notification for rule {rule_id} ({channel}) sent by {current_user.id}")
+        flash(f"Test notification sent to {target}", "success")
+    except Exception as e:
+        logger.error(f"Test notification for rule {rule_id} ({channel}) failed: {e!r}")
+        flash(f"Test notification failed: {e}", "danger")
+
+    return redirect(url_for("settings", tab="notifications"))
 
 
 def get_ssl_info():

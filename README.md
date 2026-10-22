@@ -138,18 +138,18 @@ CREATE TABLE `hosts` (
   `created_at` datetime DEFAULT current_timestamp(),
   PRIMARY KEY (`host_id`),
   UNIQUE KEY `hostname` (`hostname`)
-) ENGINE = InnoDB 
-AUTO_INCREMENT = 1
-DEFAULT CHARSET = utf8mb4 
-COLLATE = utf8mb4_unicode_ci
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE `host_groups` (
     `group_id` INT AUTO_INCREMENT PRIMARY KEY,
     `name` VARCHAR(255) UNIQUE NOT NULL,
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `ansible_vars` TEXT DEFAULT NULL
-) ENGINE=InnoDB 
-AUTO_INCREMENT=1 
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -159,8 +159,8 @@ CREATE TABLE `host_group_membership` (
     PRIMARY KEY (host_id, group_id),
     FOREIGN KEY (host_id) REFERENCES hosts(host_id) ON DELETE CASCADE,
     FOREIGN KEY (group_id) REFERENCES host_groups(group_id) ON DELETE CASCADE
-) ENGINE=InnoDB 
-AUTO_INCREMENT=1 
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -179,14 +179,15 @@ CREATE TABLE `history_jobs` (
   `job_type` ENUM('python','ansible') DEFAULT 'python',
   `ansible_dry_run` TINYINT(1) DEFAULT 0,
   `pid` INT DEFAULT NULL,
+  `notified_at` TIMESTAMP NULL DEFAULT NULL,
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`),
   KEY `idx_status` (`status`),
   KEY `idx_started` (`started_at`),
   KEY `idx_history_script_name` (`script_name`),
   KEY `idx_history_job_type` (`job_type`)
-) ENGINE=InnoDB 
-AUTO_INCREMENT=1 
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -204,8 +205,8 @@ CREATE TABLE `schedule_jobs` (
   `job_type` VARCHAR(20) DEFAULT 'python',
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`)
-) ENGINE=InnoDB 
-AUTO_INCREMENT=1 
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -233,9 +234,10 @@ CREATE TABLE `user` (
   `totp_confirmed` BOOLEAN DEFAULT FALSE,
   `method` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`name`)
-) ENGINE=InnoDB 
-DEFAULT CHARSET=utf8mb4 
-COLLATE=utf8mb4_bin;
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `user` (`name`, `password`, `method`) VALUES (
   'admin',
@@ -262,9 +264,10 @@ CREATE TABLE apscheduler_jobs (
     `job_state` BLOB NOT NULL,
     PRIMARY KEY (id),
     KEY ix_apscheduler_jobs_next_run_time (next_run_time)
-) ENGINE=InnoDB 
+) ENGINE=InnoDB
 AUTO_INCREMENT=1
-DEFAULT CHARSET=utf8mb4;
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE radius(
     `id` INT PRIMARY KEY DEFAULT 1,
@@ -273,7 +276,45 @@ CREATE TABLE radius(
     `encrypted_secret` TEXT,
     timeout INT DEFAULT 5,
     CONSTRAINT single_row CHECK (id = 1)
-);
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE notification_rules (
+  `rule_id`      INT AUTO_INCREMENT PRIMARY KEY,
+  `name`          VARCHAR(100) NOT NULL,
+  `channel`       ENUM('email','matrix') NOT NULL,
+  `target`        VARCHAR(255) NOT NULL,
+  `on_completed`  TINYINT(1) NOT NULL DEFAULT 0,
+  `on_failed`     TINYINT(1) NOT NULL DEFAULT 1,
+  `on_timeout`    TINYINT(1) NOT NULL DEFAULT 1,
+  `on_cancelled`  TINYINT(1) NOT NULL DEFAULT 0,
+  `job_type`      ENUM('all','python','ansible') DEFAULT 'all',
+  `is_active`    TINYINT(1) NOT NULL DEFAULT 1,
+  `created_by`    VARCHAR(100),
+  `created_at`    DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE notification_settings (
+  `id`                     INT NOT NULL DEFAULT 1 PRIMARY KEY,
+  `smtp_host`               VARCHAR(255),
+  `smtp_port`               INT DEFAULT 587,
+  `smtp_security` ENUM('starttls','ssl','none') DEFAULT 'starttls',
+  `smtp_user`               VARCHAR(255),
+  `smtp_encrypted_password` TEXT,
+  `smtp_from`               VARCHAR(255),
+  `matrix_homeserver`       VARCHAR(255),
+  `matrix_encrypted_token`  TEXT,
+  `base_url`                VARCHAR(255),
+  CONSTRAINT single_row_notif CHECK (id = 1)
+) ENGINE=InnoDB
+AUTO_INCREMENT=1
+DEFAULT CHARSET=utf8mb4
+COLLATE=utf8mb4_unicode_ci;
 ```
 
 ## NetPAC configuration

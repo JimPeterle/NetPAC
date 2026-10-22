@@ -20,6 +20,9 @@
     <button type="button" id="tabBtnRadius" class="action-button {{ 'action-button-primary' if active_tab == 'radius' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'radius' else '0.6' }};" onclick="switchSettingsTab('radius')">
         Radius
     </button>
+    <button type="button" id="tabBtnNotifications" class="action-button {{ 'action-button-primary' if active_tab == 'notifications' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'notifications' else '0.6' }};" onclick="switchSettingsTab('notifications')">
+        Notifications
+    </button>
     <button type="button" id="tabBtnGit" class="action-button {{ 'action-button-primary' if active_tab == 'git' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'git' else '0.6' }};" onclick="switchSettingsTab('git')">
         Git
     </button>
@@ -193,6 +196,151 @@
                 RADIUS is not configured yet. RADIUS login will not work until this is set up.
             </div>
             {% endif %}
+        </div>
+    </div>
+</div>
+
+<div id="tabNotifications" style="{{ 'display: none;' if active_tab != 'notifications' else '' }}">
+    <div class="content-card" style="margin-top: 0;">
+        <div class="card-header">
+            <h3 class="card-title">Notification Rules</h3>
+            <button type="button" class="action-button action-button-primary" onclick="openNotifyRuleModal()">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Add Rule</span>
+            </button>
+        </div>
+        <div class="card-body">
+            <p class="settings-description" style="margin-bottom: 20px;">
+                Get notified by e-mail or Matrix when a job finishes with one of the selected states.
+            </p>
+            {% if notification_rules %}
+            <ul class="host-list">
+                {% for rule in notification_rules %}
+                <li class="host-item">
+                    <div class="host-info" style="{% if not rule.is_active %}opacity: 0.5;{% endif %}">
+                        <span class="host-name">{{ rule.name }}</span>
+                        <span style="background: var(--blue-dim); color: var(--blue); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px;">{{ 'Mail' if rule.channel == 'email' else 'Matrix' }}</span>
+                        <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.target }}</span>
+                        {% for s in notify_statuses %}
+                        {% if rule['on_' ~ s] %}
+                        <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px;">{{ s }}</span>
+                        {% endif %}
+                        {% endfor %}
+                        {% if rule.job_type and rule.job_type != 'all' %}
+                        <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.job_type }} only</span>
+                        {% endif %}
+                    </div>
+
+                    <div class="host-buttons" style="display: flex; gap: 0.5rem; align-items: center;">
+                        <form method="POST" action="{{ url_for('toggle_notification_rule', rule_id=rule.rule_id) }}" style="margin: 0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <label class="ios-toggle" title="{{ 'Rule active' if rule.is_active else 'Rule inactive' }}">
+                                <input type="checkbox" {% if rule.is_active %}checked{% endif %} onchange="this.form.submit()">
+                                <span class="ios-slider"></span>
+                            </label>
+                        </form>
+
+                        <form method="POST" action="{{ url_for('test_notification_rule', rule_id=rule.rule_id) }}" style="margin: 0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="action-button action-button-secondary" title="Send test notification">Test</button>
+                        </form>
+
+                        <button type="button" class="action-button action-button-secondary" title="Edit rule"
+                                onclick='openNotifyRuleModal({{ rule|tojson }})'>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                            </svg>
+                        </button>
+
+                        <button type="button" class="action-button action-button-secondary" title="Delete rule"
+                                onclick='confirmDeleteNotifyRule({{ rule.rule_id }}, {{ rule.name|tojson }})'>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11v6M14 11v6"/>
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p style="color: var(--text-muted);">No notification rules yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="content-card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h3 class="card-title">Notification Channels</h3>
+        </div>
+        <div class="card-body" style="padding: 30px;">
+            <p class="settings-description" style="margin-bottom: 20px;">
+                SMTP password and Matrix access token are stored encrypted in the database.
+            </p>
+            <form method="POST" action="{{ url_for('save_notification_settings') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                <h4 style="margin: 0 0 12px; color: var(--text-primary);">E-Mail (SMTP)</h4>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <div class="form-group" style="margin-bottom: 16px; flex: 2; min-width: 200px;">
+                        <label class="form-label">SMTP Host</label>
+                        <input type="text" name="smtp_host" class="form-input" placeholder="smtp.example.com" value="{{ notification_config.smtp_host }}">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 100px;">
+                        <label class="form-label">Port</label>
+                        <input type="number" name="smtp_port" class="form-input" placeholder="587" value="{{ notification_config.smtp_port }}">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 140px;">
+                        <label class="form-label">Security</label>
+                        <select name="smtp_security" class="form-input">
+                            <option value="starttls" {% if notification_config.smtp_security == 'starttls' %}selected{% endif %}>STARTTLS</option>
+                            <option value="ssl" {% if notification_config.smtp_security == 'ssl' %}selected{% endif %}>SSL/TLS</option>
+                            <option value="none" {% if notification_config.smtp_security == 'none' %}selected{% endif %}>None</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 200px;">
+                        <label class="form-label">Username</label>
+                        <input type="text" name="smtp_user" class="form-input" placeholder="Leave empty for no authentication" value="{{ notification_config.smtp_user }}" autocomplete="off">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 200px;">
+                        <label class="form-label">Password</label>
+                        <input type="password" name="smtp_password" class="form-input" autocomplete="new-password"
+                            placeholder="{% if notification_config.smtp_password_set %}Password saved – leave blank to keep{% else %}SMTP password{% endif %}">
+                    </div>
+                </div>
+                <div class="form-group" style="margin-bottom: 24px;">
+                    <label class="form-label">Sender Address</label>
+                    <input type="text" name="smtp_from" class="form-input" placeholder="netpac@example.com" value="{{ notification_config.smtp_from }}">
+                </div>
+
+                <h4 style="margin: 0 0 12px; color: var(--text-primary);">Matrix</h4>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Homeserver URL</label>
+                    <input type="text" name="matrix_homeserver" class="form-input" placeholder="https://matrix.example.org" value="{{ notification_config.matrix_homeserver }}">
+                </div>
+                <div class="form-group" style="margin-bottom: 24px;">
+                    <label class="form-label">Access Token</label>
+                    <input type="password" name="matrix_token" class="form-input" autocomplete="new-password"
+                        placeholder="{% if notification_config.matrix_token_set %}Token saved – leave blank to keep{% else %}Access token of the bot account{% endif %}">
+                    <span class="form-hint">Invite the bot account to the room first. End-to-end encrypted rooms are not supported.</span>
+                </div>
+
+                <h4 style="margin: 0 0 12px; color: var(--text-primary);">General</h4>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label class="form-label">NetPAC Base URL</label>
+                    <input type="text" name="notify_base_url" class="form-input" placeholder="{{ request.url_root }}" value="{{ notification_config.base_url }}">
+                    <span class="form-hint">Used for the link to the job details in notifications. Leave empty to send no link.</span>
+                </div>
+
+                <button type="submit" class="action-button action-button-primary">
+                    <span>Save</span>
+                </button>
+            </form>
         </div>
     </div>
 </div>
@@ -526,12 +674,97 @@
     </div>
 </div>
 
+<div id="notifyRuleModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3); max-height: 85vh; overflow-y: auto;">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 id="notifyRuleModalTitle" style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Add Notification Rule</h2>
+        </div>
+        <form id="notifyRuleForm" method="POST" action="{{ url_for('create_notification_rule') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+            <div style="padding: 1.5rem;">
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" id="notifyRuleName" class="form-input" maxlength="100" placeholder="e.g. Ops team – failures" required>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Channel</label>
+                    <div style="display: flex; gap: 0.75rem;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1rem; flex: 1;">
+                            <input type="radio" name="channel" value="email" id="notifyChannelEmail" onchange="updateNotifyTargetField()" style="accent-color: var(--accent);" checked>
+                            E-Mail
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1rem; flex: 1;">
+                            <input type="radio" name="channel" value="matrix" id="notifyChannelMatrix" onchange="updateNotifyTargetField()" style="accent-color: var(--accent);">
+                            Matrix
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label" id="notifyTargetLabel">E-Mail Address</label>
+                    <input type="text" name="target" id="notifyRuleTarget" class="form-input" maxlength="255" required>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Notify when job is</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; border: 1px solid var(--border); border-radius: 6px; padding: 0.6rem;">
+                        {% for s in notify_statuses %}
+                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                            <input type="checkbox" name="on_{{ s }}" id="notifyOn_{{ s }}" value="1" style="width: 16px; height: 16px; accent-color: var(--accent);">
+                            {{ s }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Job type</label>
+                    <select name="job_type" id="notifyRuleJobType" class="form-input">
+                        <option value="all">All jobs</option>
+                        <option value="python">Python scripts only</option>
+                        <option value="ansible">Ansible playbooks only</option>
+                    </select>
+                </div>
+
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                    <input type="checkbox" name="is_active" id="notifyRuleActive" value="1" style="width: 16px; height: 16px; accent-color: var(--accent);" checked>
+                    Active
+                </label>
+            </div>
+            <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+                <button type="button" class="action-button action-button-secondary" onclick="closeNotifyRuleModal()">Cancel</button>
+                <button type="submit" id="notifyRuleSubmitBtn" class="action-button action-button-primary">Add Rule</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="deleteNotifyRuleModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
+        <div style="padding: 1.5rem; border-bottom: 1px solid var(--border);">
+            <h2 style="margin: 0; font-size: 1.25rem; font-weight: 600; color: var(--text-primary);">Delete Notification Rule</h2>
+        </div>
+        <div style="padding: 1.5rem;">
+            <p id="deleteNotifyRuleMessage" style="margin-bottom: 1rem; color: var(--text-secondary);"></p>
+            <p style="color: var(--danger); font-weight: 500; margin: 0;">This action cannot be undone!</p>
+        </div>
+        <div style="padding: 1rem 1.5rem; background: var(--bg-table-head); border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; border-radius: 0 0 12px 12px;">
+            <button type="button" class="action-button action-button-secondary" onclick="document.getElementById('deleteNotifyRuleModal').style.display='none'">Cancel</button>
+            <form id="deleteNotifyRuleForm" method="POST" action="" style="display: inline; margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-button action-button-danger">Delete</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block extra_js %}
 <script>
     function switchSettingsTab(tab) {
-        const tabs = { user: 'tabUser', radius: 'tabRadius', git: 'tabGit', logs: 'tabLogs', backup: 'tabBackup', ssl: 'tabSsl' };
+        const tabs = { user: 'tabUser', radius: 'tabRadius', notifications: 'tabNotifications', git: 'tabGit', logs: 'tabLogs', backup: 'tabBackup', ssl: 'tabSsl' };
 
         Object.entries(tabs).forEach(([key, id]) => {
             const el = document.getElementById(id);
@@ -548,7 +781,7 @@
             }
         });
 
-        ['User', 'Radius', 'Git', 'Logs', 'Backup', 'Ssl'].forEach(name => {
+        ['User', 'Radius', 'Notifications', 'Git', 'Logs', 'Backup', 'Ssl'].forEach(name => {
             const btn = document.getElementById(`tabBtn${name}`);
             const isActive = name.toLowerCase() === tab;
             btn.classList.toggle('action-button-primary', isActive);
@@ -624,6 +857,67 @@
 
     document.getElementById('restoreModalOverlay').addEventListener('click', function(e) {
         if (e.target === this) closeRestoreModal();
+    });
+
+    const NOTIFY_STATUSES = {{ notify_statuses|list|tojson }};
+    const notifyCreateUrl = "{{ url_for('create_notification_rule') }}";
+    const notifyEditUrl = "{{ url_for('edit_notification_rule', rule_id=0) }}".replace(/0$/, '');
+    const notifyDeleteUrl = "{{ url_for('delete_notification_rule', rule_id=0) }}".replace(/0$/, '');
+
+    function updateNotifyTargetField() {
+        const isMatrix = document.getElementById('notifyChannelMatrix').checked;
+        const target = document.getElementById('notifyRuleTarget');
+        document.getElementById('notifyTargetLabel').textContent = isMatrix ? 'Matrix Room ID' : 'E-Mail Address';
+        target.placeholder = isMatrix ? '!abc123:matrix.example.org' : 'ops@example.com';
+    }
+
+    function openNotifyRuleModal(rule) {
+        const form = document.getElementById('notifyRuleForm');
+        const isEdit = !!rule;
+        rule = rule || { name: '', channel: 'email', target: '', job_type: 'all', is_active: 1,
+                         on_completed: 0, on_failed: 1, on_timeout: 1, on_cancelled: 0 };
+
+        form.action = isEdit ? notifyEditUrl + rule.rule_id : notifyCreateUrl;
+        document.getElementById('notifyRuleModalTitle').textContent = isEdit ? 'Edit Notification Rule' : 'Add Notification Rule';
+        document.getElementById('notifyRuleSubmitBtn').textContent = isEdit ? 'Save' : 'Add Rule';
+
+        document.getElementById('notifyRuleName').value = rule.name;
+        document.getElementById('notifyRuleTarget').value = rule.target;
+        document.getElementById('notifyChannelEmail').checked = rule.channel !== 'matrix';
+        document.getElementById('notifyChannelMatrix').checked = rule.channel === 'matrix';
+        document.getElementById('notifyRuleJobType').value = rule.job_type || 'all';
+        document.getElementById('notifyRuleActive').checked = !!rule.is_active;
+        NOTIFY_STATUSES.forEach(s => {
+            document.getElementById(`notifyOn_${s}`).checked = !!rule[`on_${s}`];
+        });
+
+        updateNotifyTargetField();
+        openModalAnimated('notifyRuleModal');
+    }
+
+    function closeNotifyRuleModal() {
+        document.getElementById('notifyRuleModal').style.display = 'none';
+    }
+
+    document.getElementById('notifyRuleModal').addEventListener('click', function(e) {
+        if (e.target === this) closeNotifyRuleModal();
+    });
+
+    document.getElementById('notifyRuleForm').addEventListener('submit', function(e) {
+        if (!NOTIFY_STATUSES.some(s => document.getElementById(`notifyOn_${s}`).checked)) {
+            e.preventDefault();
+            alert('Select at least one status to notify on');
+        }
+    });
+
+    function confirmDeleteNotifyRule(ruleId, name) {
+        document.getElementById('deleteNotifyRuleMessage').textContent = `Do you really want to delete the rule "${name}"?`;
+        document.getElementById('deleteNotifyRuleForm').action = notifyDeleteUrl + ruleId;
+        openModalAnimated('deleteNotifyRuleModal');
+    }
+
+    document.getElementById('deleteNotifyRuleModal').addEventListener('click', function(e) {
+        if (e.target === this) this.style.display = 'none';
     });
 
     function closeRadiusTestModal() {
