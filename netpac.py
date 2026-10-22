@@ -483,8 +483,6 @@ def _notify_job_finished_worker(job_id):
     conn = get_db()
     cur = conn.cursor()
     try:
-        # Claim the notification atomically so a job is only reported once,
-        # even if several code paths (e.g. cancel + worker finally) finish it.
         cur.execute("""
             UPDATE history_jobs SET notified_at = NOW()
             WHERE job_id = %s AND notified_at IS NULL AND status IN %s
@@ -532,7 +530,6 @@ def _notify_job_finished_worker(job_id):
 
 
 def notify_job_finished(job_id):
-    # Sending can take a while (SMTP/HTTP timeouts) — never block the caller
     thread = threading.Thread(target=_notify_job_finished_worker, args=(job_id,), daemon=True)
     thread.start()
 
@@ -4026,7 +4023,7 @@ def parse_notification_rule_form():
     if channel == 'email' and not NOTIFY_EMAIL_RE.match(target):
         return None, "Please enter a valid e-mail address"
     if channel == 'matrix' and not NOTIFY_MATRIX_ROOM_RE.match(target):
-        return None, "Please enter a valid Matrix room ID starting with ! (e.g. !abc123 or !abc123:matrix.org)"
+        return None, "Please enter a valid Matrix room ID starting with ! (e.g. !abc123 or !abc123:<homeserver>)"
     if len(target) > 255:
         return None, "Target is too long (max. 255 characters)"
     if job_type not in NOTIFY_JOB_TYPES:
@@ -4248,7 +4245,9 @@ def test_notification_rule(rule_id):
 
     return redirect(url_for("settings", tab="notifications"))
 
-
+# ---------------------
+#   SSL Certs
+# ---------------------
 def get_ssl_info():
     cert_path = os.path.join(SSL_CERT_DIR, "netpac.crt")
     info = {"exists": False}
