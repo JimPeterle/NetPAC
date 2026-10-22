@@ -357,6 +357,7 @@ vim secret.env
 
 Generate the ENCRYPTION_KEY (encrypts the stored secrets, tokens and TOTP secrets in the database):
 ```Bash
+sudo apt install python3-cryptography
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
