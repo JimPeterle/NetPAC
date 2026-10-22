@@ -90,7 +90,7 @@ fi
 echo ""
 print_warning "To check if database is up to date, run the following command and update your database if necessary:"
 echo "..................................................."
-echo "mariadb-dump -u <username> -p --no-data <database_name> > $APP_DIR/schema_production.sql"
+echo "mariadb-dump -u <username> -p --no-data <database_name> | sed 's/ AUTO_INCREMENT=[0-9]*//' | grep -v '^--' > $APP_DIR/schema_production.sql"
 echo "diff $APP_DIR/schema_production.sql $APP_DIR/database/schema_pattern.sql"
 echo "rm $APP_DIR/schema_production.sql"
 echo "..................................................."

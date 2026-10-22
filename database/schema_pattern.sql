@@ -1,9 +1,4 @@
 /*M!999999\- enable the sandbox mode */ 
--- MariaDB dump 10.19-11.8.6-MariaDB, for debian-linux-gnu (aarch64)
---
--- Host: localhost    Database: netpac_db
--- ------------------------------------------------------
--- Server version       11.8.6-MariaDB-5ubuntu0.1 from Ubuntu
 
 /*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
@@ -16,9 +11,6 @@
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*M!100616 SET @OLD_NOTE_VERBOSITY=@@NOTE_VERBOSITY, NOTE_VERBOSITY=0 */;
 
---
--- Table structure for table `apscheduler_jobs`
---
 
 DROP TABLE IF EXISTS `apscheduler_jobs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -32,9 +24,6 @@ CREATE TABLE `apscheduler_jobs` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `history_jobs`
---
 
 DROP TABLE IF EXISTS `history_jobs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -61,12 +50,9 @@ CREATE TABLE `history_jobs` (
   KEY `idx_started` (`started_at`),
   KEY `idx_history_script_name` (`script_name`),
   KEY `idx_history_job_type` (`job_type`)
-) ENGINE=InnoDB AUTO_INCREMENT=733 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `host_group_membership`
---
 
 DROP TABLE IF EXISTS `host_group_membership`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -81,9 +67,6 @@ CREATE TABLE `host_group_membership` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `host_groups`
---
 
 DROP TABLE IF EXISTS `host_groups`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -95,12 +78,9 @@ CREATE TABLE `host_groups` (
   `ansible_vars` text DEFAULT NULL,
   PRIMARY KEY (`group_id`),
   UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `hosts`
---
 
 DROP TABLE IF EXISTS `hosts`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -113,12 +93,9 @@ CREATE TABLE `hosts` (
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   PRIMARY KEY (`host_id`),
   UNIQUE KEY `hostname` (`hostname`)
-) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `notification_rules`
---
 
 DROP TABLE IF EXISTS `notification_rules`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -140,9 +117,6 @@ CREATE TABLE `notification_rules` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `notification_settings`
---
 
 DROP TABLE IF EXISTS `notification_settings`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -163,9 +137,6 @@ CREATE TABLE `notification_settings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `playbook_templates`
---
 
 DROP TABLE IF EXISTS `playbook_templates`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -186,9 +157,6 @@ CREATE TABLE `playbook_templates` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `playbooks`
---
 
 DROP TABLE IF EXISTS `playbooks`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -203,9 +171,6 @@ CREATE TABLE `playbooks` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `radius`
---
 
 DROP TABLE IF EXISTS `radius`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -221,9 +186,6 @@ CREATE TABLE `radius` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `schedule_jobs`
---
 
 DROP TABLE IF EXISTS `schedule_jobs`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -242,12 +204,9 @@ CREATE TABLE `schedule_jobs` (
   `job_type` varchar(20) DEFAULT 'python',
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `secrets`
---
 
 DROP TABLE IF EXISTS `secrets`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -262,12 +221,9 @@ CREATE TABLE `secrets` (
   `updated_at` datetime DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
---
--- Table structure for table `user`
---
 
 DROP TABLE IF EXISTS `user`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -292,4 +248,3 @@ CREATE TABLE `user` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*M!100616 SET NOTE_VERBOSITY=@OLD_NOTE_VERBOSITY */;
 
--- Dump completed on 2026-10-22 10:21:05
