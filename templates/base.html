@@ -6,6 +6,7 @@
     <title>{% block title %}NetPAC{% endblock %}</title>
     <link rel="stylesheet" id="markdownCss" href="{{ vendor('markdown_css', 'light') }}">
     <link rel="stylesheet" href="{{ vendor('highlightjs', 'css') }}">
+    <link rel="stylesheet" href="{{ vendor('inter', 'css') }}">
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css') }}">
     <link rel="stylesheet" href="{{ vendor('jetbrains_mono', 'css_italic') }}">
     <link rel="stylesheet" href="{{ static_file('styles.css') }}">
@@ -24,7 +25,7 @@
 <body class="dashboard-body" style="overflow-y: auto;">
 
     {% if session.get('default_pw_warning') %}
-    <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: #f59e0b; color: #000; text-align: center; padding: 8px 16px; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em;">
+    <div style="position: fixed; top: 0; left: 0; right: 0; z-index: 9999; background: #f59e0b; color: #000; text-align: center; padding: 8px 16px; font-size: 0.875rem; font-weight: 700; letter-spacing: 0.04em;">
         ⚠ You are using the default password —
         <a href="{{ url_for('settings') }}" style="color: #000; text-decoration: underline; font-weight: 800;">change it immediately in Settings</a>
     </div>
@@ -33,7 +34,9 @@
     <div class="sidebar" id="sidebar" style="{% if session.get('default_pw_warning') %}padding-top: 36px;{% endif %}">
         <div class="sidebar-header">
             <div style="display: flex; flex-direction: column; gap: 2px;">
-                <span class="sidebar-title">NetPAC V{{ app_version }}</span>
+                <a href="{{ url_for('dashboard') }}" class="sidebar-title-link" title="Dashboard">
+                    <span class="sidebar-title" data-text="NetPAC V{{ app_version }}">NetPAC V{{ app_version }}</span>
+                </a>
             </div>
             <button class="sidebar-toggle-inner" id="sidebarToggle" title="Toggle sidebar">
                 <span class="toggle-icon">☰</span>

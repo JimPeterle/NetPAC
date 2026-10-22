@@ -59,8 +59,8 @@
                     <tbody>
                         {% for script in top_scripts %}
                         <tr>
-                            <td style="color: var(--accent); font-size: 0.85rem;">{{ script[0] }}</td>
-                            <td style="text-align: right; color: var(--text-muted); font-size: 0.85rem;">{{ script[1] }} runs</td>
+                            <td style="color: var(--accent); font-size: 0.875rem;">{{ script[0] }}</td>
+                            <td style="text-align: right; color: var(--text-muted); font-size: 0.875rem;">{{ script[1] }} runs</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -83,8 +83,8 @@
                         {% for job in python_failed %}
                         <tr>
                             <td>
-                                <a href="{{ url_for('history_detail', job_id=job[0]) }}" style="color: var(--danger); font-size: 0.85rem;">{{ job[1] }}</a>
-                                <div style="font-size: 0.75rem; color: var(--text-muted);">{{ job[2].strftime('%Y-%m-%d %H:%M') if job[2] else '-' }}</div>
+                                <a href="{{ url_for('history_detail', job_id=job[0]) }}" style="color: var(--danger); font-size: 0.875rem;">{{ job[1] }}</a>
+                                <div style="font-size: 0.8rem; color: var(--text-muted);">{{ job[2].strftime('%Y-%m-%d %H:%M') if job[2] else '-' }}</div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -100,7 +100,7 @@
     <details class="content-card" style="margin-top: 1.5rem;">
         <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
             <h3 class="card-title">Instructions</h3>
-            <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+            <span class="details-arrow" style="font-size: 0.875rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
         </summary>
         <div class="card-body dashboard-markdown-block markdown-body" style="padding: 20px;">
             {{ md_python | safe }}
@@ -143,8 +143,8 @@
                     <tbody>
                         {% for pb in top_playbooks %}
                         <tr>
-                            <td style="color: var(--accent); font-size: 0.85rem;">{{ pb[0] }}</td>
-                            <td style="text-align: right; color: var(--text-muted); font-size: 0.85rem;">{{ pb[1] }} runs</td>
+                            <td style="color: var(--accent); font-size: 0.875rem;">{{ pb[0] }}</td>
+                            <td style="text-align: right; color: var(--text-muted); font-size: 0.875rem;">{{ pb[1] }} runs</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -167,8 +167,8 @@
                         {% for job in ansible_failed %}
                         <tr>
                             <td>
-                                <a href="{{ url_for('history_detail', job_id=job[0]) }}" style="color: var(--danger); font-size: 0.85rem;">{{ job[1] }}</a>
-                                <div style="font-size: 0.75rem; color: var(--text-muted);">{{ job[2].strftime('%Y-%m-%d %H:%M') if job[2] else '-' }}</div>
+                                <a href="{{ url_for('history_detail', job_id=job[0]) }}" style="color: var(--danger); font-size: 0.875rem;">{{ job[1] }}</a>
+                                <div style="font-size: 0.8rem; color: var(--text-muted);">{{ job[2].strftime('%Y-%m-%d %H:%M') if job[2] else '-' }}</div>
                             </td>
                         </tr>
                         {% endfor %}
@@ -184,7 +184,7 @@
     <details class="content-card" style="margin-top: 1.5rem;">
         <summary class="card-header" style="padding: 1.25rem 1.5rem; cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; align-items: center;">
             <h3 class="card-title">Instructions</h3>
-            <span class="details-arrow" style="font-size: 0.8rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
+            <span class="details-arrow" style="font-size: 0.875rem; color: var(--text-muted); transition: transform 0.2s;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>
         </summary>
         <div class="card-body dashboard-markdown-block markdown-body" style="padding: 20px;">
             {{ md_ansible | safe }}

@@ -32,9 +32,9 @@
                     <li class="group-item" style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
                         <a href="{{ url_for('hosts_by_group', group_id=group[0]) }}" class="group-link" style="flex: 1; display: flex; align-items: center; gap: 0.5rem;">
                             <span class="group-name">{{ group[1] }}</span>
-                            <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ group[2] }} host{{ 's' if group[2] != 1 else '' }}</span>
+                            <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ group[2] }} host{{ 's' if group[2] != 1 else '' }}</span>
                             {% if group[3] %}
-                            <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--accent);">Ansible vars</span>
+                            <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--accent);">Ansible vars</span>
                             {% endif %}
                         </a>
                         <button type="button" class="action-button action-button-secondary" title="Edit Ansible variables" onclick='openEditGroupModal({{ group[0] }}, {{ group[1]|tojson }}, {{ (group[3] or "")|tojson }})'>

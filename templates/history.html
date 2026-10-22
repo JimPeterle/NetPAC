@@ -53,7 +53,7 @@
                         <td>
                             {{ job.script_name }}
                             {% if job.dry_run %}
-                            <span style="background: var(--warning-dim); color: var(--warning); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: 0.4rem;">DRY</span>
+                            <span style="background: var(--warning-dim); color: var(--warning); font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 3px; margin-left: 0.4rem;">DRY</span>
                             {% endif %}
                         </td>
                         <td>{{ job.target if job.target else '-' }}</td>
@@ -97,7 +97,7 @@
             <a href="{{ url_for('history', page=page-1, search=search, mode=mode) }}" class="action-button action-button-secondary">‹ Prev</a>
             {% endif %}
 
-            <span style="color: var(--text-muted); font-size: 0.85rem;">Page {{ page }} of {{ total_pages }}</span>
+            <span style="color: var(--text-muted); font-size: 0.875rem;">Page {{ page }} of {{ total_pages }}</span>
 
             {% if page < total_pages %}
             <a href="{{ url_for('history', page=page+1, search=search, mode=mode) }}" class="action-button action-button-secondary">Next ›</a>

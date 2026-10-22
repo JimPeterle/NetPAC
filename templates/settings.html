@@ -219,15 +219,15 @@
                 <li class="host-item">
                     <div class="host-info" style="{% if not rule.is_active %}opacity: 0.5;{% endif %}">
                         <span class="host-name">{{ rule.name }}</span>
-                        <span style="background: var(--blue-dim); color: var(--blue); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px;">{{ 'Mail' if rule.channel == 'email' else 'Matrix' }}</span>
-                        <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.target }}</span>
+                        <span style="background: var(--blue-dim); color: var(--blue); font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px;">{{ 'Mail' if rule.channel == 'email' else 'Matrix' }}</span>
+                        <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.target }}</span>
                         {% for s in notify_statuses %}
                         {% if rule['on_' ~ s] %}
-                        <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.65rem; padding: 0.1rem 0.4rem; border-radius: 3px;">{{ s }}</span>
+                        <span style="background: var(--accent-dim); color: var(--accent); font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 3px;">{{ s }}</span>
                         {% endif %}
                         {% endfor %}
                         {% if rule.job_type and rule.job_type != 'all' %}
-                        <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.job_type }} only</span>
+                        <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.job_type }} only</span>
                         {% endif %}
                     </div>
 
@@ -454,14 +454,14 @@
                             <input type="radio" name="backup_type" value="hosts" checked style="accent-color: var(--accent);">
                             <div>
                                 <div style="font-weight: 600;">Hosts &amp; Groups only</div>
-                                <div style="font-size: 0.8rem; color: var(--text-muted);">hosts, host_groups, host_group_membership</div>
+                                <div style="font-size: 0.875rem; color: var(--text-muted);">hosts, host_groups, host_group_membership</div>
                             </div>
                         </label>
                         <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; flex: 1;">
                             <input type="radio" name="backup_type" value="full" style="accent-color: var(--accent);">
                             <div>
                                 <div style="font-weight: 600;">Full Database</div>
-                                <div style="font-size: 0.8rem; color: var(--text-muted);">All tables — complete backup</div>
+                                <div style="font-size: 0.875rem; color: var(--text-muted);">All tables — complete backup</div>
                             </div>
                         </label>
                     </div>
@@ -484,7 +484,7 @@
                     <div class="log-info" style="flex: 1;">
                         <div style="font-weight: 600; margin-bottom: 5px; color: var(--accent);">
                             {{ backup['name'] }}
-                            <span style="background: var(--bg-card); color: var(--text-muted); font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ backup['type'] }}</span>
+                            <span style="background: var(--bg-card); color: var(--text-muted); font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--border);">{{ backup['type'] }}</span>
                         </div>
                         <div style="font-size: 13px; color: var(--text-muted);">
                             Size: {{ "%.2f"|format(backup['size'] / 1024) }} KB | 

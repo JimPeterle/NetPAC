@@ -100,18 +100,27 @@
 /* ============================================================
    RESET & BASE
    ============================================================ */
+pre, code, kbd, samp {
+    font-family: var(--font-mono);
+}
+
 *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
 }
 
+:root {
+    --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, monospace;
+}
+
 html {
-    font-size: 15px;
+    font-size: 16px;
 }
 
 body {
-    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-family: var(--font-sans);
     background: var(--bg-main);
     color: var(--text-primary);
     min-height: 100vh;
@@ -164,14 +173,51 @@ body {
     min-height: 64px;
 }
 
+.sidebar-title-link {
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+}
+
+.sidebar-title-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+}
+
 .sidebar-title {
+    position: relative;
+    display: inline-block;
     font-size: 1rem;
-    font-weight: 700;
+    font-weight: 800;
     letter-spacing: 0.08em;
     color: var(--accent);
     white-space: nowrap;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.2s ease, color 0.25s ease-out;
     text-transform: uppercase;
+}
+
+.sidebar-title::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, #24eb5c 0%, #3b82f6 35%, #eab308 65%, #a855f7 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    opacity: 0;
+    transition: opacity 0.25s ease-out;
+    pointer-events: none;
+}
+
+.sidebar-title-link:hover .sidebar-title,
+.sidebar-title-link:focus-visible .sidebar-title {
+    color: transparent;
+    transition: opacity 0.2s ease, color 0.25s ease-in;
+}
+
+.sidebar-title-link:hover .sidebar-title::after,
+.sidebar-title-link:focus-visible .sidebar-title::after {
+    opacity: 1;
+    transition: opacity 0.25s ease-in;
 }
 
 .sidebar-nav {
@@ -192,9 +238,9 @@ body {
     padding: 11px 18px;
     color: var(--text-sidebar);
     text-decoration: none;
-    font-size: 0.8rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
+    font-size: 0.93rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
     white-space: nowrap;
     transition: color 0.15s ease, background 0.15s ease;
     border-left: 2px solid transparent;
@@ -243,7 +289,7 @@ body {
     color: var(--text-sidebar-active);
     cursor: pointer;
     font-family: inherit;
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     font-weight: 600;
     letter-spacing: 0.04em;
     transition: var(--transition);
@@ -291,7 +337,7 @@ body {
     padding: 10px 14px;
     color: var(--text-secondary);
     text-decoration: none;
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     font-weight: 500;
     letter-spacing: 0.03em;
     transition: var(--transition);
@@ -362,7 +408,7 @@ body {
     padding: 12px 16px;
     border-radius: var(--radius-sm);
     margin-bottom: 16px;
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     font-weight: 500;
     letter-spacing: 0.02em;
     border: 1px solid transparent;
@@ -432,7 +478,7 @@ body {
 }
 
 .page-subtitle {
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     color: var(--text-muted);
     letter-spacing: 0.04em;
 }
@@ -466,7 +512,7 @@ body {
 }
 
 .card-title {
-    font-size: 0.88rem;
+    font-size: 0.9rem;
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: 0.06em;
@@ -482,7 +528,7 @@ body {
     background: var(--accent-dim);
     color: var(--accent);
     border-radius: 20px;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 700;
     letter-spacing: 0.06em;
     border: 1px solid var(--accent);
@@ -503,7 +549,7 @@ body {
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     font-family: inherit;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     font-weight: 600;
     letter-spacing: 0.04em;
     cursor: pointer;
@@ -571,7 +617,7 @@ body {
 }
 
 .form-label {
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 700;
     color: var(--text-secondary);
     letter-spacing: 0.08em;
@@ -585,7 +631,7 @@ body {
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     font-family: inherit;
-    font-size: 0.82rem;
+    font-size: 0.875rem;
     color: var(--text-primary);
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
     outline: none;
@@ -610,7 +656,7 @@ select.form-input {
 }
 
 .form-hint {
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     color: var(--text-muted);
     letter-spacing: 0.02em;
 }
@@ -640,7 +686,7 @@ select.form-input {
     border: 1px solid var(--border-strong);
     border-radius: var(--radius-sm);
     font-family: inherit;
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     color: var(--text-primary);
     width: 260px;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
@@ -700,7 +746,7 @@ select.form-input {
 .stat-content { flex: 1; }
 
 .stat-title {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     font-weight: 700;
     color: var(--text-muted);
     letter-spacing: 0.1em;
@@ -725,7 +771,7 @@ select.form-input {
 .data-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.8rem;
+    font-size: 0.875rem;
 }
 
 .data-table thead {
@@ -735,7 +781,7 @@ select.form-input {
 .data-table thead th {
     padding: 12px 16px;
     text-align: left;
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
@@ -769,7 +815,7 @@ select.form-input {
 
 .data-table .action-button-small {
     padding: 5px 10px;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     border-radius: var(--radius-sm);
     background: var(--blue-dim);
     color: var(--blue);
@@ -800,7 +846,7 @@ select.form-input {
 }
 
 .table-empty-text {
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     color: var(--text-muted);
 }
 
@@ -813,7 +859,7 @@ select.form-input {
     gap: 5px;
     padding: 4px 10px;
     border-radius: 4px;
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -879,7 +925,7 @@ select.form-input {
 .host-info:hover { background: var(--bg-table-hover); }
 
 .host-name {
-    font-size: 0.85rem;
+    font-size: 0.875rem;
     font-weight: 600;
     color: var(--text-primary);
 }
@@ -919,7 +965,7 @@ select.form-input {
 }
 
 .group-name, .script-name {
-    font-size: 0.85rem;
+    font-size: 0.875rem;
     font-weight: 600;
     color: var(--text-primary);
 }
@@ -952,7 +998,7 @@ select.form-input {
 }
 
 .empty-text {
-    font-size: 0.8rem;
+    font-size: 0.875rem;
     color: var(--text-muted);
     margin-bottom: 20px;
 }
@@ -971,16 +1017,16 @@ select.form-input {
     color: #abb2bf !important;
     padding: 20px !important;
     margin: 0;
-    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
-    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
     line-height: 1.65;
     overflow-x: auto;
 }
 
 .script-code-viewer code {
     background: var(--bg-code) !important;
-    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
-    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
 }
 
 /* Highlight.js overrides */
@@ -1004,8 +1050,8 @@ select.form-input {
 
 .script-output-viewer pre {
     margin: 0;
-    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
-    font-size: 0.8rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
     color: var(--accent);
     line-height: 1.65;
     white-space: pre-wrap;
@@ -1042,7 +1088,7 @@ select.form-input {
 .job-info-col:last-child { border-right: none; }
 
 .job-info-label {
-    font-size: 0.65rem;
+    font-size: 0.75rem;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.12em;
@@ -1064,7 +1110,7 @@ select.form-input {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     text-align: center;
 }
 
@@ -1158,7 +1204,7 @@ select.form-input {
     border: 1px dashed var(--border-strong);
     color: var(--text-muted);
     font-family: inherit;
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     padding: 6px 10px;
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -1175,7 +1221,7 @@ select.form-input {
 }
 
 .var-max-hint {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
     text-align: right;
     margin-top: 4px;
@@ -1241,14 +1287,14 @@ select.form-input {
 .settings-info { flex: 1; }
 
 .settings-title {
-    font-size: 0.88rem;
+    font-size: 0.9rem;
     font-weight: 700;
     color: var(--text-primary);
     margin-bottom: 4px;
 }
 
 .settings-description {
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     color: var(--text-muted);
     line-height: 1.5;
 }
@@ -1304,7 +1350,7 @@ select.form-input {
 }
 
 .login-card-title {
-    font-size: 0.88rem;
+    font-size: 0.9rem;
     font-weight: 700;
     color: var(--text-primary);
     text-align: center;
@@ -1314,7 +1360,7 @@ select.form-input {
 }
 
 .login-card-subtitle {
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     color: var(--text-muted);
     text-align: center;
     margin-bottom: 24px;
@@ -1328,7 +1374,7 @@ select.form-input {
 }
 
 .login-form .form-label {
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     font-weight: 700;
     color: var(--text-secondary);
     letter-spacing: 0.1em;
@@ -1338,7 +1384,7 @@ select.form-input {
 }
 
 .login-form .form-input {
-    font-size: 0.85rem;
+    font-size: 0.875rem;
 }
 
 .auth-toggle {
@@ -1372,7 +1418,7 @@ select.form-input {
 }
 
 .auth-option-text {
-    font-size: 0.72rem;
+    font-size: 0.78rem;
     font-weight: 700;
     color: var(--text-secondary);
     letter-spacing: 0.06em;
@@ -1391,7 +1437,7 @@ select.form-input {
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     font-family: inherit;
-    font-size: 0.82rem;
+    font-size: 0.875rem;
     font-weight: 800;
     letter-spacing: 0.1em;
     text-transform: uppercase;
@@ -1420,7 +1466,7 @@ select.form-input {
     text-align: center;
     margin-top: 24px;
     color: var(--text-muted);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
@@ -1478,7 +1524,7 @@ select.form-input {
 }
 
 .error-description {
-    font-size: 0.82rem;
+    font-size: 0.875rem;
     color: var(--text-muted);
     margin-bottom: 28px;
     line-height: 1.6;
@@ -1498,7 +1544,7 @@ select.form-input {
     padding: 10px 20px;
     border-radius: var(--radius-sm);
     font-family: inherit;
-    font-size: 0.78rem;
+    font-size: 0.82rem;
     font-weight: 700;
     text-decoration: none;
     letter-spacing: 0.06em;
@@ -1531,7 +1577,7 @@ select.form-input {
     text-align: center;
     margin-top: 24px;
     color: var(--text-muted);
-    font-size: 0.68rem;
+    font-size: 0.75rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
@@ -1556,8 +1602,8 @@ select.form-input {
 }
 
 .dashboard-markdown-block code {
-    font-family: 'JetBrains Mono Variable', 'JetBrains Mono', monospace;
-    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
     background: none !important;
 }
 
@@ -1642,8 +1688,8 @@ select.form-input {
     border-radius: var(--radius-sm);
     color: var(--text-sidebar);
     font-family: inherit;
-    font-size: 0.72rem;
-    font-weight: 600;
+    font-size: 0.8rem;
+    font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;
     transition: var(--transition);
@@ -1673,7 +1719,7 @@ select.form-input {
 .code-content {
     margin: 0;
     padding: 1rem;
-    font-family: 'Courier New', 'Consolas', 'Monaco', monospace;
+    font-family: var(--font-mono);
     font-size: 14px;
     line-height: 1.5;
 }
@@ -1713,7 +1759,7 @@ select.form-input {
     color: var(--text-secondary);
     border-radius: 8px;
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 0.875rem;
     cursor: pointer;
     transition: all 0.15s ease;
 }

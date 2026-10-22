@@ -29,7 +29,7 @@
     <div class="card-header">
         <div>
             {% if current_path %}
-            <div style="font-size: 0.8rem; color: var(--text-muted, #64748b); margin-bottom: 0.25rem;">
+            <div style="font-size: 0.875rem; color: var(--text-muted, #64748b); margin-bottom: 0.25rem;">
                 <a href="{{ url_for('browse_playbooks') }}" style="color: var(--text-muted, #64748b);">Playbooks</a>
                 {% set ns = namespace(accumulated='') %}
                 {% for part in current_path.split('/') %}

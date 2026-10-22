@@ -53,5 +53,14 @@
         },
         "license": "LICENSE",
         "css_assets": true
+    },
+    "inter": {
+        "package": "@fontsource-variable/inter",
+        "version": "5.3.0",
+        "files": {
+            "css": "wght.css"
+        },
+        "license": "LICENSE",
+        "css_assets": true
     }
 }
