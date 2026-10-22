@@ -1023,6 +1023,24 @@ select.form-input {
     overflow-x: auto;
 }
 
+.ansi-bold { font-weight: 700; }
+.ansi-30 { color: #8b919a; }
+.ansi-31 { color: #f87171; }
+.ansi-32 { color: #4ade80; }
+.ansi-33 { color: #facc15; }
+.ansi-34 { color: #60a5fa; }
+.ansi-35 { color: #c084fc; }
+.ansi-36 { color: #22d3ee; }
+.ansi-37 { color: #e5e7eb; }
+.ansi-90 { color: #a1a7b0; }
+.ansi-91 { color: #fca5a5; }
+.ansi-92 { color: #86efac; }
+.ansi-93 { color: #fde047; }
+.ansi-94 { color: #93c5fd; }
+.ansi-95 { color: #d8b4fe; }
+.ansi-96 { color: #67e8f9; }
+.ansi-97 { color: #ffffff; }
+
 .script-code-viewer code {
     background: var(--bg-code) !important;
     font-family: var(--font-mono);
@@ -1807,34 +1825,4 @@ select.form-input {
 
 .password-toggle:hover {
     color: var(--text-primary);
-}
-
-/* ============================================================
-   EASTER EGG — click the version 5 times
-   ============================================================ */
-.sidebar-title {
-    cursor: default;
-    user-select: none;
-}
-
-/* Outer element moves horizontally, inner element hops (separate transforms) */
-.bunny-runner {
-    position: fixed;
-    left: 0;
-    top: 62vh;
-    z-index: 10001;
-    pointer-events: none;
-    will-change: transform;
-}
-
-.bunny-text {
-    display: inline-block;
-    font-size: 3rem;
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    color: var(--accent);
-    text-shadow: 0 6px 18px rgba(0,0,0,0.25);
-    transform-origin: 50% 100%;
-    white-space: nowrap;
-    will-change: transform;
 }

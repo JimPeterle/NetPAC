@@ -3125,7 +3125,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     output_script = ""
     status = "completed"
     temp_inventory = None
-    env = job_env(PYTHONUNBUFFERED='1', ANSIBLE_FORCE_COLOR='0', ANSIBLE_STDOUT_CALLBACK='default')
+    env = job_env(PYTHONUNBUFFERED='1', ANSIBLE_FORCE_COLOR='1', ANSIBLE_STDOUT_CALLBACK='default')
 
     ansible = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
 
@@ -3695,6 +3695,9 @@ def cancel_job(job_id):
 # --------------------
 #   Export history output as txt  
 # --------------------
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
 @app.route('/export_history_txt/<int:job_id>')
 @login_required
 def export_history_txt(job_id):
@@ -3714,8 +3717,7 @@ def export_history_txt(job_id):
     
     script_name, output = row
     
-    if not output:
-        output = "No output available."
+    output = ANSI_ESCAPE_RE.sub("", output or "") or "No output available."
     
     name = secure_filename(script_name)
     safe_name = name.replace(".py", "")

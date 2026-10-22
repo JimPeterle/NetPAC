@@ -62,7 +62,7 @@
 
     <div class="card-body" style="padding: 0;">
         <div class="script-code-viewer">
-            <pre id="liveOutputPre" style="{% if not job.output %}display:none;{% endif %}"><code id="liveOutputCode">{{ job.output or '' }}</code></pre>
+            <pre id="liveOutputPre" style="{% if not job.output %}display:none;{% endif %}"><code id="liveOutputCode" class="nohighlight">{{ job.output or '' }}</code></pre>
 
             <div id="noOutputPlaceholder" style="{% if job.output %}display:none;{% endif %} padding: 3rem; text-align: center; color: #6b7280;">
                 {% if job.status == 'running' %}
@@ -223,7 +223,13 @@
 {% endblock %}
 
 {% block extra_js %}
+<script src="{{ static_file('ansi.js') }}"></script>
 <script>
+    (function () {
+        const output = document.getElementById('liveOutputCode');
+        if (output) renderAnsi(output, output.textContent);
+    })();
+
     {% if job.status == 'running' %}
     function closeCancelModal() {
         document.getElementById('cancelModalOverlay').style.display = 'none';
@@ -271,7 +277,7 @@
             })
             .then(data => {
                 if (data.output) {
-                    document.getElementById('liveOutputCode').textContent = data.output;
+                    renderAnsi(document.getElementById('liveOutputCode'), data.output);
                     document.getElementById('liveOutputPre').style.display = '';
                     document.getElementById('noOutputPlaceholder').style.display = 'none';
                 }
