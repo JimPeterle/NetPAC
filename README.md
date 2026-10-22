@@ -151,7 +151,6 @@ CREATE TABLE `hosts` (
   PRIMARY KEY (`host_id`),
   UNIQUE KEY `hostname` (`hostname`)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -161,7 +160,6 @@ CREATE TABLE `host_groups` (
     `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
     `ansible_vars` TEXT DEFAULT NULL
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -172,7 +170,6 @@ CREATE TABLE `host_group_membership` (
     FOREIGN KEY (host_id) REFERENCES hosts(host_id) ON DELETE CASCADE,
     FOREIGN KEY (group_id) REFERENCES host_groups(group_id) ON DELETE CASCADE
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -199,7 +196,6 @@ CREATE TABLE `history_jobs` (
   KEY `idx_history_script_name` (`script_name`),
   KEY `idx_history_job_type` (`job_type`)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -218,7 +214,6 @@ CREATE TABLE `schedule_jobs` (
   PRIMARY KEY (`job_id`),
   KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -235,7 +230,6 @@ CREATE TABLE `playbook_templates` (
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `created_by` VARCHAR(255)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -248,7 +242,6 @@ CREATE TABLE `user` (
   `method` VARCHAR(10) DEFAULT NULL,
   PRIMARY KEY (`name`)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -267,7 +260,6 @@ CREATE TABLE IF NOT EXISTS `secrets` (
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -278,7 +270,6 @@ CREATE TABLE apscheduler_jobs (
     PRIMARY KEY (id),
     KEY ix_apscheduler_jobs_next_run_time (next_run_time)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -290,7 +281,6 @@ CREATE TABLE radius(
     timeout INT DEFAULT 5,
     CONSTRAINT single_row CHECK (id = 1)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -308,7 +298,6 @@ CREATE TABLE notification_rules (
   `created_by`    VARCHAR(100),
   `created_at`    DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 
@@ -325,7 +314,6 @@ CREATE TABLE notification_settings (
   `base_url`                VARCHAR(255),
   CONSTRAINT single_row_notif CHECK (id = 1)
 ) ENGINE=InnoDB
-AUTO_INCREMENT=1
 DEFAULT CHARSET=utf8mb4
 COLLATE=utf8mb4_unicode_ci;
 ```
