@@ -4410,7 +4410,9 @@ def parse_notification_rule_form():
     name = request.form.get("name", "").strip()
     channel = request.form.get("channel", "").strip()
     target = request.form.get("target", "").strip()
-    job_type = request.form.get("job_type", "all").strip()
+    type_python = bool(request.form.get("type_python"))
+    type_ansible = bool(request.form.get("type_ansible"))
+    job_type = "all" if type_python and type_ansible else "python" if type_python else "ansible" if type_ansible else None
     statuses = {s: 1 if request.form.get(f"on_{s}") else 0 for s in NOTIFY_STATUSES}
     is_active = 1 if request.form.get("is_active") else 0
 
@@ -4425,7 +4427,7 @@ def parse_notification_rule_form():
     if len(target) > 255:
         return None, "Target is too long (max. 255 characters)"
     if job_type not in NOTIFY_JOB_TYPES:
-        return None, "Invalid job type"
+        return None, "Select Python scripts, Ansible playbooks or both"
     if not any(statuses.values()):
         return None, "Select at least one status to notify on"
 
