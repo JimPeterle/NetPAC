@@ -273,6 +273,3 @@ purpose, as long as the license text is included. See [LICENSE](LICENSE).
 
 The third-party libraries and fonts in `static/vendor` keep their own licenses
 (their license files are included in each folder).
-
-The libraries in `static/vendor/` keep their own licenses (MIT, BSD-3-Clause, 
-SIL Open Font License); each license file is stored next to the library.
