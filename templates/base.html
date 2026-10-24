@@ -76,6 +76,9 @@
             <a href="{{ url_for('schedule') }}" class="sidebar-link {% if request.endpoint == 'schedule' %}active{% endif %}">
                 <span class="sidebar-text">Schedule</span>
             </a>
+            <a href="{{ url_for('audit_log_page') }}" class="sidebar-link {% if request.endpoint == 'audit_log_page' %}active{% endif %}">
+                <span class="sidebar-text">Audit</span>
+            </a>
             <a href="{{ url_for('secrets') }}" class="sidebar-link {% if request.endpoint in ['secrets', 'create_secret', 'edit_secret'] %}active{% endif %}">
                 <span class="sidebar-text">Secrets</span>
             </a>

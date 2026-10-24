@@ -1318,6 +1318,42 @@ select.form-input {
 }
 
 /* ============================================================
+   SURVEY FIELDS (playbook templates)
+   ============================================================ */
+.survey-field-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-table-head);
+}
+
+.survey-field-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.survey-field-required {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: normal;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.survey-launch-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+}
+
+/* ============================================================
    LOGIN PAGE
    ============================================================ */
 .login-body {

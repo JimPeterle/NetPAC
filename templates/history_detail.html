@@ -27,6 +27,11 @@
     <button type="button" id="tabBtnOutput" class="action-button action-button-primary" style="border-radius: 8px 8px 0 0; border-bottom: none;" onclick="switchTab('output')">
         Output
     </button>
+    {% if hosts %}
+    <button type="button" id="tabBtnHosts" class="action-button action-button-secondary" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: 0.6;" onclick="switchTab('hosts')">
+        Hosts{% if failed_hosts %} ({{ failed_hosts|length }} failed){% endif %}
+    </button>
+    {% endif %}
     <button type="button" id="tabBtnDetails" class="action-button action-button-secondary" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: 0.6;" onclick="switchTab('details')">
         Details
     </button>
@@ -82,6 +87,70 @@
         </div>
     </div>
 </div>
+
+{% if hosts %}
+<div id="tabHosts" class="content-card" style="display: none;">
+    <div class="card-header">
+        <h3 class="card-title">Results per Host</h3>
+        <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            {% set ok_count = hosts|selectattr('failed', 'equalto', 0)|selectattr('unreachable', 'equalto', 0)|list|length %}
+            <span class="status-badge status-success">{{ ok_count }} ok</span>
+            <span class="status-badge status-warning">{{ hosts|selectattr('changed')|list|length }} changed</span>
+            {% if failed_hosts %}
+            <span class="status-badge status-error">{{ failed_hosts|length }} failed / unreachable</span>
+            <form method="POST" action="{{ url_for('rerun_failed_hosts', job_id=job.job_id) }}" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="action-button action-button-primary">Re-run failed hosts</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Host</th>
+                        <th>Result</th>
+                        <th>ok</th>
+                        <th>changed</th>
+                        <th>unreachable</th>
+                        <th>failed</th>
+                        <th>skipped</th>
+                        <th>rescued</th>
+                        <th>ignored</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for h in hosts %}
+                    <tr>
+                        <td>{{ h.host }}</td>
+                        <td>
+                            {% if h.unreachable %}
+                            <span class="status-badge status-error">unreachable</span>
+                            {% elif h.failed %}
+                            <span class="status-badge status-error">failed</span>
+                            {% elif h.changed %}
+                            <span class="status-badge status-warning">changed</span>
+                            {% else %}
+                            <span class="status-badge status-success">ok</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ h.ok }}</td>
+                        <td>{{ h.changed }}</td>
+                        <td>{{ h.unreachable }}</td>
+                        <td>{{ h.failed }}</td>
+                        <td>{{ h.skipped }}</td>
+                        <td>{{ h.rescued }}</td>
+                        <td>{{ h.ignored }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <div id="tabDetails" class="content-card" style="display: none;">
     <div class="card-header">
@@ -243,29 +312,21 @@
     {% endif %}
 
     function switchTab(tab) {
-        const tabs = { output: 'tabOutput', details: 'tabDetails' };
+        const tabs = { output: ['tabOutput', 'tabBtnOutput'], hosts: ['tabHosts', 'tabBtnHosts'], details: ['tabDetails', 'tabBtnDetails'] };
 
-        Object.entries(tabs).forEach(([key, id]) => {
-            const el = document.getElementById(id);
-            if (key === tab) {
-                el.style.display = 'block';
-                anime.animate(el, {
-                    opacity: [0, 1],
-                    translateY: [8, 0],
-                    duration: 250,
-                    ease: 'outQuad'
-                });
-            } else {
-                el.style.display = 'none';
+        Object.entries(tabs).forEach(([key, [panelId, buttonId]]) => {
+            const panel = document.getElementById(panelId);
+            const button = document.getElementById(buttonId);
+            if (!panel || !button) return;
+            const active = key === tab;
+            panel.style.display = active ? 'block' : 'none';
+            if (active) {
+                anime.animate(panel, { opacity: [0, 1], translateY: [8, 0], duration: 250, ease: 'outQuad' });
             }
+            button.classList.toggle('action-button-primary', active);
+            button.classList.toggle('action-button-secondary', !active);
+            button.style.opacity = active ? '1' : '0.6';
         });
-
-        document.getElementById('tabBtnOutput').classList.toggle('action-button-primary', tab === 'output');
-        document.getElementById('tabBtnOutput').classList.toggle('action-button-secondary', tab !== 'output');
-        document.getElementById('tabBtnOutput').style.opacity = tab === 'output' ? '1' : '0.6';
-        document.getElementById('tabBtnDetails').classList.toggle('action-button-primary', tab === 'details');
-        document.getElementById('tabBtnDetails').classList.toggle('action-button-secondary', tab !== 'details');
-        document.getElementById('tabBtnDetails').style.opacity = tab === 'details' ? '1' : '0.6';
     }
 
     {% if job.status == 'running' %}

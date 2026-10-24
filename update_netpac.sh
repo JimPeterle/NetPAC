@@ -88,9 +88,5 @@ fi
 # ===================================
 
 echo ""
-print_warning "To check if database is up to date, run the following command and update your database if necessary:"
-echo "..................................................."
-echo "mariadb-dump -u <username> -p --no-data <database_name> | sed 's/ AUTO_INCREMENT=[0-9]*//' | grep -v '^--' > $APP_DIR/schema_production.sql"
-echo "diff $APP_DIR/schema_production.sql $APP_DIR/database/schema_pattern.sql"
-echo "rm $APP_DIR/schema_production.sql"
-echo "..................................................."
+print_status "Database changes are applied automatically when NetPAC starts (a backup is created first)."
+echo "Check the database state with: python3 $APP_DIR/netpac_migrations.py"

@@ -2,6 +2,7 @@
 #   Import library
 # --------------------
 from flask import Flask, render_template, request, redirect, url_for, flash, session, make_response, send_from_directory
+from flask import has_request_context
 from flask_login import LoginManager, login_user, login_required, logout_user, UserMixin, current_user
 from pyrad.client import Client, Timeout as RadiusTimeout
 from pyrad.dictionary import Dictionary
@@ -25,6 +26,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import re
 import threading
 import json
+import csv
 import hashlib
 import hmac
 import traceback
@@ -51,6 +53,7 @@ import urllib.error
 import smtplib
 import ssl
 from email.message import EmailMessage
+from netpac_migrations import run_migrations, MigrationError
 
 
 # --------------------
@@ -730,6 +733,63 @@ def get_db():
 
 
 # --------------------
+#   Database migrations
+# --------------------
+try:
+    run_migrations(get_db, logger, DB_CNF_FILE, BACKUP_DIR, db_database)
+except MigrationError as e:
+    logger.critical(f"Database migration failed — NetPAC can't start: {e}")
+    raise SystemExit(f"NetPAC: database migration failed: {e}")
+
+
+# --------------------
+#   Audit log
+# --------------------
+AUDIT_RETENTION_DAYS = 365
+
+
+def audit(action, target=None, details=None, user=None):
+    """Writes an entry to the audit log; never raises, so it can't break the action itself."""
+
+    try:
+        ip = None
+        if has_request_context():
+            ip = get_real_ip()
+            if user is None and current_user and current_user.is_authenticated:
+                user = current_user.id
+        conn = get_db()
+        cur = conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO audit_log (username, ip, action, target, details) VALUES (%s, %s, %s, %s, %s)",
+                (str(user or "-")[:100], ip, action, str(target)[:255] if target else None,
+                 str(details) if details else None)
+            )
+        finally:
+            cur.close()
+            conn.close()
+    except Exception as e:
+        logger.error(f"Audit log entry '{action}' failed: {e}")
+
+
+def cleanup_audit_log():
+    """Deletes audit log entries older than AUDIT_RETENTION_DAYS."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM audit_log WHERE created_at < DATE_SUB(NOW(), INTERVAL %s DAY)", (AUDIT_RETENTION_DAYS,))
+        conn.commit()
+        if cur.rowcount:
+            scheduler_logger.info(f"Audit log cleanup: {cur.rowcount} entries older than {AUDIT_RETENTION_DAYS} days deleted")
+    except Exception as e:
+        scheduler_logger.error(f"Audit log cleanup failed: {e}")
+    finally:
+        cur.close()
+        conn.close()
+
+
+# --------------------
 #   Schedule Config
 # --------------------
 jobstore_url = (f"mysql+pymysql://{urllib.parse.quote_plus(db_user or '')}:{urllib.parse.quote_plus(db_pw or '')}"
@@ -1290,6 +1350,7 @@ def login():
                 if row is None or not row[0]:
                     bcrypt.check_password_hash(DUMMY_PASSWORD_HASH, password)
                     logger.warning(f"Login attempt for non-existent or non-local user: {sanitize_log(username)} (IP: {get_real_ip()})")
+                    audit("login.failed", username, "unknown user or no local password", user=username)
                     flash("Invalid login details!", "danger")
                     return redirect(url_for("login"))
                 
@@ -1304,6 +1365,7 @@ def login():
                         return redirect(url_for("totp_verify"))
 
                 logger.warning(f"Failed login attempt from IP: {get_real_ip()}")
+                audit("login.failed", username, "wrong password", user=username)
                 flash("Invalid login details!", "danger")
                 
             except Exception as e:
@@ -1342,6 +1404,7 @@ def login():
 
                 if not radius_reply_is_authentic(req, reply, radius_secret):
                     logger.warning(f"RADIUS login rejected for '{sanitize_log(username)}': {RADIUS_MA_MISSING_HINT}")
+                    audit("login.failed", username, "RADIUS reply without valid Message-Authenticator", user=username)
                     flash("Login error occurred!", "danger")
                     return redirect(url_for("login"))
                 
@@ -1355,6 +1418,7 @@ def login():
 
                         if row is not None and row[1] != 'radius':
                             logger.warning(f"RADIUS login rejected for '{sanitize_log(username)}': name belongs to a {row[1]} account (IP: {get_real_ip()})")
+                            audit("login.failed", username, f"RADIUS name belongs to a {row[1]} account", user=username)
                             flash("Invalid login credentials", "danger")
                             return redirect(url_for("login"))
 
@@ -1380,6 +1444,7 @@ def login():
                         conn.close()
                 
                 logger.warning(f"Failed login attempt from IP: {get_real_ip()}")
+                audit("login.failed", username, "rejected by RADIUS", user=username)
                 flash("Invalid login credentials", "danger")
                 
             except RadiusTimeout:
@@ -1461,6 +1526,7 @@ def totp_setup():
             remember_auth_state(username)
             session.permanent = True
             logger.info(f"Successful TOTP setup and login: {sanitize_log(username)} (method: {method})")
+            audit("login.success", username, f"TOTP set up, method: {method}", user=username)
             return redirect(url_for("dashboard"))
         
         else:
@@ -1538,8 +1604,10 @@ def totp_verify():
             remember_auth_state(username)
             session.permanent = True
             logger.info(f"Successful login: {sanitize_log(username)} (method: {method})")
+            audit("login.success", username, f"method: {method}", user=username)
             return redirect(url_for("dashboard"))
         else:
+            audit("login.failed", username, "wrong or reused TOTP code", user=username)
             flash("Invalid or already used code — wait for the next code", "danger")
 
     return render_template("totp_verify.html")
@@ -1728,6 +1796,7 @@ def add_group():
         cur.execute("INSERT INTO host_groups (name, ansible_vars) VALUES (%s, %s)", (name, ansible_vars))
         conn.commit()
         logger.info(f"Group '{sanitize_log(name)}' created by {current_user.id}")
+        audit("group.create", name)
         flash(f"Group '{name}' created", "success")
     except pymysql.IntegrityError:
         flash(f"Group '{name}' already exists", "danger")
@@ -1763,6 +1832,7 @@ def edit_group(group_id):
         )
         conn.commit()
         logger.info(f"Group '{sanitize_log(row[0])}' updated by {current_user.id}")
+        audit("group.update", row[0])
         flash(f"Group '{row[0]}' updated", "success")
     except Exception as e:
         logger.error(f"Error updating group: {e}")
@@ -1797,6 +1867,7 @@ def delete_group():
         cur.execute("DELETE FROM host_groups WHERE group_id = %s", (group_id,))
         conn.commit()
         logger.info(f"Group '{sanitize_log(row[0])}' deleted by {current_user.id}")
+        audit("group.delete", row[0])
         flash(f"Group '{row[0]}' deleted", "success")
     except Exception as e:
         logger.error(f"Error deleting group: {e}")
@@ -1932,6 +2003,7 @@ def add_host():
 
         conn.commit()
         logger.info(f"Host '{sanitize_log(hostname)}' added with groups {group_ids} by {current_user.id}")
+        audit("host.create", hostname, f"groups: {group_ids}")
         flash(f"Host '{hostname}' added", "success")
 
     except pymysql.IntegrityError as e:
@@ -1985,6 +2057,7 @@ def update_host():
 
         conn.commit()
         logger.info(f"Host '{sanitize_log(original_hostname)}' updated (now '{sanitize_log(hostname)}', groups {group_ids}) by {current_user.id}")
+        audit("host.update", original_hostname, f"now: {hostname}, groups: {group_ids}")
         flash(f"Host '{hostname}' updated", "success")
 
     except Exception as e:
@@ -2027,6 +2100,7 @@ def bulk_update_hosts():
 
         conn.commit()
         logger.info(f"Bulk updated hosts {host_ids} with description '{sanitize_log(description)}' and groups {group_ids} by {current_user.id}")
+        audit("host.bulk_update", f"{len(host_ids)} hosts", f"description: {description!r}, groups: {group_ids}")
         flash(f"Bulk updated {len(host_ids)} hosts", "success")
 
     except Exception as e:
@@ -2059,6 +2133,7 @@ def toggle_host(host_id):
         conn.commit()
 
         logger.info(f"Host {host_id} {'deactivated' if row[0] else 'activated'} by {current_user.id}")
+        audit("host.toggle", str(host_id), "deactivated" if row[0] else "activated")
         flash("Host updated", "success")
 
     except HTTPException:
@@ -2095,6 +2170,7 @@ def delete_host():
         cur.execute("DELETE FROM hosts WHERE host_id = %s", (row[0],))
         conn.commit()
         logger.info(f"Host '{sanitize_log(hostname)}' deleted by {current_user.id}")
+        audit("host.delete", hostname)
 
     except Exception as e:
         logger.error(f"Error deleting host '{sanitize_log(hostname)}': {e}")
@@ -2261,6 +2337,7 @@ def run_script(subpath):
     thread.start()
 
     exec_logger.info(f"Script '{sanitize_log(safe_filename)}' started as job #{job_id} by {current_user.id}")
+    audit("job.start", safe_filename, f"job #{job_id}")
     flash(f"Script '{safe_filename}' started (Job #{job_id})", "success")
     return redirect(url_for("history", mode="python"))
 
@@ -2490,6 +2567,7 @@ def venv_install():
 
     if result.returncode == 0:
         logger.info(f"venv package '{package}' installed by {current_user.id}")
+        audit("venv.install", package)
         flash(f"Package '{package}' installed successfully", "success")
     else:
         logger.error(f"venv package '{package}' install failed (by {current_user.id}): {sanitize_log(result.stderr)}")
@@ -2523,6 +2601,7 @@ def venv_uninstall():
 
     if result.returncode == 0:
         logger.info(f"venv package '{sanitize_log(package)}' removed by {current_user.id}")
+        audit("venv.uninstall", package)
         flash(f"Package '{package}' removed", "success")
     else:
         logger.error(f"venv package '{sanitize_log(package)}' removal failed (by {current_user.id}): {sanitize_log(result.stderr)}")
@@ -2556,6 +2635,7 @@ def venv_update():
 
     if result.returncode == 0:
         logger.info(f"venv package '{sanitize_log(package)}' updated by {current_user.id}")
+        audit("venv.update", package)
         flash(f"Package '{package}' updated", "success")
     else:
         logger.error(f"venv package '{sanitize_log(package)}' update failed (by {current_user.id}): {sanitize_log(result.stderr)}")
@@ -2586,6 +2666,7 @@ def venv_update_all():
                 env=env
             )
         logger.info(f"venv: {len(outdated)} packages updated by {current_user.id}")
+        audit("venv.update_all", None, f"{len(outdated)} packages")
         flash(f"Updated {len(outdated)} packages", "success")
     else:
         logger.error(f"venv update check failed (by {current_user.id}): {sanitize_log(result.stderr)}")
@@ -2645,6 +2726,7 @@ def sync_scripts():
 
         if result.returncode == 0:
             logger.info(f"Git sync successful by {current_user.id}: {repo_url} @ {branch}")
+            audit("git.sync", repo_url, f"branch: {branch}")
             flash("Git sync successful", "success")
         else:
             safe_stderr = result.stderr.replace(token, "***") if token else result.stderr
@@ -2885,6 +2967,7 @@ def run_playbook(subpath):
     thread.start()
 
     exec_logger.info(f"Playbook '{sanitize_log(subpath)}' started as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
+    audit("job.start", subpath, f"job #{job_id}" + (" (dry run)" if dry_run else ""))
     flash(f"Playbook '{subpath}' started {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
@@ -2903,6 +2986,8 @@ def playbook_templates():
         cur.execute("SELECT template_id, name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, created_at, created_by FROM playbook_templates ORDER BY name")
         rows = cur.fetchall()
         templates = [dict(zip(['template_id','name','description','playbook_path','target','extra_vars','secret_1','secret_2','secret_3','created_at','created_by'], row)) for row in rows]
+        for template in templates:
+            template['fields'] = load_template_fields(cur, template['template_id'])
     finally:
         cur.close()
         conn.close()
@@ -2920,6 +3005,123 @@ def parse_playbook_target(form):
     if not target:
         return None, "Please enter a target or choose 'Run on the NetPAC server (localhost)'"
     return target, None
+
+
+FIELD_TYPES = ("text", "textarea", "number", "select", "multiselect", "boolean", "password")
+FIELD_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,99}\Z")
+MAX_TEMPLATE_FIELDS = 30
+REDACTED_VALUE = "********"
+
+
+def parse_template_fields(raw):
+    """Returns (fields, error) from the JSON sent by the survey field editor."""
+
+    try:
+        items = json.loads(raw or "[]")
+    except ValueError:
+        return None, "Survey fields could not be read"
+    if not isinstance(items, list) or len(items) > MAX_TEMPLATE_FIELDS:
+        return None, f"At most {MAX_TEMPLATE_FIELDS} survey fields are allowed"
+
+    fields, seen = [], set()
+    for item in items:
+        if not isinstance(item, dict):
+            return None, "Survey fields could not be read"
+        var_name = str(item.get("var_name", "")).strip()
+        field_type = str(item.get("field_type", "text"))
+        label = str(item.get("label", "")).strip()[:255] or var_name
+        options = [o.strip() for o in str(item.get("options", "")).splitlines() if o.strip()]
+        default = str(item.get("default_value", "")).strip()
+
+        if not FIELD_VAR_RE.match(var_name):
+            return None, f"Invalid variable name '{var_name}' (letters, digits and _ only, not starting with a digit)"
+        if var_name in seen:
+            return None, f"Variable '{var_name}' is used twice"
+        if field_type not in FIELD_TYPES:
+            return None, f"Invalid field type for '{var_name}'"
+        if field_type in ("select", "multiselect") and not options:
+            return None, f"Field '{var_name}' needs at least one option (one per line)"
+        if field_type == "number" and default:
+            try:
+                float(default)
+            except ValueError:
+                return None, f"Default value of '{var_name}' must be a number"
+        if field_type == "select" and default and default not in options:
+            return None, f"Default value of '{var_name}' must be one of its options"
+        if field_type == "password":
+            default = ""
+
+        seen.add(var_name)
+        fields.append({"var_name": var_name, "label": label, "field_type": field_type,
+                       "required": bool(item.get("required")), "default_value": default,
+                       "options": options})
+    return fields, None
+
+
+def load_template_fields(cur, template_id):
+    """Returns the survey fields of a template in display order."""
+
+    cur.execute("""
+        SELECT var_name, label, field_type, required, default_value, options
+        FROM template_fields WHERE template_id = %s ORDER BY sort_order, field_id
+    """, (template_id,))
+    return [{"var_name": r[0], "label": r[1], "field_type": r[2], "required": bool(r[3]),
+             "default_value": r[4] or "", "options": [o for o in (r[5] or "").splitlines() if o]}
+            for r in cur.fetchall()]
+
+
+def save_template_fields(cur, template_id, fields):
+    """Replaces the survey fields of a template."""
+
+    cur.execute("DELETE FROM template_fields WHERE template_id = %s", (template_id,))
+    for order, field in enumerate(fields):
+        cur.execute("""
+            INSERT INTO template_fields
+            (template_id, var_name, label, field_type, required, default_value, options, sort_order)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (template_id, field["var_name"], field["label"], field["field_type"], field["required"],
+              field["default_value"] or None, "\n".join(field["options"]) or None, order))
+
+
+def collect_survey_values(fields, form):
+    """Returns (values, error) for the survey fields submitted when launching a template."""
+
+    values = {}
+    for field in fields:
+        name, field_type = field["var_name"], field["field_type"]
+        key = f"field_{name}"
+
+        if field_type == "boolean":
+            values[name] = form.get(key) == "on"
+            continue
+        if field_type == "multiselect":
+            chosen = form.getlist(key)
+            if any(choice not in field["options"] for choice in chosen):
+                return None, f"Invalid choice for '{field['label']}'"
+            if field["required"] and not chosen:
+                return None, f"'{field['label']}' is required"
+            values[name] = chosen
+            continue
+
+        raw = form.get(key, "")
+        value = raw if field_type in ("textarea", "password") else raw.strip()
+        if not value:
+            if field["required"]:
+                return None, f"'{field['label']}' is required"
+            continue
+        if field_type == "number":
+            try:
+                number = float(value)
+            except ValueError:
+                return None, f"'{field['label']}' must be a number"
+            values[name] = int(number) if number.is_integer() else number
+        elif field_type == "select":
+            if value not in field["options"]:
+                return None, f"Invalid choice for '{field['label']}'"
+            values[name] = value
+        else:
+            values[name] = value
+    return values, None
 
 
 @app.route("/playbook_templates/create", methods=["POST"])
@@ -2944,16 +3146,24 @@ def create_playbook_template():
         flash(error, "danger")
         return redirect(url_for("playbook_templates"))
 
+    fields, error = parse_template_fields(request.form.get("fields_json"))
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("playbook_templates"))
+
     conn = get_db()
     cur = conn.cursor()
     try:
+        conn.begin()
         cur.execute("""
             INSERT INTO playbook_templates
             (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, created_by)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, current_user.id))
+        save_template_fields(cur, cur.lastrowid, fields)
         conn.commit()
         logger.info(f"Template '{sanitize_log(name)}' ({sanitize_log(playbook_path)}) created by {current_user.id}")
+        audit("template.create", name, f"playbook: {playbook_path}")
         flash(f"Template '{name}' created", "success")
     except Exception as e:
         conn.rollback()
@@ -2988,17 +3198,25 @@ def edit_playbook_template(template_id):
         flash(error, "danger")
         return redirect(url_for("playbook_templates"))
 
+    fields, error = parse_template_fields(request.form.get("fields_json"))
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("playbook_templates"))
+
     conn = get_db()
     cur = conn.cursor()
     try:
+        conn.begin()
         cur.execute("""
             UPDATE playbook_templates
             SET name=%s, description=%s, playbook_path=%s, target=%s,
                 extra_vars=%s, secret_1=%s, secret_2=%s, secret_3=%s
             WHERE template_id=%s
         """, (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, template_id))
+        save_template_fields(cur, template_id, fields)
         conn.commit()
         logger.info(f"Template {template_id} ('{sanitize_log(name)}') updated by {current_user.id}")
+        audit("template.update", name, f"playbook: {playbook_path}")
         flash(f"Template '{name}' updated", "success")
     except Exception as e:
         conn.rollback()
@@ -3022,6 +3240,7 @@ def delete_playbook_template(template_id):
         cur.execute("DELETE FROM playbook_templates WHERE template_id = %s", (template_id,))
         conn.commit()
         logger.info(f"Template {template_id} deleted by {current_user.id}")
+        audit("template.delete", f"#{template_id}")
         flash("Template deleted", "success")
     except Exception as e:
         conn.rollback()
@@ -3046,6 +3265,7 @@ def launch_playbook_template(template_id):
     try:
         cur.execute("SELECT name, playbook_path, target, extra_vars, secret_1, secret_2, secret_3 FROM playbook_templates WHERE template_id = %s", (template_id,))
         row = cur.fetchone()
+        fields = load_template_fields(cur, template_id) if row else []
     finally:
         cur.close()
         conn.close()
@@ -3075,10 +3295,17 @@ def launch_playbook_template(template_id):
         flash(f"Template '{name}' has no target. Edit it and enter a target or choose localhost explicitly.", "danger")
         return redirect(url_for("playbook_templates"))
 
-    extra_vars = parse_extra_vars(extra_vars_raw)
+    survey, error = collect_survey_values(fields, request.form)
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("playbook_templates"))
+
+    extra_vars = {**parse_extra_vars(extra_vars_raw), **survey}
     extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
-    variables = json.dumps({"extra_vars": extra_vars, "template": name})
+    secret_fields = [f["var_name"] for f in fields if f["field_type"] == "password" and f["var_name"] in survey]
+    stored_vars = {k: (REDACTED_VALUE if k in secret_fields else v) for k, v in extra_vars.items()}
+    variables = json.dumps({"extra_vars": stored_vars, "template": name, **({"redacted_fields": secret_fields} if secret_fields else {})})
     secrets_json = json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})
 
     conn = get_db()
@@ -3108,6 +3335,7 @@ def launch_playbook_template(template_id):
     thread.start()
 
     exec_logger.info(f"Template '{sanitize_log(name)}' launched as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
+    audit("template.launch", name, f"job #{job_id}" + (" (dry run)" if dry_run else ""))
     flash(f"Template '{name}' launched {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
@@ -3125,6 +3353,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     output_script = ""
     status = "completed"
     temp_inventory = None
+    temp_extra_vars = None
     env = job_env(PYTHONUNBUFFERED='1', ANSIBLE_FORCE_COLOR='1', ANSIBLE_STDOUT_CALLBACK='default')
 
     ansible = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
@@ -3236,7 +3465,10 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         args = [ansible, playbook_path, '-i', temp_inventory]
 
         if extra_vars_str:
-            args += ['-e', extra_vars_str]
+            fd, temp_extra_vars = tempfile.mkstemp(prefix="netpac_extra_vars_", suffix=".json")
+            with os.fdopen(fd, "w") as f:
+                f.write(extra_vars_str)
+            args += ['-e', f"@{temp_extra_vars}"]
 
         if dry_run:
             args += ['--check', '--diff']
@@ -3287,6 +3519,8 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     finally:
         if temp_inventory and os.path.exists(temp_inventory):
             os.remove(temp_inventory)
+        if temp_extra_vars and os.path.exists(temp_extra_vars):
+            os.remove(temp_extra_vars)
 
         end_time = datetime.now()
         duration = int((end_time - start_time).total_seconds())
@@ -3375,6 +3609,7 @@ def ansible_collections_install():
 
     if result.returncode == 0:
         logger.info(f"Ansible collection '{collection}' installed by {current_user.id}")
+        audit("collection.install", collection)
         flash(f"Collection '{collection}' installed", "success")
     else:
         logger.error(f"Ansible collection '{collection}' install failed (by {current_user.id}): {sanitize_log(result.stderr)}")
@@ -3410,6 +3645,7 @@ def ansible_collections_uninstall():
 
     if removed:
         logger.info(f"Ansible collection '{collection}' removed by {current_user.id}")
+        audit("collection.uninstall", collection)
         flash(f"Collection '{collection}' removed", "success")
     else:
         flash(f"Collection '{collection}' not found in user-installed collections (may be a system package)", "danger")
@@ -3439,6 +3675,7 @@ def ansible_collections_update():
 
     if result.returncode == 0:
         logger.info(f"Ansible collection '{collection}' updated by {current_user.id}")
+        audit("collection.update", collection)
         flash(f"Collection '{collection}' updated", "success")
     else:
         logger.error(f"Ansible collection '{collection}' update failed (by {current_user.id}): {sanitize_log(result.stderr)}")
@@ -3473,6 +3710,7 @@ def ansible_collections_update_all():
                     )
                     count += 1
             logger.info(f"Ansible: {count} collections updated by {current_user.id}")
+            audit("collection.update_all", None, f"{count} collections")
             flash(f"Updated {count} collections", "success")
         except Exception as e:
             logger.error(f"Ansible collection update failed (by {current_user.id}): {e}")
@@ -3613,7 +3851,106 @@ def history_detail(job_id):
         'dry_run': bool(row[12]) if len(row) > 12 else False
     }
     
-    return render_template("history_detail.html", job=job)
+    hosts = parse_play_recap(job['output']) if job['job_type'] == 'ansible' and job['status'] != 'running' else []
+    hosts.sort(key=lambda h: (-(h['failed'] + h['unreachable']), -h['changed'], h['host']))
+    failed_hosts = [h['host'] for h in hosts if h['failed'] or h['unreachable']]
+
+    return render_template("history_detail.html", job=job, hosts=hosts, failed_hosts=failed_hosts)
+
+
+RECAP_LINE_RE = re.compile(
+    r"^(?P<host>\S+)\s*:\s*ok=(?P<ok>\d+)\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)"
+    r"\s+failed=(?P<failed>\d+)(?:\s+skipped=(?P<skipped>\d+))?(?:\s+rescued=(?P<rescued>\d+))?(?:\s+ignored=(?P<ignored>\d+))?"
+)
+
+
+def parse_play_recap(output):
+    """Returns the per-host results from the PLAY RECAP of an Ansible output."""
+
+    text = ANSI_ESCAPE_RE.sub("", output or "")
+    start = text.rfind("PLAY RECAP")
+    if start == -1:
+        return []
+    results = []
+    for line in text[start:].splitlines()[1:]:
+        match = RECAP_LINE_RE.match(line.strip())
+        if match:
+            values = match.groupdict()
+            results.append({"host": values.pop("host"), **{k: int(v or 0) for k, v in values.items()}})
+    return results
+
+
+@app.route("/history/<int:job_id>/rerun_failed", methods=["POST"])
+@login_required
+def rerun_failed_hosts(job_id):
+    """Starts the playbook of a job again, limited to the hosts that failed or were unreachable."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT script_name, variables, credential, job_type, ansible_dry_run, status, output
+            FROM history_jobs WHERE job_id = %s
+        """, (job_id,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not row:
+        abort(404)
+
+    script_name, variables_raw, credential, job_type, dry_run, status, output = row
+    if job_type != 'ansible' or status == 'running':
+        flash("Only finished playbook jobs can be re-run for failed hosts", "warning")
+        return redirect(url_for("history_detail", job_id=job_id))
+
+    variables = json.loads(variables_raw) if variables_raw else {}
+    if variables.get("redacted_fields"):
+        flash("This job used password fields, which are not stored — launch the template again instead", "warning")
+        return redirect(url_for("history_detail", job_id=job_id))
+
+    failed_hosts = [h['host'] for h in parse_play_recap(output) if h['failed'] or h['unreachable']]
+    if not failed_hosts:
+        flash("This job has no failed or unreachable hosts", "warning")
+        return redirect(url_for("history_detail", job_id=job_id))
+
+    reap_stale_jobs()
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (script_name,))
+        if cur.fetchone()[0] > 0:
+            flash(f"Playbook '{script_name}' is already running.", "danger")
+            return redirect(url_for("history_detail", job_id=job_id))
+
+        target = ",".join(failed_hosts)
+        extra_vars = variables.get("extra_vars") or {}
+        cur.execute("""
+            INSERT INTO history_jobs
+            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run)
+            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible', %s)
+        """, (script_name, current_user.id, target, json.dumps({**variables, "rerun_of": job_id}), credential, dry_run))
+        conn.commit()
+        new_job_id = cur.lastrowid
+    finally:
+        cur.close()
+        conn.close()
+
+    secrets = json.loads(credential) if credential else {}
+    thread = threading.Thread(
+        target=execute_playbook_background,
+        args=(new_job_id, script_name, target, json.dumps(extra_vars) if extra_vars else "",
+              secrets.get("secret_1", ""), secrets.get("secret_2", ""), secrets.get("secret_3", ""), bool(dry_run))
+    )
+    thread.daemon = True
+    thread.start()
+
+    exec_logger.info(f"Playbook '{sanitize_log(script_name)}' re-run for failed hosts of job #{job_id} as job #{new_job_id} by {current_user.id}")
+    audit("job.rerun_failed", script_name, f"job #{new_job_id} from #{job_id}: {target}")
+    flash(f"Re-running {len(failed_hosts)} failed host(s) as job #{new_job_id}", "success")
+    return redirect(url_for("history_detail", job_id=new_job_id))
 
 
 @app.route("/history/<int:job_id>/status")
@@ -3684,6 +4021,7 @@ def cancel_job(job_id):
         notify_job_finished(job_id)
 
         exec_logger.info(f"Job {job_id} (PID {pid}) cancelled by {current_user.id}")
+        audit("job.cancel", f"job #{job_id}")
         flash(f"Job #{job_id} cancelled", "success")
     finally:
         cur.close()
@@ -3726,6 +4064,102 @@ def export_history_txt(job_id):
     response = make_response(output)
     response.headers["Content-Type"] = "text/plain; charset=utf-8"
     response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+    return response
+
+
+# ---------------------
+#   Audit log
+# ---------------------
+AUDIT_PAGE_SIZE = 100
+AUDIT_EXPORT_LIMIT = 50000
+
+
+def audit_filters(args):
+    """Returns (where clause, params, filter values) for the audit log filters."""
+
+    values = {key: args.get(key, "").strip() for key in ("user", "action", "search", "date_from", "date_to")}
+    where, params = [], []
+    if values["user"]:
+        where.append("username = %s")
+        params.append(values["user"])
+    if values["action"]:
+        where.append("action LIKE %s")
+        params.append(values["action"] + "%")
+    if values["search"]:
+        where.append("(target LIKE %s OR details LIKE %s OR ip LIKE %s)")
+        params += [f"%{values['search']}%"] * 3
+    for key, op in (("date_from", ">="), ("date_to", "<")):
+        if values[key]:
+            try:
+                day = datetime.strptime(values[key], "%Y-%m-%d")
+            except ValueError:
+                values[key] = ""
+                continue
+            where.append(f"created_at {op} %s")
+            params.append(day + timedelta(days=1) if key == "date_to" else day)
+    return ("WHERE " + " AND ".join(where)) if where else "", params, values
+
+
+@app.route("/audit")
+@login_required
+def audit_log_page():
+    """Audit log with filters and pagination."""
+
+    page = max(1, request.args.get("page", 1, type=int))
+    where, params, filters = audit_filters(request.args)
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"SELECT COUNT(*) FROM audit_log {where}", params)
+        total = cur.fetchone()[0]
+        cur.execute(f"""
+            SELECT created_at, username, ip, action, target, details FROM audit_log {where}
+            ORDER BY id DESC LIMIT %s OFFSET %s
+        """, params + [AUDIT_PAGE_SIZE, (page - 1) * AUDIT_PAGE_SIZE])
+        entries = [dict(zip(["created_at", "username", "ip", "action", "target", "details"], row)) for row in cur.fetchall()]
+        cur.execute("SELECT DISTINCT username FROM audit_log ORDER BY username")
+        users = [row[0] for row in cur.fetchall()]
+        cur.execute("SELECT DISTINCT SUBSTRING_INDEX(action, '.', 1) FROM audit_log ORDER BY 1")
+        action_groups = [row[0] for row in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+    return render_template("audit.html", entries=entries, total=total, page=page,
+                           total_pages=max(1, (total + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE),
+                           filters=filters, users=users, action_groups=action_groups,
+                           retention_days=AUDIT_RETENTION_DAYS)
+
+
+@app.route("/audit/export")
+@login_required
+def export_audit_csv():
+    """Downloads the filtered audit log as CSV."""
+
+    where, params, _ = audit_filters(request.args)
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            SELECT created_at, username, ip, action, target, details FROM audit_log {where}
+            ORDER BY id DESC LIMIT %s
+        """, params + [AUDIT_EXPORT_LIMIT])
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["time", "user", "ip", "action", "target", "details"])
+    for row in rows:
+        writer.writerow([row[0].strftime("%Y-%m-%d %H:%M:%S")] + [value if value is not None else "" for value in row[1:]])
+
+    audit("audit.export", None, f"{len(rows)} entries")
+    response = make_response(buffer.getvalue())
+    response.headers["Content-Type"] = "text/csv; charset=utf-8"
+    response.headers["Content-Disposition"] = f"attachment; filename=netpac_audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     return response
 
 
@@ -3836,6 +4270,7 @@ def add_schedule():
                               secrets_json, use_venv, job_type, schedule)
         conn.commit()
         logger.info(f"Schedule #{cron_id} ({sanitize_log(script_name)}, '{schedule}') added by {current_user.id}")
+        audit("schedule.create", script_name, f"#{cron_id}, {schedule}")
         flash("Schedule added", "success")
 
     except Exception as e:
@@ -3879,6 +4314,7 @@ def toggle_schedule(cron_id):
                 scheduler_logger.error(f"Could not remove job {cron_id}: {e}")
 
         logger.info(f"Schedule #{cron_id} {'activated' if new_status else 'deactivated'} by {current_user.id}")
+        audit("schedule.toggle", f"#{cron_id}", "activated" if new_status else "deactivated")
         flash("Schedule updated", "success")
 
     except HTTPException:
@@ -3911,6 +4347,7 @@ def delete_schedule(cron_id):
             pass
 
         logger.info(f"Schedule #{cron_id} deleted by {current_user.id}")
+        audit("schedule.delete", f"#{cron_id}")
         flash("Schedule deleted", "success")
 
     except Exception as e:
@@ -4044,6 +4481,7 @@ def save_git_config():
                 "token_encrypted": token_encrypted
             }, f)
         logger.info(f"Git config saved by {current_user.id}: {repo_url} @ {branch}")
+        audit("git.config_save", repo_url, f"branch: {branch}")
         flash("Git config saved!", "success")
     except Exception as e:
         logger.error(f"Error saving git config: {e}")
@@ -4153,6 +4591,7 @@ def change_password():
         remember_auth_state(current_user.id)
         flash("Password changed successfully — all other sessions have been logged out", "success")
         logger.info(f"Password changed for user: {current_user.id}")
+        audit("user.password_change", current_user.id)
 
     except Exception as e:
         logger.error(f"Error changing password: {e}")
@@ -4207,6 +4646,7 @@ def add_user():
         conn.commit()
         flash(f"User '{sanitize_log(username)}' created successfully", "success")
         logger.info(f"User '{sanitize_log(username)}' created by {current_user.id}")
+        audit("user.create", username)
 
     except Exception as e:
         logger.error(f"Error creating user: {e}")
@@ -4241,6 +4681,7 @@ def delete_user():
         conn.commit()
         flash(f"User '{sanitize_log(username)}' deleted successfully", "success")
         logger.info(f"User '{sanitize_log(username)}' deleted by {current_user.id}")
+        audit("user.delete", username)
 
     except Exception as e:
         logger.error(f"Error deleting user: {e}")
@@ -4302,6 +4743,7 @@ def save_radius_config():
         """, (server_host, server_port, encrypted_secret, timeout))
         conn.commit()
         logger.info(f"RADIUS config updated by {current_user.id}")
+        audit("radius.config_save", server_host)
         flash("RADIUS configuration saved", "success")
     except Exception as e:
         logger.error(f"Error saving RADIUS config: {e}")
@@ -4367,6 +4809,7 @@ def test_radius_config():
 
         if reply.code == pyrad.packet.AccessAccept:
             logger.info(f"RADIUS test successful for user '{sanitize_log(test_username)}' by {current_user.id}")
+            audit("radius.test", test_username, "Access-Accept")
             return jsonify({"success": True, "message": f"Access-Accept received for '{test_username}'"})
         else:
             return jsonify({"success": False, "message": f"Access-Reject received for '{test_username}'"})
@@ -4500,6 +4943,7 @@ def save_notification_settings():
               matrix_homeserver, matrix_token_enc, base_url))
         conn.commit()
         logger.info(f"Notification settings updated by {current_user.id}")
+        audit("notification.settings_save")
         flash("Notification settings saved", "success")
     except Exception as e:
         logger.error(f"Error saving notification settings: {e}")
@@ -4533,6 +4977,7 @@ def create_notification_rule():
               data['on_timeout'], data['on_cancelled'], data['job_type'], data['is_active'], current_user.id))
         conn.commit()
         logger.info(f"Notification rule '{sanitize_log(data['name'])}' created by {current_user.id}")
+        audit("notification.rule_create", data["name"], f"{data['channel']}: {data['target']}")
         flash(f"Notification rule '{data['name']}' created", "success")
     except Exception as e:
         logger.error(f"Error creating notification rule: {e}")
@@ -4572,6 +5017,7 @@ def edit_notification_rule(rule_id):
               data['on_timeout'], data['on_cancelled'], data['job_type'], data['is_active'], rule_id))
         conn.commit()
         logger.info(f"Notification rule {rule_id} ('{sanitize_log(data['name'])}') updated by {current_user.id}")
+        audit("notification.rule_update", data["name"], f"{data['channel']}: {data['target']}")
         flash(f"Notification rule '{data['name']}' updated", "success")
     except Exception as e:
         logger.error(f"Error updating notification rule {rule_id}: {e}")
@@ -4598,6 +5044,7 @@ def toggle_notification_rule(rule_id):
             flash("Notification rule not found", "danger")
         else:
             logger.info(f"Notification rule {rule_id} toggled by {current_user.id}")
+            audit("notification.rule_toggle", f"#{rule_id}")
     except Exception as e:
         logger.error(f"Error toggling notification rule {rule_id}: {e}")
         conn.rollback()
@@ -4623,6 +5070,7 @@ def delete_notification_rule(rule_id):
             flash("Notification rule not found", "danger")
         else:
             logger.info(f"Notification rule {rule_id} deleted by {current_user.id}")
+            audit("notification.rule_delete", f"#{rule_id}")
             flash("Notification rule deleted", "success")
     except Exception as e:
         logger.error(f"Error deleting notification rule {rule_id}: {e}")
@@ -4662,6 +5110,7 @@ def test_notification_rule(rule_id):
     try:
         send_notification(cfg, channel, target, subject, body, html_body, f"netpac-test-{uuid.uuid4().hex}")
         logger.info(f"Test notification for rule {rule_id} ({channel}) sent by {current_user.id}")
+        audit("notification.rule_test", name, f"{channel}: {target}")
         flash(f"Test notification sent to {target}", "success")
     except Exception as e:
         logger.error(f"Test notification for rule {rule_id} ({channel}) failed: {sanitize_log(repr(e))}")
@@ -4750,6 +5199,7 @@ def upload_ssl_cert():
         os.chmod(key_path, 0o640)
 
         logger.info(f"SSL certificate updated by {current_user.id}")
+        audit("ssl.upload")
         flash("Certificate uploaded successfully. Restart nginx to apply: sudo systemctl reload nginx", "success")
 
     except Exception as e:
@@ -4894,6 +5344,7 @@ def create_secret():
             conn.commit()
             
             logger.info(f"Secret '{sanitize_log(name)}' created by {current_user.id}")
+            audit("secret.create", name)
             flash(f"Secret '{name}' successfully created!", "success")
             return redirect(url_for("secrets"))
 
@@ -4971,6 +5422,7 @@ def edit_secret(secret_id):
                 
                 conn.commit()
                 logger.info(f"Secret '{sanitize_log(name)}' (ID: {secret_id}) updated by {current_user.id}")
+                audit("secret.update", name, "password changed" if new_password else None)
                 flash(f"Secret '{name}' has been updated", "success")
 
                 if name != secret['name']:
@@ -5028,6 +5480,7 @@ def delete_secret(secret_id):
         conn.commit()
         
         logger.info(f"Secret '{sanitize_log(secret_name)}' (ID: {secret_id}) deleted by {current_user.id}")
+        audit("secret.delete", secret_name)
         flash(f"Secret '{secret_name}' was deleted", "success")
 
         usages = find_secret_usages(cur, secret_name)
@@ -5147,6 +5600,7 @@ def create_backup():
     thread.start()
 
     logger.info(f"Backup started by {current_user.id}: {filename} ({backup_type})")
+    audit("backup.create", filename, backup_type)
     flash(f"Backup '{filename}' is being created in the background — refresh in a moment to see it in the list", "success")
 
     return redirect(url_for("settings", tab="backup"))
@@ -5171,6 +5625,7 @@ def download_backup(filename):
     if not os.path.exists(file_path):
         abort(404)
 
+    audit("backup.download", safe_filename)
     return send_from_directory(backup_dir, safe_filename, as_attachment=True)
 
 
@@ -5195,6 +5650,7 @@ def delete_backup():
         if os.path.exists(file_path):
             os.remove(file_path)
             logger.info(f"Backup '{safe_filename}' deleted by {current_user.id}")
+            audit("backup.delete", safe_filename)
             flash(f"Backup '{safe_filename}' deleted", "success")
         else:
             flash("Backup not found", "warning")
@@ -5248,6 +5704,7 @@ def restore_backup():
 
     if not bcrypt.check_password_hash(stored_hash, password):
         logger.warning(f"Failed restore attempt by {current_user.id}: wrong password")
+        audit("backup.restore_failed", safe_filename, "wrong password")
         flash("Incorrect password", "danger")
         return redirect(url_for("settings", tab="backup"))
 
@@ -5267,6 +5724,7 @@ def restore_backup():
 
     if not code_ok:
         logger.warning(f"Failed restore attempt by {current_user.id}: wrong TOTP code")
+        audit("backup.restore_failed", safe_filename, "wrong TOTP code")
         flash("Incorrect or already used TOTP code — wait for the next code", "danger")
         return redirect(url_for("settings", tab="backup"))
 
@@ -5325,6 +5783,7 @@ def restore_backup():
 
     if ok:
         logger.info(f"Restore completed by {current_user.id} from backup: {safe_filename}")
+        audit("backup.restore", safe_filename)
         flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: sudo systemctl restart netpac", "success")
         return redirect(url_for("settings", tab="backup"))
 
@@ -5593,6 +6052,7 @@ def apple_touch_icon():
 def logout():
     """Logs out and clears the session."""
 
+    audit("logout")
     logout_user()
     session.clear()
     flash("Logged out", "success")
