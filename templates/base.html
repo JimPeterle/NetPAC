@@ -52,37 +52,52 @@
         </div>
         
         <nav class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
+            <div class="sidebar-section"><span class="sidebar-text">Overview</span></div>
+            <a href="{{ url_for('dashboard') }}" class="sidebar-link {% if request.endpoint == 'dashboard' %}active{% endif %}" title="Dashboard">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
                 <span class="sidebar-text">Dashboard</span>
             </a>
-            <a href="{{ url_for('hosts') }}" class="sidebar-link {% if request.endpoint in ['hosts', 'hosts_by_group'] %}active{% endif %}">
+            <div class="sidebar-section"><span class="sidebar-text">Inventory</span></div>
+            <a href="{{ url_for('hosts') }}" class="sidebar-link {% if request.endpoint in ['hosts', 'hosts_by_group'] %}active{% endif %}" title="Hosts">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><line x1="7" y1="7.5" x2="7.01" y2="7.5"/><line x1="7" y1="16.5" x2="7.01" y2="16.5"/></svg>
                 <span class="sidebar-text">Hosts</span>
             </a>
-            <a href="{{ url_for('groups') }}" class="sidebar-link {% if request.endpoint == 'groups' %}active{% endif %}">
+            <a href="{{ url_for('groups') }}" class="sidebar-link {% if request.endpoint == 'groups' %}active{% endif %}" title="Groups">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 3 21 8 12 13 3 8 12 3"/><polyline points="3 12.5 12 17.5 21 12.5"/><polyline points="3 17 12 22 21 17"/></svg>
                 <span class="sidebar-text">Groups</span>
             </a>
-            <a href="{{ url_for('scripts') }}" class="sidebar-link mode-python {% if request.endpoint in ['scripts', 'view_script', 'run_script'] %}active{% endif %}">
+            <div class="sidebar-section"><span class="sidebar-text">Automation</span></div>
+            <a href="{{ url_for('scripts') }}" class="sidebar-link mode-python {% if request.endpoint in ['scripts', 'view_script', 'run_script'] %}active{% endif %}" title="Scripts">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="8 7 3 12 8 17"/><polyline points="16 7 21 12 16 17"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
                 <span class="sidebar-text">Scripts</span>
             </a>
-            <a href="{{ url_for('browse_playbooks') }}" class="sidebar-link mode-ansible {% if request.endpoint in ['browse_playbooks', 'view_playbook_graph'] %}active{% endif %}">
+            <a href="{{ url_for('browse_playbooks') }}" class="sidebar-link mode-ansible {% if request.endpoint in ['browse_playbooks', 'view_playbook_graph'] %}active{% endif %}" title="Playbooks">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polygon points="10 8.5 15.5 12 10 15.5 10 8.5"/></svg>
                 <span class="sidebar-text">Playbooks</span>
             </a>
-            <a href="{{ url_for('playbook_templates') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'playbook_templates' %}active{% endif %}">
+            <a href="{{ url_for('playbook_templates') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'playbook_templates' %}active{% endif %}" title="Templates">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><polyline points="14 3 14 8 19 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
                 <span class="sidebar-text">Templates</span>
             </a>
-            <a href="#" onclick="navigateWithMode('{{ url_for('history') }}'); return false;" class="sidebar-link {% if request.endpoint in ['history', 'history_detail'] %}active{% endif %}">
-                <span class="sidebar-text">History</span>
-            </a>
-            <a href="{{ url_for('schedule') }}" class="sidebar-link {% if request.endpoint == 'schedule' %}active{% endif %}">
+            <a href="{{ url_for('schedule') }}" class="sidebar-link {% if request.endpoint == 'schedule' %}active{% endif %}" title="Schedule">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="1.5"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="3" x2="8" y2="7"/><line x1="16" y1="3" x2="16" y2="7"/></svg>
                 <span class="sidebar-text">Schedule</span>
             </a>
-            <a href="{{ url_for('secrets') }}" class="sidebar-link {% if request.endpoint in ['secrets', 'create_secret', 'edit_secret'] %}active{% endif %}">
+            <a href="#" onclick="navigateWithMode('{{ url_for('history') }}'); return false;" class="sidebar-link {% if request.endpoint in ['history', 'history_detail'] %}active{% endif %}" title="History">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 3 3 8 8 8"/><polyline points="12 7 12 12 15 14"/></svg>
+                <span class="sidebar-text">History</span>
+            </a>
+            <div class="sidebar-section"><span class="sidebar-text">Configuration</span></div>
+            <a href="{{ url_for('secrets') }}" class="sidebar-link {% if request.endpoint in ['secrets', 'create_secret', 'edit_secret'] %}active{% endif %}" title="Secrets">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><line x1="10.8" y1="12.2" x2="20" y2="3"/><line x1="17" y1="6" x2="20" y2="9"/><line x1="14.5" y1="8.5" x2="16.5" y2="10.5"/></svg>
                 <span class="sidebar-text">Secrets</span>
             </a>
-            <a href="{{ url_for('venv_manager') }}" class="sidebar-link mode-python {% if request.endpoint == 'venv_manager' %}active{% endif %}">
+            <a href="{{ url_for('venv_manager') }}" class="sidebar-link mode-python {% if request.endpoint == 'venv_manager' %}active{% endif %}" title="Environment">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8l-9-5-9 5v8l9 5 9-5z"/><polyline points="3 8 12 13 21 8"/><line x1="12" y1="13" x2="12" y2="21"/></svg>
                 <span class="sidebar-text">Environment</span>
             </a>
-            <a href="{{ url_for('ansible_collections') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'ansible_collections' %}active{% endif %}">
+            <a href="{{ url_for('ansible_collections') }}" class="sidebar-link mode-ansible {% if request.endpoint == 'ansible_collections' %}active{% endif %}" title="Collections">
+                <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="4" height="16" rx="1"/><rect x="9" y="4" width="4" height="16" rx="1"/><rect x="15" y="4" width="6" height="16" rx="1"/><line x1="15" y1="9" x2="21" y2="9"/></svg>
                 <span class="sidebar-text">Collections</span>
             </a>
         </nav>

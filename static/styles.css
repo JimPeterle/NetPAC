@@ -231,6 +231,33 @@ body {
 .sidebar-nav::-webkit-scrollbar-track { background: transparent; }
 .sidebar-nav::-webkit-scrollbar-thumb { background: var(--border-sidebar); border-radius: 3px; }
 
+.sidebar-section {
+    padding: 16px 20px 6px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.sidebar-section:first-child {
+    padding-top: 4px;
+}
+
+.sidebar.collapsed .sidebar-section {
+    height: 1px;
+    padding: 0;
+    margin: 10px 18px;
+    background: var(--border-sidebar);
+}
+
+.sidebar-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
 .sidebar-link {
     display: flex;
     align-items: center;
@@ -1688,6 +1715,13 @@ select.form-input {
 @media (max-width: 900px) {
     .sidebar {
         width: var(--sidebar-collapsed);
+    }
+
+    .sidebar .sidebar-section {
+        height: 1px;
+        padding: 0;
+        margin: 10px 18px;
+        background: var(--border-sidebar);
     }
 
     .sidebar .sidebar-text,
