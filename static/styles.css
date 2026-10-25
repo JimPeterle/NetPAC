@@ -1798,6 +1798,14 @@ select.form-input {
         display: none;
     }
 
+    .sidebar .sidebar-link,
+    .sidebar .user-btn {
+        justify-content: center;
+        gap: 0;
+        padding-left: 0;
+        padding-right: 0;
+    }
+
     .sidebar .sidebar-section {
         height: 1px;
         padding: 0;
@@ -1847,6 +1855,14 @@ select.form-input {
 
 .sidebar.collapsed .mode-toggle-container {
     display: none;
+}
+
+.sidebar.collapsed .sidebar-link,
+.sidebar.collapsed .user-btn {
+    justify-content: center;
+    gap: 0;
+    padding-left: 0;
+    padding-right: 0;
 }
 
 .mode-btn {

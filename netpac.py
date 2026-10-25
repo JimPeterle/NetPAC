@@ -5945,12 +5945,40 @@ def health():
     except Exception as e:
         checks['scheduler'] = {'status': 'error', 'message': str(e)}
 
+    for key, folder, extensions in (('scripts_dir', SCRIPTS_DIR, ('.py',)), ('playbooks_dir', PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)):
+        if not os.path.isdir(folder):
+            checks[key] = {'status': 'error', 'message': f"{folder} does not exist — run setup.sh again"}
+        elif not os.access(folder, os.W_OK | os.X_OK):
+            checks[key] = {'status': 'error', 'message': f"{folder} is not writable for the NetPAC user"}
+        else:
+            count = len([f for f in list_repo_files(folder, extensions) if not f.startswith("git/")])
+            checks[key] = {'status': 'ok', 'message': f"{folder} · {count} {'file' if count == 1 else 'files'}"}
+
+    git_config = load_git_config()
+    if not git_config.get("repo_url"):
+        checks['git'] = {'status': 'ok', 'message': "No repository configured"}
+    elif not os.path.isdir(os.path.join(GIT_DIR, ".git")):
+        checks['git'] = {'status': 'error', 'message': f"{git_config['repo_url']} is configured but not synced yet"}
+    else:
+        marker = os.path.join(GIT_DIR, ".git", "FETCH_HEAD")
+        if not os.path.exists(marker):
+            marker = os.path.join(GIT_DIR, ".git", "HEAD")
+        synced = datetime.fromtimestamp(os.path.getmtime(marker)).strftime('%Y-%m-%d %H:%M')
+        checks['git'] = {'status': 'ok', 'message': f"{git_config['repo_url']} @ {git_config.get('branch', 'main')} · last sync {synced}"}
+
     try:
-        checks['scripts_dir'] = {
-            'status': 'ok' if os.path.exists(SCRIPTS_DIR) else 'error'
-        }
+        ansible = shutil.which("ansible-playbook")
+        if not ansible:
+            checks['ansible'] = {'status': 'error', 'message': 'ansible-playbook not found in PATH'}
+        else:
+            result = subprocess.run([ansible, '--version'], capture_output=True, text=True, timeout=15, env=tool_env())
+            first_line = (result.stdout or result.stderr).strip().splitlines()[0] if (result.stdout or result.stderr).strip() else ""
+            checks['ansible'] = {
+                'status': 'ok' if result.returncode == 0 else 'error',
+                'version': first_line.replace("ansible-playbook", "ansible-core").replace("[core ", "").rstrip("]") or "unknown version"
+            }
     except Exception as e:
-        checks['scripts_dir'] = {'status': 'error', 'message': str(e)}
+        checks['ansible'] = {'status': 'error', 'message': str(e)}
 
     try:
         checks['encryption'] = {
@@ -6001,6 +6029,10 @@ def health():
             }
     except Exception as e:
         checks['ansible_galaxy'] = {'status': 'error', 'message': str(e)}
+
+    order = ['mariadb', 'sql-size', 'encryption', 'scheduler', 'python', 'venv', 'ansible', 'ansible_galaxy',
+             'scripts_dir', 'playbooks_dir', 'git']
+    checks = {key: checks[key] for key in order if key in checks}
 
     overall = 'ok' if all(c['status'] == 'ok' for c in checks.values()) else 'error'
     

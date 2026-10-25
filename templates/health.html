@@ -48,10 +48,13 @@
                             {% elif name == 'sql-size' %}SQL-Database size
                             {% elif name == 'python' %}Python
                             {% elif name == 'scheduler' %}APScheduler
-                            {% elif name == 'scripts_dir' %}Scripts Directory
+                            {% elif name == 'scripts_dir' %}Script folder
+                            {% elif name == 'playbooks_dir' %}Playbook folder
+                            {% elif name == 'git' %}Git repository
                             {% elif name == 'encryption' %}Encryption
                             {% elif name == 'venv' %}Python venv
-                            {% elif name == 'ansible_galaxy' %}Ansible Galaxy
+                            {% elif name == 'ansible' %}Ansible
+                            {% elif name == 'ansible_galaxy' %}Ansible collections
                             {% else %}{{ name }}
                             {% endif %}
                         </td>
@@ -65,7 +68,7 @@
                         <td style="color: var(--text-muted); font-size: 0.875rem;">
                             {% if name == 'mariadb' and check.status == 'ok' %}
                                 {{ check.version }}
-                            {% elif name == 'python' and check.status == 'ok'%}
+                            {% elif name in ['python', 'ansible'] and check.version is defined %}
                                 {{ check.version }}
                             {% elif name == 'scheduler' and check.status == 'ok' %}
                                 {{ check.jobs }}
