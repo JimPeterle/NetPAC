@@ -104,8 +104,9 @@
 
         <div class="sidebar-footer">
             <div class="user-menu">
-                <button class="user-btn" id="userMenuBtn">
-                    <span class="sidebar-text">{{ current_user.username }}</span>
+                <button class="user-btn" id="userMenuBtn" title="{{ current_user.username }}">
+                    <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a7 7 0 0 1 7-7h2a7 7 0 0 1 7 7v1"/></svg>
+                    <span class="sidebar-text user-name">{{ current_user.username }}</span>
                 </button>
                 <div class="user-dropdown" id="userDropdown">
                     <a href="{{ url_for('settings') }}" class="{% if request.endpoint in ['settings', 'audit_log_page'] %}active-dropdown{% endif %}">Settings</a>

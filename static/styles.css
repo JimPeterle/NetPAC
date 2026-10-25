@@ -310,7 +310,7 @@ body {
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
-    background: rgba(255,255,255,0.05);
+    background: transparent;
     border: 1px solid var(--border-sidebar);
     border-radius: var(--radius-sm);
     color: var(--text-sidebar-active);
@@ -325,15 +325,13 @@ body {
 }
 
 .user-btn:hover {
-    background: rgba(255,255,255,0.09);
-    border-color: var(--accent);
+    background: var(--bg-sidebar-hover);
+    border-color: var(--border-strong);
 }
 
-.user-btn::before {
-    content: '◆';
-    color: var(--accent);
-    font-size: 0.5rem;
-    flex-shrink: 0;
+.user-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .user-dropdown {
@@ -1717,6 +1715,10 @@ select.form-input {
         width: var(--sidebar-collapsed);
     }
 
+    .sidebar .mode-toggle-container {
+        display: none;
+    }
+
     .sidebar .sidebar-section {
         height: 1px;
         padding: 0;
@@ -1762,6 +1764,10 @@ select.form-input {
     gap: 6px;
     padding: 10px 16px;
     border-top: 1px solid var(--border-sidebar);
+}
+
+.sidebar.collapsed .mode-toggle-container {
+    display: none;
 }
 
 .mode-btn {
