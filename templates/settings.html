@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_settings_tabs.html" import settings_tabs with context %}
 
 {% block title %}Settings - NetPAC{% endblock %}
 
@@ -13,29 +14,7 @@
     </div>
 </div>
 
-<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border);">
-    <button type="button" id="tabBtnUser" class="action-button {{ 'action-button-primary' if active_tab == 'user' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'user' else '0.6' }};" onclick="switchSettingsTab('user')">
-        User
-    </button>
-    <button type="button" id="tabBtnRadius" class="action-button {{ 'action-button-primary' if active_tab == 'radius' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'radius' else '0.6' }};" onclick="switchSettingsTab('radius')">
-        Radius
-    </button>
-    <button type="button" id="tabBtnNotifications" class="action-button {{ 'action-button-primary' if active_tab == 'notifications' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'notifications' else '0.6' }};" onclick="switchSettingsTab('notifications')">
-        Notifications
-    </button>
-    <button type="button" id="tabBtnGit" class="action-button {{ 'action-button-primary' if active_tab == 'git' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'git' else '0.6' }};" onclick="switchSettingsTab('git')">
-        Git
-    </button>
-    <button type="button" id="tabBtnSsl" class="action-button {{ 'action-button-primary' if active_tab == 'ssl' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'ssl' else '0.6' }};" onclick="switchSettingsTab('ssl')">
-        SSL/TLS
-    </button>
-    <button type="button" id="tabBtnBackup" class="action-button {{ 'action-button-primary' if active_tab == 'backup' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'backup' else '0.6' }};" onclick="switchSettingsTab('backup')">
-        Backup
-    </button>
-    <button type="button" id="tabBtnLogs" class="action-button {{ 'action-button-primary' if active_tab == 'logs' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active_tab == 'logs' else '0.6' }};" onclick="switchSettingsTab('logs')">
-        Logs
-    </button>
-</div>
+{{ settings_tabs(active_tab) }}
 
 <div id="tabUser" style="{{ 'display: none;' if active_tab != 'user' else '' }}">
     {% if user_method == 'local' %}

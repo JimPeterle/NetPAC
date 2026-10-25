@@ -1,0 +1,15 @@
+{% macro settings_tabs(active, links=False) %}
+{% set tabs = [('user', 'User'), ('radius', 'Radius'), ('notifications', 'Notifications'), ('git', 'Git'), ('ssl', 'SSL/TLS'), ('backup', 'Backup'), ('logs', 'Logs')] %}
+<div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border);">
+    {% for key, label in tabs %}
+    {% if links %}
+    <a href="{{ url_for('settings', tab=key) }}" class="action-button action-button-secondary" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: 0.6;">{{ label }}</a>
+    {% else %}
+    <button type="button" id="tabBtn{{ key|capitalize }}" class="action-button {{ 'action-button-primary' if active == key else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active == key else '0.6' }};" onclick="switchSettingsTab('{{ key }}')">
+        {{ label }}
+    </button>
+    {% endif %}
+    {% endfor %}
+    <a href="{{ url_for('audit_log_page') }}" class="action-button {{ 'action-button-primary' if active == 'audit' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active == 'audit' else '0.6' }};">Audit</a>
+</div>
+{% endmacro %}
