@@ -135,6 +135,15 @@
     </div>
 
     <div class="main-content" id="mainContent" style="{% if session.get('default_pw_warning') %}padding-top: 64px;{% endif %}">
+
+    <script>
+        try {
+            if (localStorage.getItem('netpac-sidebar') === 'collapsed') {
+                document.getElementById('sidebar').classList.add('collapsed');
+                document.getElementById('mainContent').classList.add('expanded');
+            }
+        } catch (e) {}
+    </script>
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -162,8 +171,9 @@
         const sidebarToggle = document.getElementById('sidebarToggle');
 
         sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('collapsed');
-            mainContent.classList.toggle('expanded');
+            const collapsed = sidebar.classList.toggle('collapsed');
+            mainContent.classList.toggle('expanded', collapsed);
+            try { localStorage.setItem('netpac-sidebar', collapsed ? 'collapsed' : 'expanded'); } catch (e) {}
         });
 
         const userMenuBtn = document.getElementById('userMenuBtn');
