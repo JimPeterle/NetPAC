@@ -3414,6 +3414,17 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                         raise ValueError(f"Target '{item}' not found in database")
 
             targets = [(h,) for h in sorted(resolved)]
+
+            if resolved:
+                placeholders = ", ".join(["%s"] * len(resolved))
+                cur.execute(f"""
+                    SELECT g.name, h.hostname FROM host_groups g
+                    JOIN host_group_membership m ON g.group_id = m.group_id
+                    JOIN hosts h ON h.host_id = m.host_id
+                    WHERE h.hostname IN ({placeholders})
+                """, sorted(resolved))
+                for group_name, hostname in cur.fetchall():
+                    group_host_map.setdefault(group_name, set()).add(hostname)
         else:
             targets = []
             group_host_map = {}
@@ -3438,21 +3449,19 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
                 else:
                     f.write(t[0] + "\n")
 
-            for group_name, hostnames in group_host_map.items():
+            for group_name, hostnames in sorted(group_host_map.items()):
                 cur.execute("SELECT ansible_vars FROM host_groups WHERE name = %s", (group_name,))
                 row = cur.fetchone()
-                group_vars_raw = row[0] if row and row[0] else ""
+                group_vars = [v.strip() for v in (row[0] if row and row[0] else "").splitlines() if "=" in v]
 
-                if group_vars_raw.strip():
-                    f.write(f"\n[{group_name}]\n")
-                    for h in sorted(hostnames):
-                        f.write(h + "\n")
+                f.write(f"\n[{group_name}]\n")
+                for h in sorted(hostnames):
+                    f.write(h + "\n")
 
+                if group_vars:
                     f.write(f"\n[{group_name}:vars]\n")
-                    for var in group_vars_raw.splitlines():
-                        var = var.strip()
-                        if "=" in var:
-                            f.write(var + "\n")
+                    for var in group_vars:
+                        f.write(var + "\n")
 
         _, playbook_path = resolve_repo_path(filename, PLAYBOOKS_DIR)
 
