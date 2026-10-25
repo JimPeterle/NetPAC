@@ -360,6 +360,18 @@ def inject_app_info():
             "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH}
 
 
+@app.template_filter("filesize")
+def filesize_filter(size):
+    """Formats a byte count as B, KB or MB."""
+
+    if size is None:
+        return ""
+    for unit in ("B", "KB", "MB"):
+        if size < 1024 or unit == "MB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+
+
 @app.context_processor
 def inject_vendor():
     """Provides vendor() to all templates."""
@@ -1032,19 +1044,48 @@ def list_repo_files(local_dir, extensions):
     return sorted(result)
 
 
-def list_dir_entries(target, subpath, base_dir):
-    """Lists the entries of one folder for the file browser."""
+def file_entry(full_path, name, path):
+    """Returns name, path and details (item count or size, last change) of a file or folder."""
+
+    is_dir = os.path.isdir(full_path)
+    entry = {"name": name, "path": path, "is_dir": is_dir, "count": None, "size": None, "modified": None}
+    try:
+        entry["modified"] = datetime.fromtimestamp(os.stat(full_path).st_mtime)
+        if is_dir:
+            entry["count"] = len([n for n in os.listdir(full_path) if n != '.git'])
+        else:
+            entry["size"] = os.path.getsize(full_path)
+    except OSError:
+        pass
+    return entry
+
+
+def sort_entries(entries):
+    """Sorts folders first, then files, each alphabetically."""
+
+    return sorted(entries, key=lambda e: (not e["is_dir"], e["name"].lower()))
+
+
+def repo_file_entries(local_dir, extensions):
+    """Like list_repo_files(), but with details for each file (for the search lists)."""
 
     entries = []
-    for name in (sorted(os.listdir(target)) if os.path.isdir(target) else []):
-        if name == '.git' or not is_listable(os.path.join(target, name), base_dir):
-            continue
-        entries.append({
-            "name": name,
-            "is_dir": os.path.isdir(os.path.join(target, name)),
-            "path": os.path.join(subpath, name) if subpath else name
-        })
+    for rel in list_repo_files(local_dir, extensions):
+        full = os.path.join(GIT_DIR, rel[4:]) if rel.startswith("git/") else os.path.join(local_dir, rel)
+        entries.append(file_entry(full, rel, rel))
     return entries
+
+
+def list_dir_entries(target, subpath, base_dir):
+    """Lists the entries of one folder for the file browser, folders first."""
+
+    entries = []
+    for name in (os.listdir(target) if os.path.isdir(target) else []):
+        full = os.path.join(target, name)
+        if name == '.git' or not is_listable(full, base_dir):
+            continue
+        entries.append(file_entry(full, name, os.path.join(subpath, name) if subpath else name))
+    return sort_entries(entries)
 
 
 def load_secret_choices():
@@ -2225,10 +2266,9 @@ def scripts():
 
     entries = [e for e in list_dir_entries(SCRIPTS_DIR, "", SCRIPTS_DIR) if e["is_dir"] or e["name"].endswith('.py')]
     if os.path.exists(GIT_DIR):
-        entries.append({"name": "git", "is_dir": True, "path": "git"})
+        entries = sort_entries(entries + [file_entry(GIT_DIR, "git", "git")])
 
-    all_scripts = [{"name": os.path.basename(path), "path": path, "is_dir": False}
-                   for path in list_repo_files(SCRIPTS_DIR, ('.py',))]
+    all_scripts = repo_file_entries(SCRIPTS_DIR, ('.py',))
 
     return render_template("scripts.html", entries=entries, git_config=load_git_config(), current_path="", all_scripts=all_scripts)
 
@@ -2767,10 +2807,9 @@ def browse_playbooks(subpath):
     if subpath == "" or os.path.isdir(target):
         entries = list_dir_entries(target, subpath, base_dir)
         if subpath == "" and os.path.exists(GIT_DIR):
-            entries.append({"name": "git", "is_dir": True, "path": "git"})
+            entries = sort_entries(entries + [file_entry(GIT_DIR, "git", "git")])
 
-        all_playbooks = [{"name": os.path.basename(path), "path": path, "is_dir": False}
-                         for path in list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)]
+        all_playbooks = repo_file_entries(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)
 
         return render_template("playbooks.html", entries=entries, all_playbooks=all_playbooks, secrets=load_secret_choices(), current_path=subpath, git_config=load_git_config())
 

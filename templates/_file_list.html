@@ -1,0 +1,43 @@
+{% macro icon(entry, kind) %}
+{% if entry.path == 'git' %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><line x1="6" y1="8.5" x2="6" y2="15.5"/><path d="M18 10.5c0 4-6 3-11 5.5"/></svg>
+{% elif entry.is_dir %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+{% elif kind == 'Playbook' %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><polyline points="14 3 14 8 19 8"/><polygon points="10 11.5 14.5 14.5 10 17.5 10 11.5"/></svg>
+{% else %}
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><polyline points="14 3 14 8 19 8"/><polyline points="10 12 8 14.5 10 17"/><polyline points="14 12 16 14.5 14 17"/></svg>
+{% endif %}
+{% endmacro %}
+
+{% macro file_row(href, entry, kind, label=None, searchable=False) %}
+<li class="script-item"{% if searchable %} data-path="{{ entry.path }}"{% endif %}>
+    <a href="{{ href }}" class="file-link">
+        <span class="file-icon{{ ' file-icon-folder' if entry.is_dir else '' }}">{{ icon(entry, kind) }}</span>
+        <span class="file-main">
+            <span class="file-name">{{ label or entry.name }}</span>
+            <span class="file-meta">
+                {% if entry.is_dir %}
+                {{ 'Git repository' if entry.path == 'git' else 'Folder' }}{% if entry.count is not none %} · {{ entry.count }} {{ 'item' if entry.count == 1 else 'items' }}{% endif %}
+                {% else %}
+                {{ kind }}{% if entry.size is not none %} · {{ entry.size|filesize }}{% endif %}
+                {% endif %}
+            </span>
+        </span>
+        {% if entry.modified %}<span class="file-date">{{ entry.modified.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
+        <svg class="file-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>
+    </a>
+</li>
+{% endmacro %}
+
+{% macro back_row(href) %}
+<li class="script-item">
+    <a href="{{ href }}" class="file-link">
+        <span class="file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="11 6 5 12 11 18"/></svg></span>
+        <span class="file-main">
+            <span class="file-name">Back</span>
+            <span class="file-meta">Parent folder</span>
+        </span>
+    </a>
+</li>
+{% endmacro %}

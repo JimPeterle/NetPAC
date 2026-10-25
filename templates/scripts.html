@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_file_list.html" import file_row, back_row %}
 
 {% block title %}Scripts - NetPAC{% endblock %}
 
@@ -46,43 +47,18 @@
     <div class="card-body">
         {% if entries %}
             <ul class="script-list" id="scriptList">
+                {% if current_path %}
+                {{ back_row(url_for('scripts') if '/' not in current_path else '/scripts/' ~ current_path.rsplit('/', 1)[0]) }}
+                {% endif %}
                 {% for entry in entries %}
-                <li class="script-item">
-                    <a href="/scripts/{{ entry.path }}" class="script-link">
-                        <div class="script-info">
-                            <div class="script-details">
-                                <span class="script-name">
-                                    {% if entry.is_dir %}
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                                    {% else %}
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                                    {% endif %}
-                                    {{ entry.name }}
-                                </span>
-                            </div>
-                        </div>
-                        <span class="script-action"><span class="external-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg></span></span>
-                    </a>
-                </li>
+                {{ file_row('/scripts/' ~ entry.path, entry, 'Python script') }}
                 {% endfor %}
             </ul>
 
             {% if all_scripts is defined %}
             <ul class="script-list" id="allScriptList" style="display: none;">
                 {% for script in all_scripts %}
-                <li class="script-item" data-path="{{ script.path }}">
-                    <a href="/scripts/{{ script.path }}" class="script-link">
-                        <div class="script-info">
-                            <div class="script-details">
-                                <span class="script-name">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-                                    {{ script.path }}
-                                </span>
-                            </div>
-                        </div>
-                        <span class="script-action"><span class="external-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg></span></span>
-                    </a>
-                </li>
+                {{ file_row('/scripts/' ~ script.path, script, 'Python script', label=script.path, searchable=True) }}
                 {% endfor %}
             </ul>
             {% endif %}
