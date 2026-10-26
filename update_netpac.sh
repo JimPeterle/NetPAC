@@ -69,6 +69,27 @@ fi
 echo ""
 
 # ===================================
+# JOB EXECUTOR SERVICE
+# ===================================
+
+EXECUTOR_UNIT=/etc/systemd/system/netpac-executor.service
+SCHEDULER_UNIT=/etc/systemd/system/netpac-scheduler.service
+
+if [ ! -f "$EXECUTOR_UNIT" ]; then
+    if [ -f "$SCHEDULER_UNIT" ]; then
+        sed -e 's/^Description=.*/Description=NetPAC Job Executor/' \
+            -e 's/netpac_scheduler\.py/netpac_executor.py/' \
+            "$SCHEDULER_UNIT" | sudo tee "$EXECUTOR_UNIT" > /dev/null
+        sudo systemctl daemon-reload
+        sudo systemctl enable --now netpac-executor.service
+        print_status "Job executor service created (netpac-executor.service)"
+    else
+        print_error "$SCHEDULER_UNIT not found, cannot create the job executor service. Without it no jobs are started."
+    fi
+    echo ""
+fi
+
+# ===================================
 # SYSTEMD SERVICE INFORMATION
 # ===================================
 
@@ -78,6 +99,7 @@ echo ""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     sudo systemctl restart netpac.service
     sudo systemctl restart netpac-scheduler.service
+    sudo systemctl restart netpac-executor.service
     print_status "Systemd services restarted successfully."
 else
     print_warning "Systemd services not restarted. Please restart them manually if necessary."

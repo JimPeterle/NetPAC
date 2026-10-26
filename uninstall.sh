@@ -54,7 +54,7 @@ echo ""
 
 APP_DIR="$(pwd)"
 
-SERVICES=("netpac" "netpac-scheduler")
+SERVICES=("netpac" "netpac-scheduler" "netpac-executor")
 CERT_BASE_DIR="/etc/netpac"
 LOG_DIR="/var/log/netpac"
 LIB_DIR="/var/lib/netpac"
@@ -72,7 +72,7 @@ fi
 
 echo -e "${YELLOW}Step 1: Stop services${NC}"
 
-if confirm "Stop and disable the NetPAC services (netpac, netpac-scheduler)?"; then
+if confirm "Stop and disable the NetPAC services (netpac, netpac-scheduler, netpac-executor)?"; then
     for svc in "${SERVICES[@]}"; do
         if systemctl is-active --quiet "$svc" 2>/dev/null; then
             sudo systemctl stop "$svc"
@@ -97,7 +97,7 @@ fi
 echo ""
 echo -e "${YELLOW}Step 2: Remove systemd services${NC}"
 
-if confirm "Remove systemd service files (netpac.service, netpac-scheduler.service)?"; then
+if confirm "Remove systemd service files (netpac.service, netpac-scheduler.service, netpac-executor.service)?"; then
     for svc in "${SERVICES[@]}"; do
         if [ -f "/etc/systemd/system/$svc.service" ]; then
             sudo rm "/etc/systemd/system/$svc.service"

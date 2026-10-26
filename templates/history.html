@@ -58,7 +58,9 @@
                         </td>
                         <td>{{ job.target if job.target else '-' }}</td>
                         <td>
-                            {% if job.status == 'running' %}
+                            {% if job.status == 'planned' %}
+                                <span class="status-badge status-queued">Queued</span>
+                            {% elif job.status == 'running' %}
                                 <span class="status-badge status-running">Running</span>
                             {% elif job.status == 'completed' %}
                                 <span class="status-badge status-success">✓ Completed</span>
@@ -123,7 +125,7 @@
 
 {% block extra_js %}
 <script>
-    const hasRunningJobs = {{ 'true' if jobs|selectattr('status', 'equalto', 'running')|list else 'false' }};
+    const hasRunningJobs = {{ 'true' if jobs|selectattr('status', 'in', ['running', 'planned'])|list else 'false' }};
     if (hasRunningJobs) {
         setTimeout(() => location.reload(), 5000);
     }

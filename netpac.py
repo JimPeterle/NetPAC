@@ -825,12 +825,11 @@ def parse_schedule(expression):
     }
 
 def trigger_schedule_job(job_id, script_name, user_id, target, variables, secrets_json, use_venv=False, job_type='python'):
-    """Runs a scheduled script or playbook (called by the scheduler)."""
+    """Queues a scheduled script or playbook (called by the scheduler); the executor runs it."""
 
     conn = get_db()
     cur = conn.cursor()
     vars_dict = json.loads(variables) if variables else {}
-    secrets_dict = json.loads(secrets_json) if secrets_json else {}
     
     try:
         cur.execute("SELECT GET_LOCK(%s, 0)", (f"job_{script_name}",))
@@ -850,57 +849,25 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
             return
 
         cur.execute("""
-            SELECT COUNT(*) FROM history_jobs 
-            WHERE script_name = %s 
-            AND status = 'running'
-            AND started_at > DATE_SUB(NOW(), INTERVAL 1 MINUTE)
-        """, (script_name,))
-        
+            SELECT COUNT(*) FROM history_jobs
+            WHERE script_name = %s AND COALESCE(target, '') = %s AND job_type = %s AND status = 'planned'
+        """, (script_name, target or "", job_type))
         if cur.fetchone()[0] > 0:
-            exec_logger.info(f"Job {script_name} already running, skipping")
+            exec_logger.info(f"Schedule #{job_id} ({sanitize_log(script_name)}) is still queued from its last run, skipping")
             return
 
-        cur.execute("""
-            INSERT INTO history_jobs 
-            (script_name, user_id, target, variables, status, started_at, credential, job_type)
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, %s)
-        """, (script_name, user_id, target, variables, secrets_json, job_type))
-        conn.commit()
-        history_job_id = cur.lastrowid
-        
+        if job_type == 'ansible':
+            extra_vars = vars_dict.get('extra_vars', {})
+            payload = {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}
+        else:
+            payload = {"variables": variables, "use_venv": bool(use_venv)}
+        queued_id = enqueue_job(script_name, user_id, target, variables, secrets_json, job_type, payload)
+        exec_logger.info(f"Schedule #{job_id} ({sanitize_log(script_name)}) queued as job #{queued_id}")
     finally:
         cur.execute("SELECT RELEASE_LOCK(%s)", (f"job_{script_name}",))
         cur.close()
         conn.close()
 
-    if job_type == 'ansible':
-        extra_vars = vars_dict.get('extra_vars', {})
-        extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
-        thread = threading.Thread(
-            target=execute_playbook_background,
-            args=(
-                history_job_id, script_name, target,
-                extra_vars_str,
-                secrets_dict.get('secret_1', ''),
-                secrets_dict.get('secret_2', ''),
-                secrets_dict.get('secret_3', '')
-            )
-        )
-    else:
-        thread = threading.Thread(
-            target=execute_script_background,
-            args=(
-                history_job_id, script_name, target,
-                variables,
-                use_venv,
-                secrets_dict.get('secret_1', ''),
-                secrets_dict.get('secret_2', ''),
-                secrets_dict.get('secret_3', '')
-            )
-        )
-
-    thread.daemon = True
-    thread.start()
 
 SCHEDULE_JOB_COLUMNS = "job_id, script_name, user_id, target, variables, credential, use_venv, job_type, schedule_expression"
 
@@ -1176,6 +1143,206 @@ def reap_stale_jobs():
         notify_job_finished(job_id)
 
 
+# --------------------
+#   Job queue and executor
+# --------------------
+
+MAX_PARALLEL_JOBS = 5
+EXECUTOR_POLL_SECONDS = 1
+EXECUTOR_LOCK = "netpac_executor_claim"
+LOCAL_HOSTS = {"", "localhost"}
+
+
+def encode_payload(data):
+    """Serializes the run parameters of a queued job (encrypted when a key is configured)."""
+
+    text = json.dumps(data)
+    return encryption.encrypt(text) if encryption.is_available() else text
+
+
+def decode_payload(raw):
+    """Reads the run parameters stored by encode_payload()."""
+
+    if not raw:
+        return {}
+    return json.loads(raw if raw.startswith("{") else encryption.decrypt(raw))
+
+
+def enqueue_job(script_name, user_id, target, variables, credential, job_type, payload, dry_run=False):
+    """Adds a job to the queue (status 'planned'); the executor service starts it. Returns the job id."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO history_jobs
+            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run, run_payload)
+            VALUES (%s, %s, %s, %s, 'planned', NOW(), %s, %s, %s, %s)
+        """, (script_name, user_id, target, variables, credential, job_type, bool(dry_run), encode_payload(payload)))
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        cur.close()
+        conn.close()
+
+
+def resolve_job_hosts(cur, target, job_type):
+    """Returns the hostnames a job targets, using the same rules as the job execution."""
+
+    if job_type == "ansible" and target == "localhost":
+        return {"localhost"}
+
+    hosts = set()
+    for item in (target or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        cur.execute("""
+            SELECT DISTINCT h.hostname FROM hosts h
+            JOIN host_group_membership m ON h.host_id = m.host_id
+            JOIN host_groups g ON m.group_id = g.group_id
+            WHERE g.name = %s AND h.is_active = TRUE
+        """, (item,))
+        group_hosts = {row[0] for row in cur.fetchall()}
+        if group_hosts:
+            hosts |= group_hosts
+            continue
+        cur.execute("SELECT hostname FROM hosts WHERE hostname = %s AND is_active = TRUE", (item,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"Target '{item}' not found in database")
+        hosts.add(row[0])
+    return hosts
+
+
+def jobs_conflict(script_a, stored_a, script_b, stored_b):
+    """True if two jobs share a host; jobs without real hosts only conflict with the same script or playbook."""
+
+    hosts_a = set((stored_a or "").split("\n")) - LOCAL_HOSTS
+    hosts_b = set((stored_b or "").split("\n")) - LOCAL_HOSTS
+    if hosts_a & hosts_b:
+        return True
+    return script_a == script_b and not hosts_a and not hosts_b
+
+
+def fail_queued_job(cur, job_id, message):
+    """Marks a queued job as failed before it started (e.g. its target no longer exists)."""
+
+    cur.execute("""
+        UPDATE history_jobs
+        SET status = 'failed', finished_at = NOW(), duration = 0, run_payload = NULL,
+            output = CONCAT(COALESCE(output, ''), %s)
+        WHERE job_id = %s AND status IN ('planned', 'running')
+    """, (f"ERROR: {message}\n", job_id))
+
+
+def claim_next_jobs():
+    """Starts queued jobs in order, up to MAX_PARALLEL_JOBS, skipping those whose hosts are busy."""
+
+    started, failed = [], []
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT GET_LOCK(%s, 5)", (EXECUTOR_LOCK,))
+        if cur.fetchone()[0] != 1:
+            return
+        try:
+            cur.execute("SELECT script_name, resolved_hosts FROM history_jobs WHERE status = 'running'")
+            running = list(cur.fetchall())
+            free_slots = MAX_PARALLEL_JOBS - len(running)
+            if free_slots <= 0:
+                return
+
+            cur.execute("""
+                SELECT job_id, script_name, target, job_type FROM history_jobs
+                WHERE status = 'planned' ORDER BY job_id LIMIT 200
+            """)
+            for job_id, script_name, target, job_type in cur.fetchall():
+                if free_slots <= 0:
+                    break
+                try:
+                    hosts = resolve_job_hosts(cur, target, job_type)
+                except ValueError as e:
+                    fail_queued_job(cur, job_id, str(e))
+                    failed.append(job_id)
+                    continue
+
+                host_key = "\n".join(sorted(hosts))
+                if any(jobs_conflict(name, other, script_name, host_key) for name, other in running):
+                    continue
+
+                cur.execute("""
+                    UPDATE history_jobs SET status = 'running', started_at = NOW(), resolved_hosts = %s
+                    WHERE job_id = %s AND status = 'planned'
+                """, (host_key, job_id))
+                if cur.rowcount == 1:
+                    running.append((script_name, host_key))
+                    started.append(job_id)
+                    free_slots -= 1
+            conn.commit()
+        finally:
+            cur.execute("SELECT RELEASE_LOCK(%s)", (EXECUTOR_LOCK,))
+    finally:
+        cur.close()
+        conn.close()
+
+    for job_id in failed:
+        notify_job_finished(job_id)
+    for job_id in started:
+        start_claimed_job(job_id)
+
+
+def start_claimed_job(job_id):
+    """Loads a claimed job and runs it in a background thread of the executor."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT script_name, target, credential, job_type, ansible_dry_run, run_payload
+            FROM history_jobs WHERE job_id = %s
+        """, (job_id,))
+        script_name, target, credential, job_type, dry_run, payload_raw = cur.fetchone()
+        try:
+            payload = decode_payload(payload_raw)
+        except Exception as e:
+            fail_queued_job(cur, job_id, f"Run parameters could not be read ({type(e).__name__})")
+            conn.commit()
+            notify_job_finished(job_id)
+            return
+        cur.execute("UPDATE history_jobs SET run_payload = NULL WHERE job_id = %s", (job_id,))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    secrets = json.loads(credential) if credential else {}
+    secret_args = (secrets.get("secret_1", ""), secrets.get("secret_2", ""), secrets.get("secret_3", ""))
+    if job_type == "ansible":
+        target_fn = execute_playbook_background
+        args = (job_id, script_name, target, payload.get("extra_vars", ""), *secret_args, bool(dry_run))
+    else:
+        target_fn = execute_script_background
+        args = (job_id, script_name, target, payload.get("variables", "{}"), payload.get("use_venv", False), *secret_args)
+
+    threading.Thread(target=target_fn, args=args, daemon=True).start()
+    exec_logger.info(f"Job #{job_id} ({sanitize_log(script_name)}) started by the executor")
+
+
+def run_executor():
+    """Main loop of the netpac-executor service."""
+
+    exec_logger.info(f"Executor started (max. {MAX_PARALLEL_JOBS} parallel jobs)")
+    reap_stale_jobs()
+    while True:
+        try:
+            reap_stale_jobs_throttled()
+            claim_next_jobs()
+        except Exception as e:
+            exec_logger.error(f"Executor loop error: {e}")
+        time.sleep(EXECUTOR_POLL_SECONDS)
+
+
 REAP_THROTTLE_SECONDS = 10
 _last_reap = 0.0
 _reap_lock = threading.Lock()
@@ -1205,7 +1372,7 @@ def cleanup_job_history():
         while True:
             cur.execute("""
                 DELETE FROM history_jobs
-                WHERE status <> 'running'
+                WHERE status NOT IN ('running', 'planned')
                 AND COALESCE(finished_at, started_at) < DATE_SUB(NOW(), INTERVAL %s DAY)
                 LIMIT %s
             """, (HISTORY_RETENTION_DAYS, HISTORY_CLEANUP_BATCH))
@@ -2314,18 +2481,6 @@ def run_script(subpath):
         logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
     
-    reap_stale_jobs()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (subpath,))
-    running = cur.fetchone()[0]
-    cur.close()
-    conn.close()
-
-    if running > 0:
-        flash(f"Script '{subpath}' is already running. Please wait for it to finish.", "danger")
-        return redirect(url_for("history"))
     
     safe_filename = subpath
     
@@ -2346,40 +2501,19 @@ def run_script(subpath):
         "secret_3": secret_3
     }
     
-    conn = get_db()
-    cur = conn.cursor()
-
-    try:
-        cur.execute("""
-            INSERT INTO history_jobs 
-            (script_name, user_id, target, variables, status, started_at, credential, job_type) 
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'python')
-        """, (safe_filename, current_user.id, target, variables, json.dumps(secrets_json)))
-        
-        conn.commit()
-        job_id = cur.lastrowid
-        
-    except Exception as e:
-        logger.error(f"Failed to create job: {e}")
-        conn.rollback()
-        return redirect(url_for("scripts"))
-    finally:
-        cur.close()
-        conn.close()
-
     use_venv = request.form.get("use_venv") == "on"
 
-    thread = threading.Thread(
-        target=execute_script_background,
-        args=(job_id, safe_filename, target, variables, use_venv, secret_1, secret_2, secret_3)
-    )
+    try:
+        job_id = enqueue_job(safe_filename, current_user.id, target, variables, json.dumps(secrets_json), 'python',
+                             {"variables": variables, "use_venv": use_venv})
+    except Exception as e:
+        logger.error(f"Failed to queue job: {e}")
+        flash("Failed to queue the script", "danger")
+        return redirect(url_for("scripts"))
 
-    thread.daemon = True
-    thread.start()
-
-    exec_logger.info(f"Script '{sanitize_log(safe_filename)}' started as job #{job_id} by {current_user.id}")
+    exec_logger.info(f"Script '{sanitize_log(safe_filename)}' queued as job #{job_id} by {current_user.id}")
     audit("job.start", safe_filename, f"job #{job_id}")
-    flash(f"Script '{safe_filename}' started (Job #{job_id})", "success")
+    flash(f"Script '{safe_filename}' queued (Job #{job_id})", "success")
     return redirect(url_for("history", mode="python"))
 
 
@@ -2942,19 +3076,6 @@ def run_playbook(subpath):
         logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
-    reap_stale_jobs()
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (subpath,))
-    running = cur.fetchone()[0]
-    cur.close()
-    conn.close()
-
-    if running > 0:
-        flash(f"Playbook '{subpath}' is already running.", "danger")
-        return redirect(url_for("history"))
-
     target_required = request.form.get("targetRequired", "yes")
     target = request.form.get("target", "").strip()
 
@@ -2974,34 +3095,17 @@ def run_playbook(subpath):
     variables = json.dumps({"extra_vars": extra_vars})
     secrets_json = json.dumps({"secret_1": secret_1, "secret_2": secret_2, "secret_3": secret_3})
 
-    conn = get_db()
-    cur = conn.cursor()
     try:
-        cur.execute("""
-            INSERT INTO history_jobs 
-            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run)
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible', %s)
-        """, (subpath, current_user.id, target, variables, secrets_json, dry_run))
-        conn.commit()
-        job_id = cur.lastrowid
+        job_id = enqueue_job(subpath, current_user.id, target, variables, secrets_json, 'ansible',
+                             {"extra_vars": extra_vars_str}, dry_run)
     except Exception as e:
-        logger.error(f"Failed to create playbook job: {e}")
-        conn.rollback()
+        logger.error(f"Failed to queue playbook job: {e}")
+        flash("Failed to queue the playbook", "danger")
         return redirect(url_for("browse_playbooks", subpath=""))
-    finally:
-        cur.close()
-        conn.close()
 
-    thread = threading.Thread(
-        target=execute_playbook_background,
-        args=(job_id, subpath, target, extra_vars_str, secret_1, secret_2, secret_3, dry_run)
-    )
-    thread.daemon = True
-    thread.start()
-
-    exec_logger.info(f"Playbook '{sanitize_log(subpath)}' started as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
+    exec_logger.info(f"Playbook '{sanitize_log(subpath)}' queued as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     audit("job.start", subpath, f"job #{job_id}" + (" (dry run)" if dry_run else ""))
-    flash(f"Playbook '{subpath}' started {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
+    flash(f"Playbook '{subpath}' queued {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
 
@@ -3309,21 +3413,6 @@ def launch_playbook_template(template_id):
 
     name, playbook_path, target, extra_vars_raw, secret_1, secret_2, secret_3 = row
 
-    reap_stale_jobs()
-
-    conn = get_db()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (playbook_path,))
-        running = cur.fetchone()[0]
-    finally:
-        cur.close()
-        conn.close()
-
-    if running > 0:
-        flash(f"Playbook '{playbook_path}' is already running.", "danger")
-        return redirect(url_for("history", mode="ansible"))
-
     if not target:
         flash(f"Template '{name}' has no target. Edit it and enter a target or choose localhost explicitly.", "danger")
         return redirect(url_for("playbook_templates"))
@@ -3341,35 +3430,17 @@ def launch_playbook_template(template_id):
     variables = json.dumps({"extra_vars": stored_vars, "template": name, **({"redacted_fields": secret_fields} if secret_fields else {})})
     secrets_json = json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})
 
-    conn = get_db()
-    cur = conn.cursor()
     try:
-        cur.execute("""
-            INSERT INTO history_jobs 
-            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run)
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible', %s)
-        """, (playbook_path, current_user.id, target, variables, secrets_json, dry_run))
-        conn.commit()
-        job_id = cur.lastrowid
+        job_id = enqueue_job(playbook_path, current_user.id, target, variables, secrets_json, 'ansible',
+                             {"extra_vars": extra_vars_str}, dry_run)
     except Exception as e:
-        conn.rollback()
-        logger.error(f"Failed to create template job: {e}")
+        logger.error(f"Failed to queue template job: {e}")
         flash("Failed to launch template", "danger")
         return redirect(url_for("playbook_templates"))
-    finally:
-        cur.close()
-        conn.close()
 
-    thread = threading.Thread(
-        target=execute_playbook_background,
-        args=(job_id, playbook_path, target, extra_vars_str, secret_1 or "", secret_2 or "", secret_3 or "", dry_run)
-    )
-    thread.daemon = True
-    thread.start()
-
-    exec_logger.info(f"Template '{sanitize_log(name)}' launched as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
+    exec_logger.info(f"Template '{sanitize_log(name)}' queued as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     audit("template.launch", name, f"job #{job_id}" + (" (dry run)" if dry_run else ""))
-    flash(f"Template '{name}' launched {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
+    flash(f"Template '{name}' queued {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
     return redirect(url_for("history", mode="ansible"))
 
 
@@ -3936,7 +4007,7 @@ def rerun_failed_hosts(job_id):
         abort(404)
 
     script_name, variables_raw, credential, job_type, dry_run, status, output = row
-    if job_type != 'ansible' or status == 'running':
+    if job_type != 'ansible' or status in ('running', 'planned'):
         flash("Only finished playbook jobs can be re-run for failed hosts", "warning")
         return redirect(url_for("history_detail", job_id=job_id))
 
@@ -3950,41 +4021,14 @@ def rerun_failed_hosts(job_id):
         flash("This job has no failed or unreachable hosts", "warning")
         return redirect(url_for("history_detail", job_id=job_id))
 
-    reap_stale_jobs()
+    target = ",".join(failed_hosts)
+    extra_vars = variables.get("extra_vars") or {}
+    new_job_id = enqueue_job(script_name, current_user.id, target, json.dumps({**variables, "rerun_of": job_id}),
+                             credential, 'ansible', {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}, dry_run)
 
-    conn = get_db()
-    cur = conn.cursor()
-    try:
-        cur.execute("SELECT COUNT(*) FROM history_jobs WHERE script_name = %s AND status = 'running'", (script_name,))
-        if cur.fetchone()[0] > 0:
-            flash(f"Playbook '{script_name}' is already running.", "danger")
-            return redirect(url_for("history_detail", job_id=job_id))
-
-        target = ",".join(failed_hosts)
-        extra_vars = variables.get("extra_vars") or {}
-        cur.execute("""
-            INSERT INTO history_jobs
-            (script_name, user_id, target, variables, status, started_at, credential, job_type, ansible_dry_run)
-            VALUES (%s, %s, %s, %s, 'running', NOW(), %s, 'ansible', %s)
-        """, (script_name, current_user.id, target, json.dumps({**variables, "rerun_of": job_id}), credential, dry_run))
-        conn.commit()
-        new_job_id = cur.lastrowid
-    finally:
-        cur.close()
-        conn.close()
-
-    secrets = json.loads(credential) if credential else {}
-    thread = threading.Thread(
-        target=execute_playbook_background,
-        args=(new_job_id, script_name, target, json.dumps(extra_vars) if extra_vars else "",
-              secrets.get("secret_1", ""), secrets.get("secret_2", ""), secrets.get("secret_3", ""), bool(dry_run))
-    )
-    thread.daemon = True
-    thread.start()
-
-    exec_logger.info(f"Playbook '{sanitize_log(script_name)}' re-run for failed hosts of job #{job_id} as job #{new_job_id} by {current_user.id}")
+    exec_logger.info(f"Playbook '{sanitize_log(script_name)}' re-run for failed hosts of job #{job_id} queued as job #{new_job_id} by {current_user.id}")
     audit("job.rerun_failed", script_name, f"job #{new_job_id} from #{job_id}: {target}")
-    flash(f"Re-running {len(failed_hosts)} failed host(s) as job #{new_job_id}", "success")
+    flash(f"Re-run of {len(failed_hosts)} failed host(s) queued as job #{new_job_id}", "success")
     return redirect(url_for("history_detail", job_id=new_job_id))
 
 
@@ -4016,7 +4060,7 @@ def history_job_status(job_id):
 @app.route("/history/<int:job_id>/cancel", methods=["POST"])
 @login_required
 def cancel_job(job_id):
-    """Stops a running job."""
+    """Stops a running job or removes a queued one from the queue."""
 
     conn = get_db()
     cur = conn.cursor()
@@ -4027,6 +4071,22 @@ def cancel_job(job_id):
             abort(404)
 
         status, pid = row
+        if status == 'planned':
+            cur.execute("""
+                UPDATE history_jobs SET status = 'cancelled', finished_at = NOW(), duration = 0, run_payload = NULL,
+                    output = CONCAT(COALESCE(output, ''), %s)
+                WHERE job_id = %s AND status = 'planned'
+            """, (JOB_CANCELLED_NOTE, job_id))
+            conn.commit()
+            if cur.rowcount == 1:
+                notify_job_finished(job_id)
+                exec_logger.info(f"Queued job {job_id} cancelled by {current_user.id}")
+                audit("job.cancel", f"job #{job_id}", "while queued")
+                flash(f"Job #{job_id} removed from the queue", "success")
+            else:
+                flash(f"Job #{job_id} has just been started — cancel it again to stop it", "warning")
+            return redirect(url_for("history_detail", job_id=job_id))
+
         if status != 'running':
             flash(f"Job #{job_id} is not running anymore", "warning")
             return redirect(url_for("history_detail", job_id=job_id))
@@ -6069,6 +6129,28 @@ def health():
     except Exception as e:
         checks['scheduler'] = {'status': 'error', 'message': str(e)}
 
+    try:
+        result = subprocess.run(
+            ['/usr/bin/systemctl', 'is-active', 'netpac-executor.service'],
+            capture_output=True, text=True
+        )
+        executor_running = result.stdout.strip() == 'active'
+
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT status, COUNT(*) FROM history_jobs WHERE status IN ('running', 'planned') GROUP BY status")
+        counts = dict(cur.fetchall())
+        cur.close()
+        conn.close()
+
+        queue_info = f"Running: {counts.get('running', 0)} of max. {MAX_PARALLEL_JOBS} | Queued: {counts.get('planned', 0)}"
+        checks['executor'] = {
+            'status': 'ok' if executor_running else 'error',
+            'message': queue_info if executor_running else f"netpac-executor.service is not running, no jobs are started | {queue_info}"
+        }
+    except Exception as e:
+        checks['executor'] = {'status': 'error', 'message': str(e)}
+
     for key, folder, extensions in (('scripts_dir', SCRIPTS_DIR, ('.py',)), ('playbooks_dir', PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)):
         if not os.path.isdir(folder):
             checks[key] = {'status': 'error', 'message': f"{folder} does not exist — run setup.sh again"}
@@ -6154,7 +6236,7 @@ def health():
     except Exception as e:
         checks['ansible_galaxy'] = {'status': 'error', 'message': str(e)}
 
-    order = ['mariadb', 'sql-size', 'encryption', 'scheduler', 'python', 'venv', 'ansible', 'ansible_galaxy',
+    order = ['mariadb', 'sql-size', 'encryption', 'scheduler', 'executor', 'python', 'venv', 'ansible', 'ansible_galaxy',
              'scripts_dir', 'playbooks_dir', 'git']
     checks = {key: checks[key] for key in order if key in checks}
 

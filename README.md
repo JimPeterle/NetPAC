@@ -67,6 +67,21 @@ Scripts can be scheduled with cron expressions (hourly, daily, weekly,
 or custom) via the Scheduler. Each schedule supports targets, variables, 
 and secrets.
 
+## Job queue
+
+Jobs are started by a separate service, **netpac-executor**. Every job is first
+placed in a queue (status **queued**) and started as soon as a slot is free. By
+default up to 5 jobs run in parallel; this can be changed with
+`MAX_PARALLEL_JOBS` in secret.env.
+
+A host is only used by one job at a time, no matter which script or playbook.
+The check uses the actual hosts behind the target: an update playbook can run
+against the group *routers* and the group *switches* in parallel, but if both
+targets contain the same host, or another playbook is already running on one of
+those hosts, the job waits until the host is free. Jobs without hosts (no target
+or localhost) only wait for a running job of the same script or playbook. Queued jobs can be removed from the queue on the job detail page.
+A schedule is skipped if its previous run is still waiting in the queue.
+
 ## Hosts
 
 Hosts can be created, edited, and deleted in the GUI and assigned to 
@@ -82,8 +97,8 @@ The output of scripts and playbooks can be viewed in the job history and
 exported as TXT. Running jobs can be cancelled from the job detail page; 
 they are then shown with the status **cancelled**. Jobs whose process 
 disappeared (e.g. after a NetPAC restart) are marked as **failed**. System logs can be viewed directly in the Settings area. 
-A Health page shows the status of the database, scheduler, encryption, 
-venv, and Ansible Galaxy collections at a glance.
+A Health page shows the status of the database, scheduler, job executor, 
+encryption, venv, and Ansible Galaxy collections at a glance.
 
 Jobs are kept in the history for 180 days; older finished jobs are deleted
 automatically once a day by the scheduler. The log files in /var/log/netpac are
@@ -174,7 +189,7 @@ cd NetPAC
 ```
 
 The user `netpac` and the directory `~/bin/NetPAC` are the recommended layout, 
-but not required: both services run as the user that executes `setup.sh`, from 
+but not required: all services run as the user that executes `setup.sh`, from 
 the directory it is executed in. Database backups are stored next to the 
 application directory (e.g. `~/bin/netpac_backups`).
 

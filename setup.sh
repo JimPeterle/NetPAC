@@ -528,6 +528,29 @@ EOF
 
 print_status "Systemd service created for scheduler"
 
+echo ""
+echo -e "${YELLOW}Creating systemd service for job executor...${NC}"
+
+sudo tee /etc/systemd/system/netpac-executor.service > /dev/null << EOF
+[Unit]
+Description=NetPAC Job Executor
+After=network.target mariadb.service
+
+[Service]
+User=$APP_USER
+Group=$APP_GROUP
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/python3 $APP_DIR/netpac_executor.py
+Restart=always
+
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+print_status "Systemd service created for job executor"
+
 # ===================================
 # 18. INSTALL NGINX (IF REQUIRED)
 # ===================================
@@ -744,7 +767,7 @@ echo -e "${YELLOW}Starting services...${NC}"
 sudo systemctl daemon-reload
 print_status "Systemd reloaded"
 
-for svc in netpac netpac-scheduler; do
+for svc in netpac netpac-scheduler netpac-executor; do
     sudo systemctl enable "$svc"
     sudo systemctl restart "$svc"
 
@@ -781,8 +804,8 @@ echo "  App NGINX port: 443"
 echo "  IP: $IP"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
-echo "  Check status: sudo systemctl status netpac netpac-scheduler nginx"
-echo "  Restart NetPAC: sudo systemctl restart netpac netpac-scheduler"
+echo "  Check status: sudo systemctl status netpac netpac-scheduler netpac-executor nginx"
+echo "  Restart NetPAC: sudo systemctl restart netpac netpac-scheduler netpac-executor"
 echo "  Reload Nginx: sudo systemctl reload nginx"
 echo ""
 echo -e "${YELLOW}Logs:${NC}"

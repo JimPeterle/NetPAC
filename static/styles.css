@@ -897,6 +897,13 @@ select.form-input {
     border-color: var(--blue);
 }
 
+.status-queued {
+    background: var(--bg-table-head);
+    color: var(--blue);
+    border-color: var(--blue);
+    border-style: dashed;
+}
+
 .status-success {
     background: var(--success-dim);
     color: var(--success);
