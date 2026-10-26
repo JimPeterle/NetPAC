@@ -30,12 +30,14 @@ For example:
 ```
 ansible_connection=network_cli
 ansible_network_os=cisco.nxos
-ansible_user=admin
-ansible_password=yourpassword
-ansible_port=22                      
+ansible_port=22
 ```
 
-You can also import the Secrets directly like this in the Playbook:
+Do not enter passwords here — use **Secrets** instead (see below).
+Values of variables whose name contains e.g. `password`, `secret` or `token`, or ends
+in `_pass`, are hidden in the job history, but the Secrets are the safer place for credentials.
+
+Import the Secrets like this in the Playbook:
 
 ```
 vars:

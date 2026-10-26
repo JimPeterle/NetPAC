@@ -26,6 +26,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import re
 import threading
 import json
+import math
+import collections
 import csv
 import hashlib
 import hmac
@@ -856,12 +858,14 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
             exec_logger.info(f"Schedule #{job_id} ({sanitize_log(script_name)}) is still queued from its last run, skipping")
             return
 
+        history_vars = variables
         if job_type == 'ansible':
-            extra_vars = vars_dict.get('extra_vars', {})
+            extra_vars = vars_dict.get('extra_vars') or {}
             payload = {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}
+            history_vars = history_variables(extra_vars, **{k: v for k, v in vars_dict.items() if k != 'extra_vars'})
         else:
             payload = {"variables": variables, "use_venv": bool(use_venv)}
-        queued_id = enqueue_job(script_name, user_id, target, variables, secrets_json, job_type, payload)
+        queued_id = enqueue_job(script_name, user_id, target, history_vars, secrets_json, job_type, payload)
         exec_logger.info(f"Schedule #{job_id} ({sanitize_log(script_name)}) queued as job #{queued_id}")
     finally:
         cur.execute("SELECT RELEASE_LOCK(%s)", (f"job_{script_name}",))
@@ -1084,6 +1088,178 @@ def parse_extra_vars(raw):
     return extra_vars
 
 
+REDACTED_VALUE = "********"
+SENSITIVE_VAR_RE = re.compile(r"passw|passwd|_pass$|^pass$|secret|token|api_?key|private_?key|credential", re.IGNORECASE)
+
+
+def history_variables(extra_vars, hidden_fields=(), **info):
+    """Returns the extra vars as stored in the job history, with sensitive values hidden."""
+
+    hidden = [k for k in extra_vars if k in hidden_fields or SENSITIVE_VAR_RE.search(k)]
+    stored = {k: (REDACTED_VALUE if k in hidden else v) for k, v in extra_vars.items()}
+    return json.dumps({"extra_vars": stored, **info, **({"redacted_fields": hidden} if hidden else {})})
+
+
+# --------------------
+#   Job output limit and timeout
+# --------------------
+MAX_JOB_OUTPUT_BYTES = 10 * 1024 * 1024
+JOB_TIMEOUT_SECONDS = 4 * 3600
+JOB_OUTPUT_READ_CHUNK = 64 * 1024
+JOB_KILL_GRACE_SECONDS = 10
+
+
+class JobOutput:
+    """Collects job output up to MAX_JOB_OUTPUT_BYTES, keeping the beginning and the end."""
+
+    def __init__(self, limit=MAX_JOB_OUTPUT_BYTES):
+        """Starts with an empty buffer; half of the limit is used for the beginning, half for the end."""
+
+        self.head_limit = limit // 2
+        self.tail_limit = limit - self.head_limit
+        self.head, self.head_size = [], 0
+        self.tail, self.tail_size = collections.deque(), 0
+        self.live, self.truncated, self.dropped = [], False, 0
+
+    def add(self, text):
+        """Adds a piece of output."""
+
+        size = len(text.encode("utf-8", "replace"))
+        if not self.truncated and self.head_size + size <= self.head_limit:
+            self.head.append(text)
+            self.head_size += size
+            self.live.append(text)
+            return
+        if not self.truncated:
+            self.truncated = True
+            self.live.append(f"\n[NetPAC] Output is larger than {MAX_JOB_OUTPUT_BYTES // (1024 * 1024)} MB, "
+                             "the end is shown when the job has finished.\n")
+        self.tail.append((text, size))
+        self.tail_size += size
+        while self.tail_size > self.tail_limit and self.tail:
+            old_text, old_size = self.tail.popleft()
+            self.tail_size -= old_size
+            self.dropped += old_size
+
+    def take_live(self):
+        """Returns the output not yet written to the live view."""
+
+        text, self.live = "".join(self.live), []
+        return text
+
+    def text(self):
+        """Returns the stored output (beginning, omission note, end)."""
+
+        note = f"\n\n[NetPAC] ... {self.dropped} bytes of output omitted ...\n\n" if self.dropped else ""
+        return "".join(self.head) + note + "".join(t for t, _ in self.tail)
+
+
+def stop_process_group(process):
+    """Stops a job's process group: SIGTERM first, SIGKILL for whatever is left after a grace period."""
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=JOB_KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def kill_process_group_later(pid, job_id):
+    """Sends SIGKILL to a cancelled job's process group if parts of it are still running after the grace period."""
+
+    def worker():
+        """Waits for the grace period, then kills what is left."""
+
+        time.sleep(JOB_KILL_GRACE_SECONDS)
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            exec_logger.warning(f"Job {job_id} (PID {pid}) did not stop after SIGTERM and was killed")
+        except (ProcessLookupError, PermissionError):
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def stream_job_output(process, job_id, append_live_output):
+    """Reads a job's output with size limit and timeout; returns (output, timed_out)."""
+
+    output = JobOutput()
+    expired = threading.Event()
+
+    def on_timeout():
+        """Stops the job when JOB_TIMEOUT_SECONDS is exceeded."""
+
+        expired.set()
+        exec_logger.warning(f"Job {job_id} (PID {process.pid}) exceeded {JOB_TIMEOUT_SECONDS // 3600} h and is stopped")
+        stop_process_group(process)
+
+    timer = threading.Timer(JOB_TIMEOUT_SECONDS, on_timeout)
+    timer.daemon = True
+    timer.start()
+    try:
+        last_update = time.time()
+        for chunk in iter(lambda: process.stdout.readline(JOB_OUTPUT_READ_CHUNK), ""):
+            output.add(chunk)
+            if time.time() - last_update >= 1:
+                live = output.take_live()
+                if live:
+                    append_live_output(live)
+                last_update = time.time()
+        process.wait()
+    finally:
+        timer.cancel()
+
+    text = output.text()
+    if expired.is_set():
+        text += f"\n[NetPAC] Job was stopped after {JOB_TIMEOUT_SECONDS // 3600} hours (timeout).\n"
+    return text, expired.is_set()
+
+
+JOB_OUTPUT_FALLBACK_BYTES = 1024 * 1024
+
+
+def save_job_result(job_id, status, output, duration):
+    """Stores the final status and output of a job; stores only the end of the output if the full text is rejected."""
+
+    attempts = (
+        output,
+        "[NetPAC] The output could not be stored completely, only the end is shown.\n\n" + output[-JOB_OUTPUT_FALLBACK_BYTES:],
+        "[NetPAC] The output could not be stored.\n",
+    )
+    for text in attempts:
+        try:
+            conn = get_db()
+        except Exception as e:
+            exec_logger.error(f"Failed to store the result of job {job_id}: {e}")
+            return
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                UPDATE history_jobs
+                SET status = IF(status = 'cancelled', 'cancelled', %s),
+                    output = CONCAT(%s, IF(status = 'cancelled', %s, '')),
+                    finished_at = NOW(), duration = %s
+                WHERE job_id = %s
+            """, (status, text, JOB_CANCELLED_NOTE, duration, job_id))
+            conn.commit()
+            return
+        except Exception as e:
+            exec_logger.error(f"Failed to store the result of job {job_id} ({len(text)} characters): {e}")
+        finally:
+            try:
+                cur.close()
+                conn.close()
+            except Exception:
+                pass
+
+
 # --------------------
 #   Stale job cleanup
 # --------------------
@@ -1237,7 +1413,7 @@ def fail_queued_job(cur, job_id, message):
 
 
 def claim_next_jobs():
-    """Starts queued jobs in order, up to MAX_PARALLEL_JOBS, skipping those whose hosts are busy."""
+    """Starts queued jobs in order, up to MAX_PARALLEL_JOBS; a job waits while one of its hosts is busy or reserved."""
 
     started, failed = [], []
     conn = get_db()
@@ -1255,8 +1431,9 @@ def claim_next_jobs():
 
             cur.execute("""
                 SELECT job_id, script_name, target, job_type FROM history_jobs
-                WHERE status = 'planned' ORDER BY job_id LIMIT 200
+                WHERE status = 'planned' ORDER BY job_id
             """)
+            waiting = []
             for job_id, script_name, target, job_type in cur.fetchall():
                 if free_slots <= 0:
                     break
@@ -1268,7 +1445,8 @@ def claim_next_jobs():
                     continue
 
                 host_key = "\n".join(sorted(hosts))
-                if any(jobs_conflict(name, other, script_name, host_key) for name, other in running):
+                if any(jobs_conflict(name, other, script_name, host_key) for name, other in running + waiting):
+                    waiting.append((script_name, host_key))
                     continue
 
                 cur.execute("""
@@ -1299,10 +1477,10 @@ def start_claimed_job(job_id):
     cur = conn.cursor()
     try:
         cur.execute("""
-            SELECT script_name, target, credential, job_type, ansible_dry_run, run_payload
+            SELECT script_name, target, credential, job_type, ansible_dry_run, run_payload, variables
             FROM history_jobs WHERE job_id = %s
         """, (job_id,))
-        script_name, target, credential, job_type, dry_run, payload_raw = cur.fetchone()
+        script_name, target, credential, job_type, dry_run, payload_raw, history_vars = cur.fetchone()
         try:
             payload = decode_payload(payload_raw)
         except Exception as e:
@@ -1310,8 +1488,9 @@ def start_claimed_job(job_id):
             conn.commit()
             notify_job_finished(job_id)
             return
-        cur.execute("UPDATE history_jobs SET run_payload = NULL WHERE job_id = %s", (job_id,))
-        conn.commit()
+        if '"redacted_fields"' not in (history_vars or ""):
+            cur.execute("UPDATE history_jobs SET run_payload = NULL WHERE job_id = %s", (job_id,))
+            conn.commit()
     finally:
         cur.close()
         conn.close()
@@ -2560,8 +2739,6 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
         except Exception as e:
             exec_logger.error(f"Failed to update live output for job {job_id}: {e}")
 
-    output_lines = []
-
     try:
         if target:
             resolved = set()
@@ -2634,20 +2811,11 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
         except Exception as e:
             exec_logger.error(f"Failed to store PID for job {job_id}: {e}")
 
-        last_update = time.time()
-        flushed = 0
+        output_script, timed_out = stream_job_output(process, job_id, append_live_output)
 
-        for line in process.stdout:
-            output_lines.append(line)
-            if time.time() - last_update >= 1:
-                append_live_output("".join(output_lines[flushed:]))
-                flushed = len(output_lines)
-                last_update = time.time()
-
-        process.wait()
-        output_script = "".join(output_lines)
-
-        if process.returncode != 0:
+        if timed_out:
+            status = "timeout"
+        elif process.returncode != 0:
             status = "failed"
 
     except Exception as e:
@@ -2663,21 +2831,9 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
         end_time = datetime.now()
         duration = int((end_time - start_time).total_seconds())
 
-        try:
-            cur.execute("""
-                UPDATE history_jobs 
-                SET status = IF(status = 'cancelled', 'cancelled', %s),
-                    output = IF(status = 'cancelled', CONCAT(%s, %s), %s),
-                    finished_at = NOW(), duration = %s
-                WHERE job_id = %s
-            """, (status, output_script, JOB_CANCELLED_NOTE, output_script, duration, job_id))
-            conn.commit()
-        except Exception as e:
-            exec_logger.error(f"Failed to update job {job_id}: {e}")
-            conn.rollback()
-        finally:
-            cur.close()
-            conn.close()
+        cur.close()
+        conn.close()
+        save_job_result(job_id, status, output_script, duration)
 
         notify_job_finished(job_id)
 
@@ -3092,7 +3248,7 @@ def run_playbook(subpath):
     extra_vars = parse_extra_vars(request.form.get("extra_vars_raw", ""))
     extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
-    variables = json.dumps({"extra_vars": extra_vars})
+    variables = history_variables(extra_vars)
     secrets_json = json.dumps({"secret_1": secret_1, "secret_2": secret_2, "secret_3": secret_3})
 
     try:
@@ -3147,7 +3303,6 @@ def parse_playbook_target(form):
 FIELD_TYPES = ("text", "textarea", "number", "select", "multiselect", "boolean", "password")
 FIELD_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,99}\Z")
 MAX_TEMPLATE_FIELDS = 30
-REDACTED_VALUE = "********"
 
 
 def parse_template_fields(raw):
@@ -3180,7 +3335,8 @@ def parse_template_fields(raw):
             return None, f"Field '{var_name}' needs at least one option (one per line)"
         if field_type == "number" and default:
             try:
-                float(default)
+                if not math.isfinite(float(default)):
+                    raise ValueError
             except ValueError:
                 return None, f"Default value of '{var_name}' must be a number"
         if field_type == "select" and default and default not in options:
@@ -3249,6 +3405,8 @@ def collect_survey_values(fields, form):
         if field_type == "number":
             try:
                 number = float(value)
+                if not math.isfinite(number):
+                    raise ValueError
             except ValueError:
                 return None, f"'{field['label']}' must be a number"
             values[name] = int(number) if number.is_integer() else number
@@ -3426,8 +3584,7 @@ def launch_playbook_template(template_id):
     extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
     secret_fields = [f["var_name"] for f in fields if f["field_type"] == "password" and f["var_name"] in survey]
-    stored_vars = {k: (REDACTED_VALUE if k in secret_fields else v) for k, v in extra_vars.items()}
-    variables = json.dumps({"extra_vars": stored_vars, "template": name, **({"redacted_fields": secret_fields} if secret_fields else {})})
+    variables = history_variables(extra_vars, secret_fields, template=name)
     secrets_json = json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})
 
     try:
@@ -3483,7 +3640,6 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             exec_logger.error(f"Failed to update live output for job {job_id}: {e}")
 
     process = None
-    output_lines = []
 
     try:
         if target == "localhost":
@@ -3600,20 +3756,11 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         except Exception as e:
             exec_logger.error(f"Failed to store PID for job {job_id}: {e}")
 
-        last_update = time.time()
-        flushed = 0
+        output_script, timed_out = stream_job_output(process, job_id, append_live_output)
 
-        for line in process.stdout:
-            output_lines.append(line)
-            if time.time() - last_update >= 1:
-                append_live_output("".join(output_lines[flushed:]))
-                flushed = len(output_lines)
-                last_update = time.time()
-
-        process.wait()
-        output_script = "".join(output_lines)
-
-        if process.returncode != 0:
+        if timed_out:
+            status = "timeout"
+        elif process.returncode != 0:
             status = "failed"
 
     except Exception as e:
@@ -3631,21 +3778,9 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         end_time = datetime.now()
         duration = int((end_time - start_time).total_seconds())
 
-        try:
-            cur.execute("""
-                UPDATE history_jobs 
-                SET status = IF(status = 'cancelled', 'cancelled', %s),
-                    output = IF(status = 'cancelled', CONCAT(%s, %s), %s),
-                    finished_at = NOW(), duration = %s
-                WHERE job_id = %s
-            """, (status, output_script, JOB_CANCELLED_NOTE, output_script, duration, job_id))
-            conn.commit()
-        except Exception as e:
-            exec_logger.error(f"Failed to update playbook job {job_id}: {e}")
-            conn.rollback()
-        finally:
-            cur.close()
-            conn.close()
+        cur.close()
+        conn.close()
+        save_job_result(job_id, status, output_script, duration)
 
         notify_job_finished(job_id)
 
@@ -3995,7 +4130,7 @@ def rerun_failed_hosts(job_id):
     cur = conn.cursor()
     try:
         cur.execute("""
-            SELECT script_name, variables, credential, job_type, ansible_dry_run, status, output
+            SELECT script_name, variables, credential, job_type, ansible_dry_run, status, output, run_payload
             FROM history_jobs WHERE job_id = %s
         """, (job_id,))
         row = cur.fetchone()
@@ -4006,15 +4141,23 @@ def rerun_failed_hosts(job_id):
     if not row:
         abort(404)
 
-    script_name, variables_raw, credential, job_type, dry_run, status, output = row
+    script_name, variables_raw, credential, job_type, dry_run, status, output, payload_raw = row
     if job_type != 'ansible' or status in ('running', 'planned'):
         flash("Only finished playbook jobs can be re-run for failed hosts", "warning")
         return redirect(url_for("history_detail", job_id=job_id))
 
     variables = json.loads(variables_raw) if variables_raw else {}
     if variables.get("redacted_fields"):
-        flash("This job used password fields, which are not stored — launch the template again instead", "warning")
-        return redirect(url_for("history_detail", job_id=job_id))
+        try:
+            extra_vars_str = decode_payload(payload_raw).get("extra_vars", "") if payload_raw else None
+        except Exception:
+            extra_vars_str = None
+        if extra_vars_str is None:
+            flash("The hidden password values of this job are no longer available — start it again instead", "warning")
+            return redirect(url_for("history_detail", job_id=job_id))
+    else:
+        extra_vars = variables.get("extra_vars") or {}
+        extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
     failed_hosts = [h['host'] for h in parse_play_recap(output) if h['failed'] or h['unreachable']]
     if not failed_hosts:
@@ -4022,9 +4165,8 @@ def rerun_failed_hosts(job_id):
         return redirect(url_for("history_detail", job_id=job_id))
 
     target = ",".join(failed_hosts)
-    extra_vars = variables.get("extra_vars") or {}
     new_job_id = enqueue_job(script_name, current_user.id, target, json.dumps({**variables, "rerun_of": job_id}),
-                             credential, 'ansible', {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}, dry_run)
+                             credential, 'ansible', {"extra_vars": extra_vars_str}, dry_run)
 
     exec_logger.info(f"Playbook '{sanitize_log(script_name)}' re-run for failed hosts of job #{job_id} queued as job #{new_job_id} by {current_user.id}")
     audit("job.rerun_failed", script_name, f"job #{new_job_id} from #{job_id}: {target}")
@@ -4038,11 +4180,20 @@ def history_job_status(job_id):
     """Returns status and output of a job as JSON (live view)."""
 
     reap_stale_jobs_throttled()
+    offset = max(0, request.args.get("offset", 0, type=int))
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("SELECT status, output, finished_at, duration FROM history_jobs WHERE job_id = %s", (job_id,))
+    cur.execute("""
+        SELECT status, CHAR_LENGTH(COALESCE(output, '')), finished_at, duration
+        FROM history_jobs WHERE job_id = %s
+    """, (job_id,))
     row = cur.fetchone()
+    if row and offset > row[1]:
+        offset = 0
+    if row:
+        cur.execute("SELECT SUBSTRING(COALESCE(output, ''), %s) FROM history_jobs WHERE job_id = %s", (offset + 1, job_id))
+        new_output = cur.fetchone()[0]
     cur.close()
     conn.close()
 
@@ -4051,7 +4202,9 @@ def history_job_status(job_id):
 
     return {
         "status": row[0],
-        "output": row[1] or "",
+        "output": new_output,
+        "offset": offset,
+        "length": offset + len(new_output),
         "finished": row[2] is not None,
         "duration": row[3]
     }
@@ -4097,6 +4250,7 @@ def cancel_job(job_id):
 
         try:
             os.killpg(pid, signal.SIGTERM)
+            kill_process_group_later(pid, job_id)
         except ProcessLookupError:
             pass
         except PermissionError:
@@ -4227,6 +4381,16 @@ def audit_log_page():
                            retention_days=AUDIT_RETENTION_DAYS)
 
 
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value):
+    """Prevents spreadsheet programs from running cell values as formulas."""
+
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(CSV_FORMULA_PREFIXES) else text
+
+
 @app.route("/audit/export")
 @login_required
 def export_audit_csv():
@@ -4249,7 +4413,7 @@ def export_audit_csv():
     writer = csv.writer(buffer)
     writer.writerow(["time", "user", "ip", "action", "target", "details"])
     for row in rows:
-        writer.writerow([row[0].strftime("%Y-%m-%d %H:%M:%S")] + [value if value is not None else "" for value in row[1:]])
+        writer.writerow([row[0].strftime("%Y-%m-%d %H:%M:%S")] + [csv_safe(value) for value in row[1:]])
 
     audit("audit.export", None, f"{len(rows)} entries")
     response = make_response(buffer.getvalue())
@@ -4637,6 +4801,7 @@ def view_log(filename):
 
 
 @app.route("/settings/change_password", methods=["POST"])
+@limiter.limit("5 per minute", methods=["POST"])
 @login_required
 def change_password():
     """Changes the password of the logged-in local user."""

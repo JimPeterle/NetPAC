@@ -1,5 +1,5 @@
 {
-    "_comment": "Third-party frontend libraries, served locally from static/vendor/<name>-<version>/. Change a version here, then run: python3 update_vendor.py",
+    "_comment": "Third-party frontend libraries, served locally from static/vendor/<name>-<version>/. Check for updates: python3 update_vendor.py — install them: python3 update_vendor.py --update",
     "animejs": {
         "package": "animejs",
         "version": "4.5.0",
@@ -10,7 +10,7 @@
     },
     "highlightjs": {
         "package": "@highlightjs/cdn-assets",
-        "version": "11.9.0",
+        "version": "11.12.0",
         "files": {
             "js": "highlight.min.js",
             "python": "languages/python.min.js",
@@ -20,7 +20,7 @@
     },
     "markdown_css": {
         "package": "github-markdown-css",
-        "version": "5.2.0",
+        "version": "5.9.0",
         "files": {
             "light": "github-markdown-light.css",
             "dark": "github-markdown-dark.css"
@@ -29,7 +29,7 @@
     },
     "chartjs": {
         "package": "chart.js",
-        "version": "4.4.1",
+        "version": "4.6.1",
         "files": {
             "js": "dist/chart.umd.js"
         },

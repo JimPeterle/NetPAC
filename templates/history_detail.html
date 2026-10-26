@@ -299,10 +299,7 @@
 {% block extra_js %}
 <script src="{{ static_file('ansi.js') }}"></script>
 <script>
-    (function () {
-        const output = document.getElementById('liveOutputCode');
-        if (output) renderAnsi(output, output.textContent);
-    })();
+    const liveOutput = renderAnsi(document.getElementById('liveOutputCode'), document.getElementById('liveOutputCode').textContent);
 
     {% if job.status in ('running', 'planned') %}
     function closeCancelModal() {
@@ -335,18 +332,22 @@
     }
 
     {% if job.status in ('running', 'planned') %}
+    let outputOffset = {{ (job.output or '')|length }};
+
     function pollJobStatus() {
-        fetch("{{ url_for('history_job_status', job_id=job.job_id) }}")
+        fetch("{{ url_for('history_job_status', job_id=job.job_id) }}?offset=" + outputOffset)
             .then(r => {
                 if (!r.ok) throw new Error(`HTTP ${r.status}`);
                 return r.json();
             })
             .then(data => {
+                if (data.offset < outputOffset) liveOutput.reset();
                 if (data.output) {
-                    renderAnsi(document.getElementById('liveOutputCode'), data.output);
+                    liveOutput.append(data.output);
                     document.getElementById('liveOutputPre').style.display = '';
                     document.getElementById('noOutputPlaceholder').style.display = 'none';
                 }
+                outputOffset = data.length;
                 if (data.finished || data.status !== {{ job.status|tojson }}) {
                     anime.animate('#statusBadge', {
                         scale: [{ to: 1.15 }, { to: 1 }],

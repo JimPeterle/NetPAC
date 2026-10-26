@@ -1,13 +1,13 @@
 const ANSI_SGR_RE = /\x1b\[([0-9;]*)m/g;
 const ANSI_OTHER_RE = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const ANSI_INCOMPLETE_RE = /\x1b(\[[0-9;?]*)?$/;
 
-function renderAnsi(element, text) {
-    const fragment = document.createDocumentFragment();
+function createAnsiRenderer(element) {
     let fg = null;
     let bold = false;
-    let last = 0;
+    let pending = '';
 
-    function append(chunk) {
+    function addText(fragment, chunk) {
         chunk = chunk.replace(ANSI_OTHER_RE, '');
         if (!chunk) return;
         if (!fg && !bold) {
@@ -21,20 +21,44 @@ function renderAnsi(element, text) {
         fragment.appendChild(span);
     }
 
-    for (const match of text.matchAll(ANSI_SGR_RE)) {
-        append(text.slice(last, match.index));
-        last = match.index + match[0].length;
+    function append(text) {
+        text = pending + text;
+        const incomplete = text.match(ANSI_INCOMPLETE_RE);
+        pending = incomplete ? incomplete[0] : '';
+        if (pending) text = text.slice(0, -pending.length);
 
-        const codes = match[1] === '' ? [0] : match[1].split(';').map(Number);
-        for (const code of codes) {
-            if (code === 0) { fg = null; bold = false; }
-            else if (code === 1) bold = true;
-            else if (code === 22) bold = false;
-            else if (code === 39) fg = null;
-            else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) fg = code;
+        const fragment = document.createDocumentFragment();
+        let last = 0;
+        for (const match of text.matchAll(ANSI_SGR_RE)) {
+            addText(fragment, text.slice(last, match.index));
+            last = match.index + match[0].length;
+
+            const codes = match[1] === '' ? [0] : match[1].split(';').map(Number);
+            for (const code of codes) {
+                if (code === 0) { fg = null; bold = false; }
+                else if (code === 1) bold = true;
+                else if (code === 22) bold = false;
+                else if (code === 39) fg = null;
+                else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) fg = code;
+            }
         }
+        addText(fragment, text.slice(last));
+        element.appendChild(fragment);
     }
-    append(text.slice(last));
 
-    element.replaceChildren(fragment);
+    function reset() {
+        fg = null;
+        bold = false;
+        pending = '';
+        element.replaceChildren();
+    }
+
+    return { append, reset };
+}
+
+function renderAnsi(element, text) {
+    const renderer = createAnsiRenderer(element);
+    renderer.reset();
+    renderer.append(text);
+    return renderer;
 }

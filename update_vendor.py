@@ -15,11 +15,26 @@ CDN = "https://cdn.jsdelivr.net/npm"
 API = "https://data.jsdelivr.com/v1/packages/npm"
 
 
-def load_manifest():
-    """Loads the library list from static/vendor/manifest.json."""
+def read_manifest():
+    """Returns the complete content of static/vendor/manifest.json."""
 
     with open(MANIFEST, "r", encoding="utf-8") as f:
-        data = json.load(f)
+        return json.load(f)
+
+
+def write_manifest(data):
+    """Writes static/vendor/manifest.json (via a temporary file, so it is never half written)."""
+
+    tmp = MANIFEST + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4, ensure_ascii=False)
+        f.write("\n")
+    os.replace(tmp, MANIFEST)
+
+
+def libraries(data):
+    """Returns the library entries of the manifest (keys starting with '_' are notes)."""
+
     return {name: lib for name, lib in data.items() if not name.startswith("_")}
 
 
@@ -40,6 +55,30 @@ def latest_version(package):
 
     data = json.loads(fetch(f"{API}/{package}/resolved?specifier=latest"))
     return data.get("version")
+
+
+def version_key(version):
+    """Turns '4.10.2' into (4, 10, 2) for comparing; None if the version is not purely numeric."""
+
+    parts = version.split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+
+def is_newer(latest, current):
+    """True if latest is a newer version than current."""
+
+    if not latest or latest == current:
+        return False
+    latest_key, current_key = version_key(latest), version_key(current)
+    if latest_key is None or current_key is None:
+        return True
+    return latest_key > current_key
+
+
+def is_major_step(latest, current):
+    """True if the major version changes (e.g. 4.x -> 5.x)."""
+
+    return latest.split(".")[0] != current.split(".")[0]
 
 
 def lib_dir(name, lib):
@@ -72,6 +111,7 @@ def download(name, lib):
         if rel in done:
             continue
         if rel.startswith("../"):
+            shutil.rmtree(tmp, ignore_errors=True)
             raise RuntimeError(f"{name}: refusing path outside the package: {rel}")
         done.add(rel)
 
@@ -82,7 +122,7 @@ def download(name, lib):
             raise RuntimeError(
                 f"{name} {lib['version']}: could not download '{rel}' ({e}). "
                 f"The file layout may have changed in this version — check the paths "
-                f"in static/vendor/manifest.json, or go back to the previous version."
+                f"in static/vendor/manifest.json."
             ) from e
         dest = os.path.join(tmp, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -119,52 +159,107 @@ def is_complete(name, lib):
     return all(os.path.isfile(os.path.join(target, p)) for p in list(lib["files"].values()) + [lib["license"]])
 
 
-def cmd_check(libs):
-    """Shows which libraries have newer versions."""
+def select(libs, names):
+    """Returns the libraries to work on (all, or only the given names)."""
 
-    outdated = 0
+    unknown = [n for n in names if n not in libs]
+    if unknown:
+        raise SystemExit(f"Unknown library: {', '.join(unknown)} (known: {', '.join(libs)})")
+    return {n: libs[n] for n in names} if names else libs
+
+
+def cmd_check(libs):
+    """Shows which libraries have newer versions and which are missing locally."""
+
+    updates = missing = 0
     for name, lib in libs.items():
+        local = "" if is_complete(name, lib) else "  [not downloaded]"
+        missing += bool(local)
         try:
             latest = latest_version(lib["package"])
         except Exception as e:
-            print(f"  {name:16} {lib['version']:10} could not check: {e}")
+            print(f"  {name:16} {lib['version']:10} could not check: {e}{local}")
             continue
-        if latest and latest != lib["version"]:
-            outdated += 1
-            major = latest.split(".")[0] != lib["version"].split(".")[0]
-            note = "  (major version — may break NetPAC)" if major else ""
-            print(f"  {name:16} {lib['version']:10} -> {latest} available{note}")
+        if is_newer(latest, lib["version"]):
+            updates += 1
+            note = "  (major version, needs --major)" if is_major_step(latest, lib["version"]) else ""
+            print(f"  {name:16} {lib['version']:10} -> {latest} available{note}{local}")
         else:
-            print(f"  {name:16} {lib['version']:10} up to date")
-    if outdated:
-        print("\nChange the version in static/vendor/manifest.json, then run: python3 update_vendor.py")
-        print("Check the library's changelog for breaking changes before updating major versions.")
+            print(f"  {name:16} {lib['version']:10} up to date{local}")
+
+    if updates or missing:
+        print("\nRun: python3 update_vendor.py --update")
+        print("Major versions are skipped unless --major is given; check their changelog first.")
 
 
-def cmd_update(libs):
-    """Downloads missing libraries and removes old versions."""
+def cmd_update(data, names, allow_major):
+    """Raises versions in the manifest to the latest release, downloads them and removes old versions."""
 
-    for name, lib in libs.items():
-        if is_complete(name, lib):
-            print(f"  {name:16} {lib['version']:10} already present")
-        else:
-            count = download(name, lib)
-            print(f"  {name:16} {lib['version']:10} downloaded ({count} files)")
+    errors = 0
+    for name, lib in select(libraries(data), names).items():
+        current = lib["version"]
+        try:
+            latest = latest_version(lib["package"])
+        except Exception as e:
+            print(f"  {name:16} {current:10} could not check for updates: {e}")
+            latest = None
+
+        target = current
+        if is_newer(latest, current):
+            if is_major_step(latest, current) and not allow_major:
+                print(f"  {name:16} {current:10} -> {latest} skipped (major version, use --major)")
+            else:
+                target = latest
+
+        try:
+            if target != current:
+                new_lib = {**lib, "version": target}
+                count = download(name, new_lib)
+                data[name]["version"] = target
+                write_manifest(data)
+                lib = new_lib
+                print(f"  {name:16} {current:10} -> {target} updated ({count} files, manifest.json changed)")
+            elif not is_complete(name, lib):
+                count = download(name, lib)
+                print(f"  {name:16} {current:10} downloaded ({count} files)")
+            else:
+                print(f"  {name:16} {current:10} up to date")
+        except Exception as e:
+            errors += 1
+            print(f"  {name:16} {current:10} FAILED: {e}")
+            print(f"  {'':16} {'':10} manifest.json still points to {current}")
+            continue
+
         for old in remove_old_versions(name, lib):
             print(f"  {name:16} removed old version {old}")
-    print("\nDone. Test NetPAC, then commit static/vendor/.")
+
+    print("\nDone. Restart NetPAC (sudo systemctl restart netpac), test it, then commit static/vendor/.")
+    return errors
 
 
 def main():
-    """Command line entry point (--check or update)."""
+    """Command line entry point: check (default) or --update."""
 
-    parser = argparse.ArgumentParser(description="Manage NetPAC's local frontend libraries")
-    parser.add_argument("--check", action="store_true", help="only show available updates")
+    parser = argparse.ArgumentParser(
+        description="Manage NetPAC's local frontend libraries. Without options, only checks for updates.")
+    parser.add_argument("--update", action="store_true",
+                        help="raise the versions in manifest.json to the latest release and download them")
+    parser.add_argument("--major", action="store_true",
+                        help="with --update: also install new major versions (may break NetPAC)")
+    parser.add_argument("libs", nargs="*", metavar="LIB",
+                        help="with --update: only these libraries (e.g. chartjs animejs)")
     args = parser.parse_args()
 
-    libs = load_manifest()
+    if (args.major or args.libs) and not args.update:
+        parser.error("--major and library names can only be used together with --update")
+
+    data = read_manifest()
     try:
-        cmd_check(libs) if args.check else cmd_update(libs)
+        if args.update:
+            sys.exit(1 if cmd_update(data, args.libs, args.major) else 0)
+        cmd_check(libraries(data))
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)

@@ -82,6 +82,10 @@ those hosts, the job waits until the host is free. Jobs without hosts (no target
 or localhost) only wait for a running job of the same script or playbook. Queued jobs can be removed from the queue on the job detail page.
 A schedule is skipped if its previous run is still waiting in the queue.
 
+Jobs running longer than 4 hours are stopped and get the status **timeout**.
+Up to 10 MB of output is stored per job; for larger output the beginning and
+the end are kept.
+
 ## Hosts
 
 Hosts can be created, edited, and deleted in the GUI and assigned to 
@@ -242,15 +246,27 @@ without internet access and transfers no user data to third parties.
 
 The versions are defined in `static/vendor/manifest.json`. To update them:
 
-Show available updates:
+Show available updates (changes nothing):
 ```Bash
-python3 update_vendor.py --check   
+python3 update_vendor.py
 ```
 
-Change the version in `static/vendor/manifest.json` and download the new version, the old one will be removed automatically.
+Update all libraries to their latest release. The new version is downloaded,
+`static/vendor/manifest.json` is updated and the old version is removed.
+If a download fails, the library stays on its current version.
 ```Bash
-python3 update_vendor.py           
+python3 update_vendor.py --update
 ```
+
+New major versions (e.g. 4.x -> 5.x) are skipped, as they may break NetPAC.
+Check the changelog first, then install them explicitly, optionally only for
+single libraries:
+```Bash
+python3 update_vendor.py --update --major chartjs
+```
+
+Restart NetPAC afterwards (`sudo systemctl restart netpac`), because the
+manifest is read at startup.
 
 Each library keeps its license file in its own folder under `static/vendor/`.
 
