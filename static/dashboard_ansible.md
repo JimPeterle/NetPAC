@@ -45,7 +45,7 @@ vars:
 
 ## Secrets
 
-Credentials are injected as environment variables:
+Credentials of type **Username + password** are injected as environment variables:
 
 ```
   vars:
@@ -55,4 +55,36 @@ Credentials are injected as environment variables:
     secret_2_password: "{{ lookup('env', 'SECRET_2_PASSWORD') }}"
     secret_3_username: "{{ lookup('env', 'SECRET_3_USERNAME') }}"
     secret_3_password: "{{ lookup('env', 'SECRET_3_PASSWORD') }}"
+```
+
+## SSH keys
+
+Select a secret of type **SSH key** — nothing else is needed in the Playbook.
+NetPAC passes it automatically as `--private-key` and its username as `--user`.
+The key exists only as a temporary file while the job runs.
+
+- `ansible_user` from group variables or the Playbook takes precedence over the username of the secret.
+- Only the first selected SSH key is passed automatically. Further keys are available as files:
+
+```
+  vars:
+    ansible_ssh_private_key_file: "{{ lookup('env', 'SECRET_2_KEYFILE') }}"
+```
+
+The matching public key must be in `~/.ssh/authorized_keys` on the targets
+(for network devices: in the device's key configuration, e.g. `ip ssh pubkey-chain` on Cisco IOS).
+On the first connection, the host key of the target must be known to the NetPAC user
+(`~/.ssh/known_hosts`, e.g. via `ssh-keyscan`).
+
+## Ansible Vault
+
+Select a secret of type **Vault password**. NetPAC passes it as
+`--vault-id <secret name>@<temporary file>`, so encrypted variable files and
+`!vault` strings in the Playbook are decrypted automatically.
+
+Several vault passwords can be selected at once. To make the assignment explicit,
+encrypt with the secret name as vault ID:
+
+```
+ansible-vault encrypt_string --vault-id <secret name>@prompt 'my-password' --name 'ansible_password'
 ```

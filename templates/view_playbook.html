@@ -69,19 +69,19 @@
                         <select name="secret_1" class="form-input">
                             <option value="">None</option>
                             {% for secret in secrets %}
-                            <option value="{{ secret.name }}">{{ secret.name }}</option>
+                            <option value="{{ secret.name }}">{{ secret.name }}{% if secret.type and secret.type != 'password' %} – {{ secret.type_label }}{% endif %}{% if secret.username %} ({{ secret.username }}){% endif %}</option>
                             {% endfor %}
                         </select>
                         <select name="secret_2" class="form-input" style="margin-top: 0.5rem;">
                             <option value="">None</option>
                             {% for secret in secrets %}
-                            <option value="{{ secret.name }}">{{ secret.name }}</option>
+                            <option value="{{ secret.name }}">{{ secret.name }}{% if secret.type and secret.type != 'password' %} – {{ secret.type_label }}{% endif %}{% if secret.username %} ({{ secret.username }}){% endif %}</option>
                             {% endfor %}
                         </select>
                         <select name="secret_3" class="form-input" style="margin-top: 0.5rem;">
                             <option value="">None</option>
                             {% for secret in secrets %}
-                            <option value="{{ secret.name }}">{{ secret.name }}</option>
+                            <option value="{{ secret.name }}">{{ secret.name }}{% if secret.type and secret.type != 'password' %} – {{ secret.type_label }}{% endif %}{% if secret.username %} ({{ secret.username }}){% endif %}</option>
                             {% endfor %}
                         </select>
 

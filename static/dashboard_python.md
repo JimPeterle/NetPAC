@@ -40,7 +40,10 @@ The variable name in the script can be chosen freely.
 
 ## Secrets
 
-To use the credentials from the secret tab use this:
+Selected secrets are passed as environment variables, numbered by their slot (1–3).
+`SECRET_1_TYPE` tells you the type: `password`, `ssh_key` or `vault_password`.
+
+**Username + password**
 
 ```python
 import os
@@ -50,9 +53,47 @@ password_1 = os.environ.get('SECRET_1_PASSWORD')
 
 username_2 = os.environ.get('SECRET_2_USERNAME')
 password_2 = os.environ.get('SECRET_2_PASSWORD')
-
-username_3 = os.environ.get('SECRET_3_USERNAME')
-password_3 = os.environ.get('SECRET_3_PASSWORD')
 ```
 
-Then you can use the two variables for further things.
+**SSH key**
+
+NetPAC writes the private key to a temporary file that only NetPAC can read
+and deletes it when the job ends. The key is always passed without passphrase.
+
+```python
+import os
+
+username = os.environ.get('SECRET_1_USERNAME')
+key_file = os.environ.get('SECRET_1_KEYFILE')
+```
+
+Example with Netmiko:
+
+```python
+from netmiko import ConnectHandler
+
+connection = ConnectHandler(
+    device_type='cisco_ios',
+    host=host,
+    username=username,
+    use_keys=True,
+    key_file=key_file,
+)
+```
+
+Example with Paramiko:
+
+```python
+import paramiko
+
+client = paramiko.SSHClient()
+client.load_system_host_keys()
+client.connect(host, username=username, key_filename=key_file)
+```
+
+The matching public key must be in `~/.ssh/authorized_keys` of that user on the target.
+
+**Vault password**
+
+`SECRET_1_VAULTFILE` contains the path to a temporary file with the vault password,
+e.g. for scripts that call `ansible-vault` themselves.

@@ -1096,8 +1096,9 @@ def load_secret_choices():
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT name, username FROM secrets ORDER BY name")
-        return [{'name': row[0], 'username': row[1]} for row in cur.fetchall()]
+        cur.execute("SELECT name, username, secret_type FROM secrets ORDER BY name")
+        return [{'name': row[0], 'username': row[1], 'type': row[2], 'type_label': SECRET_TYPES.get(row[2], row[2])}
+                for row in cur.fetchall()]
     finally:
         cur.close()
         conn.close()
@@ -2401,6 +2402,7 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
     output_script = ""
     status = "completed"
     temp_hostfile = None
+    temp_files = []
     env = job_env(PYTHONUNBUFFERED='1')
 
     process = None 
@@ -2456,16 +2458,7 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
         else:
             targets = []
 
-        for num, secret in enumerate([secret_1, secret_2, secret_3], 1):
-            if secret:
-                cur.execute("SELECT username, encrypted_password FROM secrets WHERE name = %s", (secret,))
-                row = cur.fetchone()
-                if not row:
-                    raise ValueError(f"Secret '{secret}' not found (deleted or renamed?)")
-                username, password_enc = row
-                decrypted = encryption.decrypt(password_enc)
-                env[f'SECRET_{num}_USERNAME'] = username
-                env[f'SECRET_{num}_PASSWORD'] = decrypted
+        prepare_job_secrets(cur, [secret_1, secret_2, secret_3], env, temp_files)
 
         fd, temp_hostfile = tempfile.mkstemp(prefix="netpac_hosts_", suffix=".txt")
         with os.fdopen(fd, "w") as f:
@@ -2531,6 +2524,7 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
     finally:
         if temp_hostfile and os.path.exists(temp_hostfile):
             os.remove(temp_hostfile)
+        remove_temp_files(temp_files)
 
         end_time = datetime.now()
         duration = int((end_time - start_time).total_seconds())
@@ -3393,6 +3387,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
     status = "completed"
     temp_inventory = None
     temp_extra_vars = None
+    temp_files = []
     env = job_env(PYTHONUNBUFFERED='1', ANSIBLE_FORCE_COLOR='1', ANSIBLE_STDOUT_CALLBACK='default')
 
     ansible = shutil.which("ansible-playbook") or "/usr/bin/ansible-playbook"
@@ -3468,16 +3463,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             targets = []
             group_host_map = {}
 
-        for num, secret in enumerate([secret_1, secret_2, secret_3], 1):
-            if secret:
-                cur.execute("SELECT username, encrypted_password FROM secrets WHERE name = %s", (secret,))
-                row = cur.fetchone()
-                if not row:
-                    raise ValueError(f"Secret '{secret}' not found (deleted or renamed?)")
-                username, password_enc = row
-                decrypted = encryption.decrypt(password_enc)
-                env[f'SECRET_{num}_USERNAME'] = username
-                env[f'SECRET_{num}_PASSWORD'] = decrypted
+        secret_args = prepare_job_secrets(cur, [secret_1, secret_2, secret_3], env, temp_files)
 
         fd, temp_inventory = tempfile.mkstemp(prefix="netpac_inventory_", suffix=".ini")
         with os.fdopen(fd, "w") as f:
@@ -3510,7 +3496,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         if not os.path.isfile(playbook_path):
             raise FileNotFoundError(f"Playbook not found: {filename}")
 
-        args = [ansible, playbook_path, '-i', temp_inventory]
+        args = [ansible, playbook_path, '-i', temp_inventory] + secret_args
 
         if extra_vars_str:
             fd, temp_extra_vars = tempfile.mkstemp(prefix="netpac_extra_vars_", suffix=".json")
@@ -3569,6 +3555,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
             os.remove(temp_inventory)
         if temp_extra_vars and os.path.exists(temp_extra_vars):
             os.remove(temp_extra_vars)
+        remove_temp_files(temp_files)
 
         end_time = datetime.now()
         duration = int((end_time - start_time).total_seconds())
@@ -5324,6 +5311,149 @@ def find_secret_usages(cur, secret_name):
 
     return usages
 
+SECRET_TYPES = {"password": "Password", "ssh_key": "SSH key", "vault_password": "Vault password"}
+
+
+def normalize_private_key(text):
+    """Normalizes line endings of a pasted private key; ssh needs a trailing newline."""
+
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip() + "\n"
+
+
+def load_private_key(text, passphrase=None):
+    """Loads an OpenSSH or PEM private key; raises ValueError if it is invalid or the passphrase is wrong."""
+
+    from cryptography.exceptions import UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import serialization
+
+    data = text.encode()
+    password = passphrase.encode() if passphrase else None
+    for loader in (serialization.load_ssh_private_key, serialization.load_pem_private_key):
+        try:
+            return loader(data, password=password)
+        except (ValueError, TypeError):
+            continue
+        except UnsupportedAlgorithm as e:
+            raise ValueError(f"This key type can't be read on the server ({e}) — for passphrase-protected OpenSSH keys "
+                             "the Python package bcrypt is required")
+    raise ValueError("Invalid private key or wrong passphrase")
+
+
+def unencrypted_private_key(text, passphrase=None):
+    """Returns the key in OpenSSH format without passphrase, as ssh can't ask for it in a background job."""
+
+    from cryptography.hazmat.primitives import serialization
+
+    if not passphrase:
+        return normalize_private_key(text)
+    key = load_private_key(text, passphrase)
+    return key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH,
+                             serialization.NoEncryption()).decode()
+
+
+def write_private_file(content, prefix, temp_files):
+    """Writes content to a temporary file only the NetPAC user can read and remembers it for cleanup."""
+
+    fd, file_path = tempfile.mkstemp(prefix=prefix)
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+    temp_files.append(file_path)
+    return file_path
+
+
+def remove_temp_files(temp_files):
+    """Deletes the temporary key and vault files of a job."""
+
+    for file_path in temp_files:
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+
+
+def prepare_job_secrets(cur, secret_names, env, temp_files):
+    """Loads the selected secrets into the job environment and returns the matching Ansible arguments."""
+
+    ansible_args = []
+    key_passed = False
+    for num, name in enumerate(secret_names, 1):
+        if not name:
+            continue
+        cur.execute("SELECT secret_type, username, encrypted_password, encrypted_passphrase FROM secrets WHERE name = %s", (name,))
+        row = cur.fetchone()
+        if not row:
+            raise ValueError(f"Secret '{name}' not found (deleted or renamed?)")
+
+        secret_type, username, value_enc, passphrase_enc = row
+        value = encryption.decrypt(value_enc)
+        env[f"SECRET_{num}_TYPE"] = secret_type
+        env[f"SECRET_{num}_USERNAME"] = username or ""
+
+        if secret_type == "ssh_key":
+            passphrase = encryption.decrypt(passphrase_enc) if passphrase_enc else None
+            key_file = write_private_file(unencrypted_private_key(value, passphrase), "netpac_key_", temp_files)
+            env[f"SECRET_{num}_KEYFILE"] = key_file
+            if not key_passed:
+                ansible_args += ["--private-key", key_file] + (["--user", username] if username else [])
+                key_passed = True
+        elif secret_type == "vault_password":
+            vault_file = write_private_file(value, "netpac_vault_", temp_files)
+            env[f"SECRET_{num}_VAULTFILE"] = vault_file
+            ansible_args += ["--vault-id", f"{re.sub(r'[^A-Za-z0-9_.-]', '_', name)}@{vault_file}"]
+        else:
+            env[f"SECRET_{num}_PASSWORD"] = value
+    return ansible_args
+
+
+def parse_secret_form(form, existing=None):
+    """Returns (data, error) for the secret form; existing holds the stored secret when editing."""
+
+    secret_type = form.get("secret_type", "password")
+    name = form.get("name", "").strip()
+    username = form.get("username", "").strip()
+    description = form.get("description", "").strip()
+    value = normalize_private_key(form.get("private_key", "")) if secret_type == "ssh_key" and form.get("private_key", "").strip() \
+        else (form.get("password", "") if secret_type != "ssh_key" else "")
+    passphrase = form.get("passphrase", "") if secret_type == "ssh_key" else ""
+
+    if secret_type not in SECRET_TYPES:
+        return None, "Invalid secret type"
+    if not name or len(name) > 100:
+        return None, "Name is required (max. 100 characters)"
+    if secret_type == "vault_password":
+        username = ""
+    elif not username:
+        return None, "Username is required"
+    if len(username) > 100:
+        return None, "Username is too long (max. 100 characters)"
+
+    type_changed = existing is not None and existing["secret_type"] != secret_type
+    if not value and (existing is None or type_changed):
+        return None, "Please enter the private key" if secret_type == "ssh_key" else "Please enter the password"
+
+    data = {"name": name, "secret_type": secret_type, "username": username, "description": description,
+            "value": value or None, "passphrase": None, "passphrase_changed": False}
+
+    if secret_type == "ssh_key":
+        if value:
+            key_text, key_passphrase = value, passphrase or None
+            data["passphrase"], data["passphrase_changed"] = key_passphrase, True
+        else:
+            key_text = encryption.decrypt(existing["encrypted_password"])
+            if passphrase:
+                key_passphrase = passphrase
+                data["passphrase"], data["passphrase_changed"] = passphrase, True
+            else:
+                key_passphrase = encryption.decrypt(existing["encrypted_passphrase"]) if existing["encrypted_passphrase"] else None
+        try:
+            load_private_key(key_text, key_passphrase)
+        except ValueError as e:
+            return None, str(e)
+    elif existing is not None and existing["secret_type"] == "ssh_key":
+        data["passphrase_changed"] = True
+    return data, None
+
+
 @app.route("/secrets")
 @login_required
 def secrets():
@@ -5337,7 +5467,7 @@ def secrets():
     cur = conn.cursor()
     
     try:
-        sql_query = "SELECT id, name, username, description, created_at FROM secrets ORDER BY created_at DESC"
+        sql_query = "SELECT id, name, username, description, created_at, secret_type FROM secrets ORDER BY created_at DESC"
         cur.execute(sql_query)
         all_secrets = cur.fetchall()
         
@@ -5348,7 +5478,8 @@ def secrets():
                 'name': row[1],
                 'username': row[2],
                 'description': row[3],
-                'created_at': row[4]
+                'created_at': row[4],
+                'secret_type': row[5]
             })
         
         return render_template("secrets.html", secrets=secrets_list)
@@ -5372,27 +5503,25 @@ def create_secret():
         return redirect(url_for("secrets"))
     
     if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "")
-        description = request.form.get("description", "").strip()
-        
-        if not name or not username or not password:
-            flash("Name, username, and password are required fields!", "danger")
+        data, error = parse_secret_form(request.form)
+        if error:
+            flash(error, "danger")
             return redirect(url_for("create_secret"))
-        
+        name = data["name"]
+
         conn = get_db()
         cur = conn.cursor()
-        
+
         try:
-            encrypted_password = encryption.encrypt(password)
-            
-            sql_query = "INSERT INTO secrets (name, username, encrypted_password, description) VALUES (%s, %s, %s, %s)"
-            cur.execute(sql_query, (name, username, encrypted_password, description))
+            cur.execute("""
+                INSERT INTO secrets (name, secret_type, username, encrypted_password, encrypted_passphrase, description)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (name, data["secret_type"], data["username"], encryption.encrypt(data["value"]),
+                  encryption.encrypt(data["passphrase"]) if data["passphrase"] else None, data["description"]))
             conn.commit()
-            
-            logger.info(f"Secret '{sanitize_log(name)}' created by {current_user.id}")
-            audit("secret.create", name)
+
+            logger.info(f"Secret '{sanitize_log(name)}' ({data['secret_type']}) created by {current_user.id}")
+            audit("secret.create", name, SECRET_TYPES[data["secret_type"]])
             flash(f"Secret '{name}' successfully created!", "success")
             return redirect(url_for("secrets"))
 
@@ -5407,7 +5536,7 @@ def create_secret():
         finally:
             cur.close()
             conn.close()
-    
+
     return render_template("create_secret.html")
 
 
@@ -5425,8 +5554,10 @@ def edit_secret(secret_id):
     
     try:
 
-        sql_query = "SELECT id, name, username, description FROM secrets WHERE id = %s"
-        cur.execute(sql_query, (secret_id,))
+        cur.execute("""
+            SELECT id, name, username, description, secret_type, encrypted_password, encrypted_passphrase
+            FROM secrets WHERE id = %s
+        """, (secret_id,))
         row = cur.fetchone()
         
         if not row:
@@ -5437,40 +5568,33 @@ def edit_secret(secret_id):
             'id': row[0],
             'name': row[1],
             'username': row[2],
-            'description': row[3]
+            'description': row[3],
+            'secret_type': row[4],
+            'has_passphrase': bool(row[6])
         }
+        stored = {"secret_type": row[4], "encrypted_password": row[5], "encrypted_passphrase": row[6]}
         
         if request.method == "POST":
-            name = request.form.get("name", "").strip()
-            username = request.form.get("username", "").strip()
-            new_password = request.form.get("password", "")
-            description = request.form.get("description", "").strip()
-            
-            if not name or not username:
-                flash("Name and username are required fields", "danger")
+            data, error = parse_secret_form(request.form, stored)
+            if error:
+                flash(error, "danger")
                 return render_template("edit_secret.html", secret=secret)
-            
-            try:
+            name, new_password = data["name"], data["value"]
 
+            try:
+                fields = ["name = %s", "secret_type = %s", "username = %s", "description = %s"]
+                values = [name, data["secret_type"], data["username"], data["description"]]
                 if new_password:
-                    encrypted_password = encryption.encrypt(new_password)
-                    sql_update = """
-                        UPDATE secrets 
-                        SET name = %s, username = %s, encrypted_password = %s, description = %s
-                        WHERE id = %s
-                    """
-                    cur.execute(sql_update, (name, username, encrypted_password, description, secret_id))
-                else:
-                    sql_update = """
-                        UPDATE secrets 
-                        SET name = %s, username = %s, description = %s
-                        WHERE id = %s
-                    """
-                    cur.execute(sql_update, (name, username, description, secret_id))
-                
+                    fields.append("encrypted_password = %s")
+                    values.append(encryption.encrypt(new_password))
+                if data["passphrase_changed"]:
+                    fields.append("encrypted_passphrase = %s")
+                    values.append(encryption.encrypt(data["passphrase"]) if data["passphrase"] else None)
+                cur.execute(f"UPDATE secrets SET {', '.join(fields)} WHERE id = %s", values + [secret_id])
+
                 conn.commit()
                 logger.info(f"Secret '{sanitize_log(name)}' (ID: {secret_id}) updated by {current_user.id}")
-                audit("secret.update", name, "password changed" if new_password else None)
+                audit("secret.update", name, f"{SECRET_TYPES[data['secret_type']]}" + (", value changed" if new_password else ""))
                 flash(f"Secret '{name}' has been updated", "success")
 
                 if name != secret['name']:
