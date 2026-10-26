@@ -265,7 +265,7 @@ single libraries:
 python3 update_vendor.py --update --major chartjs
 ```
 
-Restart NetPAC afterwards (`sudo systemctl restart netpac`), because the
+Restart NetPAC afterwards (`sudo systemctl restart netpac-web`), because the
 manifest is read at startup.
 
 Each library keeps its license file in its own folder under `static/vendor/`.

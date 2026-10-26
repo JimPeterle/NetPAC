@@ -477,11 +477,11 @@ print_status "Gunicorn configuration created"
 # ===================================
 
 echo ""
-echo -e "${YELLOW}Creating systemd service...${NC}"
+echo -e "${YELLOW}Creating systemd service for web application...${NC}"
 
-sudo tee /etc/systemd/system/netpac.service > /dev/null << EOF
+sudo tee /etc/systemd/system/netpac-web.service > /dev/null << EOF
 [Unit]
-Description=NetPAC Application (Gunicorn)
+Description=NetPAC Web Application
 After=network.target mariadb.service
 
 [Service]
@@ -767,7 +767,7 @@ echo -e "${YELLOW}Starting services...${NC}"
 sudo systemctl daemon-reload
 print_status "Systemd reloaded"
 
-for svc in netpac netpac-scheduler netpac-executor; do
+for svc in netpac-web netpac-scheduler netpac-executor; do
     sudo systemctl enable "$svc"
     sudo systemctl restart "$svc"
 
@@ -804,12 +804,12 @@ echo "  App NGINX port: 443"
 echo "  IP: $IP"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
-echo "  Check status: sudo systemctl status netpac netpac-scheduler netpac-executor nginx"
-echo "  Restart NetPAC: sudo systemctl restart netpac netpac-scheduler netpac-executor"
+echo "  Check status: sudo systemctl status netpac-web netpac-scheduler netpac-executor nginx"
+echo "  Restart NetPAC: sudo systemctl restart netpac-web netpac-scheduler netpac-executor"
 echo "  Reload Nginx: sudo systemctl reload nginx"
 echo ""
 echo -e "${YELLOW}Logs:${NC}"
-echo "  NetPAC: sudo journalctl -u netpac -f"
+echo "  NetPAC: sudo journalctl -u netpac-web -f"
 echo "  Gunicorn: tail -f /var/log/netpac/gunicorn_error.log"
 echo "  Nginx: sudo tail -f /var/log/nginx/netpac_error.log"
 echo ""

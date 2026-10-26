@@ -233,7 +233,7 @@ def cmd_update(data, names, allow_major):
         for old in remove_old_versions(name, lib):
             print(f"  {name:16} removed old version {old}")
 
-    print("\nDone. Restart NetPAC (sudo systemctl restart netpac), test it, then commit static/vendor/.")
+    print("\nDone. Restart NetPAC (sudo systemctl restart netpac-web), test it, then commit static/vendor/.")
     return errors
 
 

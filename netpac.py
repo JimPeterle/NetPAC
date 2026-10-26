@@ -6181,7 +6181,7 @@ def restore_backup():
     if ok:
         logger.info(f"Restore completed by {current_user.id} from backup: {safe_filename}")
         audit("backup.restore", safe_filename)
-        flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: sudo systemctl restart netpac", "success")
+        flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: sudo systemctl restart netpac-web", "success")
         return redirect(url_for("settings", tab="backup"))
 
     logger.error(f"Restore from {safe_filename} failed: {error} — rolling back to {safety_filename}")

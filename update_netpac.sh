@@ -5,7 +5,7 @@
 # Run inside the already cloned Git repository
 ######################################
 
-clear
+[ "$1" = "--after-pull" ] || clear
 
 set -e
 
@@ -18,10 +18,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}╔════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║        Updating NetPAC...          ║${NC}"
-echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
-echo ""
+if [ "$1" != "--after-pull" ]; then
+    echo -e "${GREEN}╔════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║        Updating NetPAC...          ║${NC}"
+    echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
+    echo ""
+fi
 
 # ===================================
 # FUNCTIONS
@@ -49,24 +51,47 @@ APP_DIR="$(pwd)"
 # Update Repository
 # ===================================
 
-OLD_COMMIT=$(git rev-parse HEAD)
-print_status "Current commit: $OLD_COMMIT"
+if [ "$1" != "--after-pull" ]; then
+    OLD_COMMIT=$(git rev-parse HEAD)
+    print_status "Current commit: $OLD_COMMIT"
+
+    echo ""
+
+    git pull
+
+    echo ""
+
+    NEW_COMMIT=$(git rev-parse HEAD)
+
+    if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
+        print_status "Repository updated to commit: $NEW_COMMIT"
+        echo ""
+        exec bash "$APP_DIR/update_netpac.sh" --after-pull
+    else
+        print_status "No updates available. You are already on the latest commit: $NEW_COMMIT"
+    fi
+fi
 
 echo ""
 
-git pull
+# ===================================
+# WEB SERVICE RENAME (netpac -> netpac-web)
+# ===================================
 
-echo ""
+WEB_UNIT=/etc/systemd/system/netpac-web.service
+OLD_WEB_UNIT=/etc/systemd/system/netpac.service
 
-NEW_COMMIT=$(git rev-parse HEAD)
-
-if [ "$OLD_COMMIT" != "$NEW_COMMIT" ]; then
-    print_status "Repository updated to commit: $NEW_COMMIT"
-else
-    print_status "No updates available. You are already on the latest commit: $NEW_COMMIT"
-fi 
-
-echo ""
+if [ ! -f "$WEB_UNIT" ] && [ -f "$OLD_WEB_UNIT" ]; then
+    sed -e 's/^Description=.*/Description=NetPAC Web Application/' "$OLD_WEB_UNIT" > /tmp/netpac-web.service.$$
+    sudo systemctl disable --now netpac.service
+    sudo install -m 644 /tmp/netpac-web.service.$$ "$WEB_UNIT"
+    rm -f /tmp/netpac-web.service.$$
+    sudo rm "$OLD_WEB_UNIT"
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now netpac-web.service
+    print_status "Web service renamed: netpac.service -> netpac-web.service"
+    echo ""
+fi
 
 # ===================================
 # JOB EXECUTOR SERVICE
@@ -97,7 +122,7 @@ read -p "Restart systemd services? (y/n) " -n 1 -r
 echo ""
 
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    sudo systemctl restart netpac.service
+    sudo systemctl restart netpac-web.service
     sudo systemctl restart netpac-scheduler.service
     sudo systemctl restart netpac-executor.service
     print_status "Systemd services restarted successfully."
