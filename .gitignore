@@ -28,3 +28,6 @@ __pycache__/
 
 # OS / editor
 .DS_Store
+
+# Docker: backups folder next to docker-compose.yml (e.g. docker/backups)
+backups/

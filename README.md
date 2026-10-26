@@ -1,5 +1,20 @@
 # NetPAC - Network Python & Ansible Center
 
+<p align="center">
+  <a href="#netpac-configuration"><img src="https://img.shields.io/badge/platform-Linux%20(Ubuntu%20%7C%20Debian)-E95420?logo=ubuntu&logoColor=white" alt="Platform: Linux (Ubuntu | Debian)"></a>
+  <a href="https://github.com/JimPeterle/NetPAC/releases/latest"><img src="https://img.shields.io/github/v/release/JimPeterle/NetPAC?label=release&color=blue" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <br>
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/ansible-playbooks-EE0000?logo=ansible&logoColor=white" alt="Ansible">
+  <img src="https://img.shields.io/badge/mariadb-10.11%2B-003545?logo=mariadb&logoColor=white" alt="MariaDB 10.11+">
+  <a href="#installation-with-docker"><img src="https://img.shields.io/badge/docker-supported-2496ED?logo=docker&logoColor=white" alt="Docker supported"></a>
+</p>
+
+> [!NOTE]
+> NetPAC is made for **Linux servers (Ubuntu / Debian)**, installed with `setup.sh` or with Docker.
+> Windows and macOS are not supported as a host.
+
 NetPAC is a network automation and management platform. You can create an inventory of 
 hosts and groups and use this inventory for Python scripts and Ansible 
 Playbooks.
@@ -72,7 +87,7 @@ and secrets.
 Jobs are started by a separate service, **netpac-executor**. Every job is first
 placed in a queue (status **queued**) and started as soon as a slot is free. By
 default up to 5 jobs run in parallel; this can be changed with
-`MAX_PARALLEL_JOBS` in secret.env.
+`MAX_PARALLEL_JOBS` in netpac.py.
 
 A host is only used by one job at a time, no matter which script or playbook.
 The check uses the actual hosts behind the target: an update playbook can run
@@ -236,6 +251,88 @@ When everything is ready, the final step can be carried out.
 ```Bash
 bash setup.sh
 ```
+
+## Installation with Docker
+
+Instead of `setup.sh`, NetPAC can run in Docker. The image contains NetPAC with
+Python, Ansible and all dependencies on its own Ubuntu base, so the host can run
+any Linux distribution with Docker (e.g. Ubuntu 24.04). The database stays on the
+host: set it up as described in [Database configuration](#database-configuration).
+All Docker files are in the `docker/` folder of the repository.
+
+Requirements on the host:
+- Docker Engine with the Compose plugin, Compose 2.23 or newer (`docker compose version`).
+  Docker's official repository is recommended (docs.docker.com, "Install Docker Engine on Ubuntu").
+- MariaDB 10.11 or newer (tested with 11.8). Ubuntu 24.04 ships 10.11; newer versions are
+  available from the official MariaDB repository.
+- Free ports 80 and 443.
+
+Web interface, scheduler and executor run as three containers from the same image,
+plus nginx as reverse proxy. All containers use the host network, so `DB_IP=127.0.0.1`
+works as with a normal installation.
+
+Download the two files and fill in secret.env (see [NetPAC configuration](#netpac-configuration)
+for the values and how to create the ENCRYPTION_KEY):
+```Bash
+mkdir netpac && cd netpac
+curl -O https://raw.githubusercontent.com/JimPeterle/NetPAC/main/docker/docker-compose.yml
+curl -o secret.env https://raw.githubusercontent.com/JimPeterle/NetPAC/main/secret_examples.env
+chmod 600 secret.env
+vim secret.env
+```
+
+Start NetPAC:
+```Bash
+docker compose up -d
+```
+
+On the first start a self-signed certificate is created in `/etc/netpac/certs`.
+A certificate uploaded later in the GUI is used after `docker compose restart nginx`.
+
+### Data and folders
+
+The containers use the same paths as a normal installation. They are stored on the host:
+
+| Host | Content |
+|---|---|
+| `/var/lib/netpac` | Scripts, Playbooks, Git sync, graphs |
+| `/var/log/netpac` | Log files |
+| `/etc/netpac/certs` | TLS certificate |
+| `./backups` | Database backups (next to docker-compose.yml) |
+
+Python venv, Ansible collections, SSH known_hosts and the Git sync settings are kept
+in Docker volumes, so they survive updates.
+
+The containers run as UID/GID 1000. If your host user has a different ID, change
+`PUID` and `PGID` in docker-compose.yml (`id -u`, `id -g`). Folders that do not exist
+yet are created with this owner; existing folders must be writable by it.
+
+The log files are not rotated inside the containers. Use logrotate on the host,
+e.g. `/etc/logrotate.d/netpac` (replace `<user>` with the host user that has the PUID):
+```
+/var/log/netpac/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su <user> <user>
+}
+```
+
+### Update and commands
+
+```Bash
+docker compose pull && docker compose up -d   # update (database changes are applied automatically)
+docker compose ps                             # status
+docker compose logs -f executor               # container output
+docker compose restart                        # restart everything
+```
+
+Playbooks with "Run on the NetPAC server (localhost)" run inside the executor container,
+not on the host.
 
 ## Frontend libraries
 

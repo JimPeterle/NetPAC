@@ -4,7 +4,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 import logging
-from netpac import scheduler, load_jobs_from_db, scheduler_logger, cleanup_job_history, cleanup_audit_log
+from netpac import scheduler, load_jobs_from_db, scheduler_logger, cleanup_job_history, cleanup_audit_log, record_heartbeat
 import time
 
 aps_logger = logging.getLogger('apscheduler')
@@ -25,6 +25,7 @@ if __name__ == "__main__":
 
     try:
         while True:
+            record_heartbeat("scheduler", f"{len(scheduler.get_jobs())} scheduled")
             if time.time() - last_cleanup >= HISTORY_CLEANUP_INTERVAL:
                 cleanup_job_history()
                 cleanup_audit_log()

@@ -66,6 +66,8 @@ APP_VERSION = "6.0.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
+IN_DOCKER = os.environ.get("NETPAC_DOCKER") == "1"
+CONFIG_DIR = os.environ.get("NETPAC_CONFIG_DIR") or dir_path
 BACKUP_DIR = os.path.join(os.path.dirname(dir_path), "netpac_backups")
 DB_CNF_FILE = os.path.join(dir_path, "db_secrets.cnf")
 
@@ -1171,27 +1173,13 @@ def stop_process_group(process):
         pass
 
 
-def kill_process_group_later(pid, job_id):
-    """Sends SIGKILL to a cancelled job's process group if parts of it are still running after the grace period."""
-
-    def worker():
-        """Waits for the grace period, then kills what is left."""
-
-        time.sleep(JOB_KILL_GRACE_SECONDS)
-        try:
-            os.killpg(pid, signal.SIGKILL)
-            exec_logger.warning(f"Job {job_id} (PID {pid}) did not stop after SIGTERM and was killed")
-        except (ProcessLookupError, PermissionError):
-            pass
-
-    threading.Thread(target=worker, daemon=True).start()
-
-
 def stream_job_output(process, job_id, append_live_output):
     """Reads a job's output with size limit and timeout; returns (output, timed_out)."""
 
     output = JobOutput()
     expired = threading.Event()
+    with EXECUTOR_JOBS_LOCK:
+        EXECUTOR_JOBS[job_id] = process
 
     def on_timeout():
         """Stops the job when JOB_TIMEOUT_SECONDS is exceeded."""
@@ -1263,40 +1251,26 @@ def save_job_result(job_id, status, output, duration):
 # --------------------
 #   Stale job cleanup
 # --------------------
-STALE_JOB_NO_PID_SECONDS = 600
 JOB_CANCELLED_NOTE = "\n[NetPAC] Job was cancelled.\n"
-
-def is_process_alive(pid: int) -> bool:
-    """Returns True if a process with this PID exists."""
-
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+JOB_INTERRUPTED_NOTE = "\n[NetPAC] Job was interrupted (process no longer running, e.g. after a NetPAC restart).\n"
+EXECUTOR_JOBS = {}
+EXECUTOR_JOBS_LOCK = threading.Lock()
+EXECUTOR_STOPPING = set()
 
 
-def reap_stale_jobs():
-    """Marks running jobs whose process is gone as failed."""
+def reap_stale_jobs(startup=False):
+    """Marks running jobs the executor does not own (anymore) as failed; at startup all running jobs are stale."""
 
+    with EXECUTOR_JOBS_LOCK:
+        owned = set(EXECUTOR_JOBS)
     conn = get_db()
     cur = conn.cursor()
     reaped = []
     try:
-        cur.execute("""
-            SELECT job_id, pid, TIMESTAMPDIFF(SECOND, started_at, NOW())
-            FROM history_jobs
-            WHERE status = 'running' AND finished_at IS NULL
-        """)
-        for job_id, pid, age in cur.fetchall():
-            if pid:
-                if is_process_alive(pid):
-                    continue
-            elif age is None or age < STALE_JOB_NO_PID_SECONDS:
+        cur.execute("SELECT job_id FROM history_jobs WHERE status = 'running'")
+        for (job_id,) in cur.fetchall():
+            if not startup and job_id in owned:
                 continue
-
             cur.execute("""
                 UPDATE history_jobs
                 SET status = 'failed',
@@ -1304,9 +1278,10 @@ def reap_stale_jobs():
                     duration = TIMESTAMPDIFF(SECOND, started_at, NOW()),
                     output = CONCAT(COALESCE(output, ''), %s)
                 WHERE job_id = %s AND status = 'running'
-            """, ("\n[NetPAC] Job was interrupted (process no longer running, e.g. after a NetPAC restart).\n", job_id))
-            exec_logger.warning(f"Job {job_id} marked as failed: process {pid} no longer running")
-            reaped.append(job_id)
+            """, (JOB_INTERRUPTED_NOTE, job_id))
+            if cur.rowcount == 1:
+                exec_logger.warning(f"Job {job_id} marked as failed: its process is no longer running")
+                reaped.append(job_id)
         conn.commit()
     except Exception as e:
         exec_logger.error(f"Error while cleaning up stale jobs: {e}")
@@ -1317,6 +1292,46 @@ def reap_stale_jobs():
 
     for job_id in reaped:
         notify_job_finished(job_id)
+
+
+def stop_cancelled_jobs():
+    """Stops the processes of jobs that were cancelled in the web interface."""
+
+    with EXECUTOR_JOBS_LOCK:
+        candidates = [job_id for job_id, process in EXECUTOR_JOBS.items()
+                      if process is not None and job_id not in EXECUTOR_STOPPING]
+    if not candidates:
+        return
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        placeholders = ", ".join(["%s"] * len(candidates))
+        cur.execute(f"SELECT job_id FROM history_jobs WHERE status = 'cancelled' AND job_id IN ({placeholders})", candidates)
+        cancelled = [row[0] for row in cur.fetchall()]
+    finally:
+        cur.close()
+        conn.close()
+
+    for job_id in cancelled:
+        with EXECUTOR_JOBS_LOCK:
+            process = EXECUTOR_JOBS.get(job_id)
+            if process is None or job_id in EXECUTOR_STOPPING:
+                continue
+            EXECUTOR_STOPPING.add(job_id)
+        exec_logger.info(f"Stopping cancelled job {job_id} (PID {process.pid})")
+        threading.Thread(target=stop_process_group, args=(process,), daemon=True).start()
+
+
+def run_owned_job(job_id, target_fn, args):
+    """Runs a job in the executor and releases it afterwards."""
+
+    try:
+        target_fn(*args)
+    finally:
+        with EXECUTOR_JOBS_LOCK:
+            EXECUTOR_JOBS.pop(job_id, None)
+            EXECUTOR_STOPPING.discard(job_id)
 
 
 # --------------------
@@ -1454,6 +1469,8 @@ def claim_next_jobs():
                     WHERE job_id = %s AND status = 'planned'
                 """, (host_key, job_id))
                 if cur.rowcount == 1:
+                    with EXECUTOR_JOBS_LOCK:
+                        EXECUTOR_JOBS[job_id] = None
                     running.append((script_name, host_key))
                     started.append(job_id)
                     free_slots -= 1
@@ -1486,6 +1503,8 @@ def start_claimed_job(job_id):
         except Exception as e:
             fail_queued_job(cur, job_id, f"Run parameters could not be read ({type(e).__name__})")
             conn.commit()
+            with EXECUTOR_JOBS_LOCK:
+                EXECUTOR_JOBS.pop(job_id, None)
             notify_job_finished(job_id)
             return
         if '"redacted_fields"' not in (history_vars or ""):
@@ -1504,37 +1523,79 @@ def start_claimed_job(job_id):
         target_fn = execute_script_background
         args = (job_id, script_name, target, payload.get("variables", "{}"), payload.get("use_venv", False), *secret_args)
 
-    threading.Thread(target=target_fn, args=args, daemon=True).start()
+    threading.Thread(target=run_owned_job, args=(job_id, target_fn, args), daemon=True).start()
     exec_logger.info(f"Job #{job_id} ({sanitize_log(script_name)}) started by the executor")
+
+
+EXECUTOR_REAP_SECONDS = 10
+HEARTBEAT_SECONDS = 10
+HEARTBEAT_MAX_AGE = 90
+
+
+def record_heartbeat(service, info=None):
+    """Stores that a background service is alive (shown on the health page)."""
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        try:
+            cur.execute("""
+                INSERT INTO service_heartbeat (service, last_seen, info) VALUES (%s, NOW(), %s)
+                ON DUPLICATE KEY UPDATE last_seen = NOW(), info = VALUES(info)
+            """, (service, info))
+            conn.commit()
+        finally:
+            cur.close()
+            conn.close()
+    except Exception as e:
+        logger.error(f"Could not store heartbeat of {service}: {e}")
+
+
+def service_hint(service):
+    """Returns the command to restart a NetPAC service, matching the deployment (systemd or Docker)."""
+
+    if IN_DOCKER:
+        return f"docker compose restart {service}"
+    return f"sudo systemctl restart netpac-{service}"
+
+
+def service_down_message(service, age):
+    """Describes a missing heartbeat for the health page."""
+
+    state = "has never reported" if age is None else f"last reported {age} s ago"
+    return f"The {service} {state} — check it: {service_hint(service)}"
+
+
+def heartbeat_age(cur, service):
+    """Returns the seconds since the last heartbeat of a service, or None if it never reported."""
+
+    cur.execute("SELECT TIMESTAMPDIFF(SECOND, last_seen, NOW()) FROM service_heartbeat WHERE service = %s", (service,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 def run_executor():
     """Main loop of the netpac-executor service."""
 
     exec_logger.info(f"Executor started (max. {MAX_PARALLEL_JOBS} parallel jobs)")
-    reap_stale_jobs()
+    reap_stale_jobs(startup=True)
+    last_reap = last_heartbeat = 0.0
     while True:
         try:
-            reap_stale_jobs_throttled()
+            now = time.time()
+            if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                with EXECUTOR_JOBS_LOCK:
+                    running = len(EXECUTOR_JOBS)
+                record_heartbeat("executor", f"{running} running")
+                last_heartbeat = now
+            if now - last_reap >= EXECUTOR_REAP_SECONDS:
+                reap_stale_jobs()
+                last_reap = now
+            stop_cancelled_jobs()
             claim_next_jobs()
         except Exception as e:
             exec_logger.error(f"Executor loop error: {e}")
         time.sleep(EXECUTOR_POLL_SECONDS)
-
-
-REAP_THROTTLE_SECONDS = 10
-_last_reap = 0.0
-_reap_lock = threading.Lock()
-
-def reap_stale_jobs_throttled():
-    """Runs reap_stale_jobs() at most every few seconds per worker."""
-
-    global _last_reap
-    with _reap_lock:
-        if time.time() - _last_reap < REAP_THROTTLE_SECONDS:
-            return
-        _last_reap = time.time()
-    reap_stale_jobs()
 
 
 HISTORY_RETENTION_DAYS = 180
@@ -2573,7 +2634,7 @@ def delete_host():
 # ---------------------
 #   Git Config
 # ---------------------
-GIT_CONFIG_FILE = f"{dir_path}/git_config.json"
+GIT_CONFIG_FILE = os.path.join(CONFIG_DIR, "git_config.json")
 
 def load_git_config():
     """Loads the Git repository settings from git_config.json."""
@@ -3970,8 +4031,6 @@ def ansible_collections_update_all():
 def history():
     """Job history with search and pagination."""
 
-    reap_stale_jobs()
-
     page = max(1, request.args.get("page", 1, type=int))
     search = request.args.get("search", "").strip()
     mode = request.args.get("mode", "python").strip()
@@ -4179,7 +4238,6 @@ def rerun_failed_hosts(job_id):
 def history_job_status(job_id):
     """Returns status and output of a job as JSON (live view)."""
 
-    reap_stale_jobs_throttled()
     offset = max(0, request.args.get("offset", 0, type=int))
 
     conn = get_db()
@@ -4218,12 +4276,12 @@ def cancel_job(job_id):
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT status, pid FROM history_jobs WHERE job_id = %s", (job_id,))
+        cur.execute("SELECT status FROM history_jobs WHERE job_id = %s", (job_id,))
         row = cur.fetchone()
         if not row:
             abort(404)
 
-        status, pid = row
+        status = row[0]
         if status == 'planned':
             cur.execute("""
                 UPDATE history_jobs SET status = 'cancelled', finished_at = NOW(), duration = 0, run_payload = NULL,
@@ -4244,20 +4302,6 @@ def cancel_job(job_id):
             flash(f"Job #{job_id} is not running anymore", "warning")
             return redirect(url_for("history_detail", job_id=job_id))
 
-        if not pid:
-            flash(f"Job #{job_id} is still starting — try again in a moment", "warning")
-            return redirect(url_for("history_detail", job_id=job_id))
-
-        try:
-            os.killpg(pid, signal.SIGTERM)
-            kill_process_group_later(pid, job_id)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            exec_logger.error(f"No permission to cancel job {job_id} (PID {pid})")
-            flash(f"No permission to stop process {pid}. Stop it via SSH: sudo kill -TERM -{pid}", "danger")
-            return redirect(url_for("history_detail", job_id=job_id))
-
         cur.execute("""
             UPDATE history_jobs
             SET status = 'cancelled',
@@ -4269,9 +4313,9 @@ def cancel_job(job_id):
         conn.commit()
         notify_job_finished(job_id)
 
-        exec_logger.info(f"Job {job_id} (PID {pid}) cancelled by {current_user.id}")
+        exec_logger.info(f"Job {job_id} cancelled by {current_user.id}")
         audit("job.cancel", f"job #{job_id}")
-        flash(f"Job #{job_id} cancelled", "success")
+        flash(f"Job #{job_id} cancelled — the executor stops its process within a few seconds", "success")
     finally:
         cur.close()
         conn.close()
@@ -5460,7 +5504,8 @@ def upload_ssl_cert():
 
         logger.info(f"SSL certificate updated by {current_user.id}")
         audit("ssl.upload")
-        flash("Certificate uploaded successfully. Restart nginx to apply: sudo systemctl reload nginx", "success")
+        flash("Certificate uploaded successfully. Reload nginx to apply: "
+              + ("docker compose restart nginx" if IN_DOCKER else "sudo systemctl reload nginx"), "success")
 
     except Exception as e:
         logger.error(f"SSL upload error: {e}")
@@ -6181,7 +6226,8 @@ def restore_backup():
     if ok:
         logger.info(f"Restore completed by {current_user.id} from backup: {safe_filename}")
         audit("backup.restore", safe_filename)
-        flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: sudo systemctl restart netpac-web", "success")
+        flash(f"Restore from '{safe_filename}' completed successfully. Please restart NetPAC manually: "
+              + ("docker compose restart" if IN_DOCKER else "sudo systemctl restart netpac-web netpac-scheduler netpac-executor"), "success")
         return redirect(url_for("settings", tab="backup"))
 
     logger.error(f"Restore from {safe_filename} failed: {error} — rolling back to {safety_filename}")
@@ -6267,14 +6313,11 @@ def health():
         checks['python'] = {'status': 'error', 'message': str(e)}
 
     try:
-        result = subprocess.run(
-            ['/usr/bin/systemctl', 'is-active', 'netpac-scheduler.service'],
-            capture_output=True, text=True
-        )
-        scheduler_running = result.stdout.strip() == 'active'
-
         conn = get_db()
         cur = conn.cursor()
+
+        scheduler_age = heartbeat_age(cur, "scheduler")
+        scheduler_running = scheduler_age is not None and scheduler_age <= HEARTBEAT_MAX_AGE
 
         cur.execute("SELECT COUNT(*) FROM schedule_jobs WHERE is_active = 1")
         schedule_jobs = cur.fetchone()[0]
@@ -6289,20 +6332,17 @@ def health():
 
         checks['scheduler'] = {
             'status': 'ok' if scheduler_running else 'error',
-            'jobs': active_jobs
+            'jobs': active_jobs,
+            'message': f"{service_down_message('scheduler', scheduler_age)} | {active_jobs}"
         }
     except Exception as e:
         checks['scheduler'] = {'status': 'error', 'message': str(e)}
 
     try:
-        result = subprocess.run(
-            ['/usr/bin/systemctl', 'is-active', 'netpac-executor.service'],
-            capture_output=True, text=True
-        )
-        executor_running = result.stdout.strip() == 'active'
-
         conn = get_db()
         cur = conn.cursor()
+        executor_age = heartbeat_age(cur, "executor")
+        executor_running = executor_age is not None and executor_age <= HEARTBEAT_MAX_AGE
         cur.execute("SELECT status, COUNT(*) FROM history_jobs WHERE status IN ('running', 'planned') GROUP BY status")
         counts = dict(cur.fetchall())
         cur.close()
@@ -6311,7 +6351,7 @@ def health():
         queue_info = f"Running: {counts.get('running', 0)} of max. {MAX_PARALLEL_JOBS} | Queued: {counts.get('planned', 0)}"
         checks['executor'] = {
             'status': 'ok' if executor_running else 'error',
-            'message': queue_info if executor_running else f"netpac-executor.service is not running, no jobs are started | {queue_info}"
+            'message': queue_info if executor_running else f"{service_down_message('executor', executor_age)}, no jobs are started | {queue_info}"
         }
     except Exception as e:
         checks['executor'] = {'status': 'error', 'message': str(e)}
@@ -6458,27 +6498,25 @@ def check_long_running_jobs():
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT job_id, script_name, pid
+        SELECT job_id, script_name
         FROM history_jobs
         WHERE status = 'running'
-        AND pid IS NOT NULL
         AND started_at < DATE_SUB(NOW(), INTERVAL 3 HOUR)
     """)
     long_running = cur.fetchall()
     cur.close()
     conn.close()
 
-    for job_id, script_name, pid in long_running:
+    for job_id, script_name in long_running:
         flash_key = f"long_job_warned_{job_id}"
         if session.get(flash_key):
             continue
 
         flash(
             Markup(
-                "⚠️ Job #{} ({}) has been running for over 3 hours (PID {}). "
-                "If this is stuck, cancel it on the <a href=\"{}\">job page</a> "
-                "or kill the whole process group via SSH: <code>sudo kill -9 -{}</code>"
-            ).format(job_id, script_name, pid, url_for("history_detail", job_id=job_id), pid),
+                "⚠️ Job #{} ({}) has been running for over 3 hours and is stopped automatically after {} hours. "
+                "If it is stuck, cancel it on the <a href=\"{}\">job page</a>."
+            ).format(job_id, script_name, JOB_TIMEOUT_SECONDS // 3600, url_for("history_detail", job_id=job_id)),
             "warning"
         )
         session[flash_key] = True
