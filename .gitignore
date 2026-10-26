@@ -11,8 +11,8 @@ git_config.json
 *.pem
 
 # Generated at install/runtime
-gunicorn_config.py
-gunicorn.pid
+/gunicorn_config.py
+/gunicorn.pid
 venv/
 
 # Unfinished downloads of update_vendor.py
