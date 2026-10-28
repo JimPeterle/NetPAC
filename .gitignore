@@ -16,7 +16,7 @@ git_config.json
 venv/
 
 # Unfinished downloads of update_vendor.py
-static/vendor/*.tmp/
+app/static/vendor/*.tmp/
 
 # Python
 __pycache__/

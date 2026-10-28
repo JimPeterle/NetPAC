@@ -1,0 +1,88 @@
+#!/bin/bash
+
+######################################
+# NetPAC command line
+# Installed by setup.sh as /usr/local/bin/netpac — see: netpac help
+######################################
+
+set -e
+
+APP_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+SERVICES=(netpac-web netpac-scheduler netpac-executor)
+LOG_DIR=/var/log/netpac
+LOGS=(netpac execution scheduler gunicorn_error gunicorn_access)
+
+show_help() {
+    cat << EOF
+NetPAC $(app_version) — command line
+
+Usage: netpac <command> [options]
+
+Commands:
+  status               Show the state of the NetPAC services
+  start | stop         Start or stop all NetPAC services
+  restart              Restart all NetPAC services
+  update               Update NetPAC (git pull, database changes, restart)
+  logs [name]          Follow a log file (default: netpac)
+                       names: ${LOGS[*]}
+  db [--apply]         Show the database migration state (--apply: apply pending changes now)
+  vendor [--update]    Check the frontend libraries for updates (--update: install them)
+  version              Show the NetPAC version and Git commit
+  uninstall            Remove NetPAC from this server (asks before every step)
+  help                 Show this help
+
+Folder: $APP_DIR
+EOF
+}
+
+app_version() {
+    sed -n 's/^APP_VERSION = "\(.*\)"/\1/p' "$APP_DIR/app/netpac.py"
+}
+
+fail() {
+    echo "netpac: $1" >&2
+    exit 1
+}
+
+command="${1:-help}"
+[ $# -gt 0 ] && shift
+
+case "$command" in
+    help|-h|--help)
+        show_help
+        ;;
+    version|-v|--version)
+        commit="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")"
+        echo "NetPAC $(app_version) (commit $commit)"
+        ;;
+    status)
+        systemctl status "${SERVICES[@]}" --no-pager --lines=0 || true
+        ;;
+    start|stop|restart)
+        sudo systemctl "$command" "${SERVICES[@]}"
+        echo "NetPAC services: $command done"
+        ;;
+    update)
+        exec bash "$APP_DIR/maintenance/update_netpac.sh" "$@"
+        ;;
+    logs)
+        name="${1:-netpac}"
+        [[ " ${LOGS[*]} " == *" $name "* ]] || fail "unknown log '$name' — available: ${LOGS[*]}"
+        exec tail -n 100 -f "$LOG_DIR/$name.log"
+        ;;
+    db)
+        exec python3 "$APP_DIR/app/db_migrations.py" "$@"
+        ;;
+    vendor)
+        exec python3 "$APP_DIR/maintenance/update_vendor.py" "$@"
+        ;;
+    uninstall)
+        exec bash "$APP_DIR/maintenance/uninstall.sh" "$@"
+        ;;
+    *)
+        echo "netpac: unknown command '$command'" >&2
+        echo "" >&2
+        show_help >&2
+        exit 1
+        ;;
+esac

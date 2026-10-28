@@ -45,7 +45,10 @@ print_warning() {
 # MAIN
 # ===================================
 
-APP_DIR="$(pwd)"
+APP_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+SECRET_FILE="$APP_DIR/config/secret.env"
+CNF_FILE="$APP_DIR/config/db_secrets.cnf"
+cd "$APP_DIR"
 APP_USER="$USER"
 APP_GROUP="$(id -gn)"
 CERT_DIR="/etc/netpac/certs"
@@ -100,17 +103,17 @@ print_status "Working directory: $APP_DIR"
 
 echo -e "${YELLOW}Loading secret.env...${NC}"
 
-if [ ! -f "$APP_DIR/secret.env" ]; then
-    print_error "secret.env not found in $APP_DIR"
+if [ ! -f "$SECRET_FILE" ]; then
+    print_error "secret.env not found in $APP_DIR/config"
     print_warning "Create it first (see README) — it must contain at least DB_USER, DB_PW, DB_IP and DB_PORT"
     exit 1
 fi
 
-chmod 600 "$APP_DIR/secret.env"
+chmod 600 "$SECRET_FILE"
 print_status "secret.env permissions set to 600"
 
 read_env_value() {
-    grep -E "^$1=" "$APP_DIR/secret.env" | head -n1 | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//' || true
+    grep -E "^$1=" "$SECRET_FILE" | head -n1 | cut -d= -f2- | sed -e 's/^["'"'"']//' -e 's/["'"'"']$//' || true
 }
 
 DB_USER="$(read_env_value DB_USER)"
@@ -269,8 +272,8 @@ cnf_escape() {
     printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
-sudo install -m 600 -o "$APP_USER" -g "$APP_GROUP" /dev/null "$APP_DIR/db_secrets.cnf"
-sudo -u "$APP_USER" tee "$APP_DIR/db_secrets.cnf" > /dev/null << EOF
+sudo install -m 600 -o "$APP_USER" -g "$APP_GROUP" /dev/null "$CNF_FILE"
+sudo -u "$APP_USER" tee "$CNF_FILE" > /dev/null << EOF
 [client]
 user="$(cnf_escape "$DB_USER")"
 password="$(cnf_escape "$DB_PW")"
@@ -278,8 +281,8 @@ host="$(cnf_escape "$DB_IP")"
 port=${DB_PORT}
 EOF
 
-sudo chmod 600 $APP_DIR/db_secrets.cnf
-sudo chown "$APP_USER":"$APP_GROUP" "$APP_DIR/db_secrets.cnf"
+sudo chmod 600 "$CNF_FILE"
+sudo chown "$APP_USER":"$APP_GROUP" "$CNF_FILE"
 
 # ===================================
 # 10. INSTALL DEPENDENCIES
@@ -446,7 +449,7 @@ fi
 echo ""
 echo -e "${YELLOW}Creating Gunicorn configuration...${NC}"
 
-cat > gunicorn_config.py << EOF
+cat > "$APP_DIR/gunicorn_config.py" << EOF
 import os
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
@@ -491,7 +494,7 @@ Group=$APP_GROUP
 WorkingDirectory=$APP_DIR
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$APP_DIR
 
-ExecStart=/usr/bin/python3 -m gunicorn -c $APP_DIR/gunicorn_config.py netpac:app
+ExecStart=/usr/bin/python3 -m gunicorn -c $APP_DIR/gunicorn_config.py --chdir $APP_DIR/app netpac:app
 
 Restart=always
 RestartSec=10
@@ -517,7 +520,7 @@ After=network.target mariadb.service
 User=$APP_USER
 Group=$APP_GROUP
 WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/python3 $APP_DIR/netpac_scheduler.py
+ExecStart=/usr/bin/python3 $APP_DIR/app/netpac_scheduler.py
 Restart=always
 
 PrivateTmp=true
@@ -540,7 +543,7 @@ After=network.target mariadb.service
 User=$APP_USER
 Group=$APP_GROUP
 WorkingDirectory=$APP_DIR
-ExecStart=/usr/bin/python3 $APP_DIR/netpac_executor.py
+ExecStart=/usr/bin/python3 $APP_DIR/app/netpac_executor.py
 Restart=always
 
 PrivateTmp=true
@@ -594,7 +597,7 @@ while [ "$DIR" != "/" ]; do
     DIR="$(dirname "$DIR")"
 done
 
-print_status "Nginx can reach $APP_DIR/static"
+print_status "Nginx can reach $APP_DIR/app/static"
 
 # ===================================
 # 20. CREATE SSL CERTIFICATE
@@ -720,7 +723,7 @@ server {
     }
 
     location /static/ {
-        alias $APP_DIR/static/;
+        alias $APP_DIR/app/static/;
         expires 30d;
         add_header Cache-Control "public, immutable";
         include /etc/nginx/snippets/netpac-security-headers.conf;
@@ -788,7 +791,18 @@ else
 fi
 
 # ===================================
-# 24. SUMMARY
+# 24. INSTALL NETPAC COMMAND
+# ===================================
+
+echo ""
+echo -e "${YELLOW}Installing the netpac command...${NC}"
+
+chmod 755 "$APP_DIR/maintenance/netpac"
+sudo ln -sf "$APP_DIR/maintenance/netpac" /usr/local/bin/netpac
+print_status "Command installed: netpac (see: netpac help)"
+
+# ===================================
+# 25. SUMMARY
 # ===================================
 
 echo ""
@@ -804,12 +818,14 @@ echo "  App NGINX port: 443"
 echo "  IP: $IP"
 echo ""
 echo -e "${YELLOW}Services:${NC}"
-echo "  Check status: sudo systemctl status netpac-web netpac-scheduler netpac-executor nginx"
-echo "  Restart NetPAC: sudo systemctl restart netpac-web netpac-scheduler netpac-executor"
+echo "  Check status: netpac status"
+echo "  Restart NetPAC: netpac restart"
+echo "  Update NetPAC: netpac update"
+echo "  All commands: netpac help"
 echo "  Reload Nginx: sudo systemctl reload nginx"
 echo ""
 echo -e "${YELLOW}Logs:${NC}"
-echo "  NetPAC: sudo journalctl -u netpac-web -f"
+echo "  NetPAC: netpac logs"
 echo "  Gunicorn: tail -f /var/log/netpac/gunicorn_error.log"
 echo "  Nginx: sudo tail -f /var/log/nginx/netpac_error.log"
 echo ""

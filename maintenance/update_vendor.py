@@ -8,22 +8,22 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
-VENDOR_DIR = os.path.join(BASE_DIR, "static", "vendor")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+VENDOR_DIR = os.path.join(BASE_DIR, "app", "static", "vendor")
 MANIFEST = os.path.join(VENDOR_DIR, "manifest.json")
 CDN = "https://cdn.jsdelivr.net/npm"
 API = "https://data.jsdelivr.com/v1/packages/npm"
 
 
 def read_manifest():
-    """Returns the complete content of static/vendor/manifest.json."""
+    """Returns the complete content of app/static/vendor/manifest.json."""
 
     with open(MANIFEST, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def write_manifest(data):
-    """Writes static/vendor/manifest.json (via a temporary file, so it is never half written)."""
+    """Writes app/static/vendor/manifest.json (via a temporary file, so it is never half written)."""
 
     tmp = MANIFEST + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -122,7 +122,7 @@ def download(name, lib):
             raise RuntimeError(
                 f"{name} {lib['version']}: could not download '{rel}' ({e}). "
                 f"The file layout may have changed in this version — check the paths "
-                f"in static/vendor/manifest.json."
+                f"in app/static/vendor/manifest.json."
             ) from e
         dest = os.path.join(tmp, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -188,7 +188,7 @@ def cmd_check(libs):
             print(f"  {name:16} {lib['version']:10} up to date{local}")
 
     if updates or missing:
-        print("\nRun: python3 update_vendor.py --update")
+        print("\nRun: python3 maintenance/update_vendor.py --update")
         print("Major versions are skipped unless --major is given; check their changelog first.")
 
 
@@ -233,7 +233,7 @@ def cmd_update(data, names, allow_major):
         for old in remove_old_versions(name, lib):
             print(f"  {name:16} removed old version {old}")
 
-    print("\nDone. Restart NetPAC (sudo systemctl restart netpac-web), test it, then commit static/vendor/.")
+    print("\nDone. Restart NetPAC (netpac restart), test it, then commit app/static/vendor/.")
     return errors
 
 

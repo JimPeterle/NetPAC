@@ -3,8 +3,8 @@ set -e
 
 PUID="${PUID:-1000}"
 PGID="${PGID:-1000}"
-SECRET_FILE="$APP_DIR/secret.env"
-CNF_FILE="$APP_DIR/db_secrets.cnf"
+SECRET_FILE="$APP_DIR/config/secret.env"
+CNF_FILE="$APP_DIR/config/db_secrets.cnf"
 CERT_DIR=/etc/netpac/certs
 
 fail() {
@@ -62,9 +62,9 @@ create_self_signed_cert() {
 }
 
 case "$1" in
-    web)       set -- python3 -m gunicorn -c gunicorn_config.py netpac:app; ROLE=web ;;
-    scheduler) set -- python3 netpac_scheduler.py; ROLE=scheduler ;;
-    executor)  set -- python3 netpac_executor.py; ROLE=executor ;;
+    web)       set -- python3 -m gunicorn -c gunicorn_config.py --chdir app netpac:app; ROLE=web ;;
+    scheduler) set -- python3 app/netpac_scheduler.py; ROLE=scheduler ;;
+    executor)  set -- python3 app/netpac_executor.py; ROLE=executor ;;
     *)         ROLE=other ;;
 esac
 
@@ -83,7 +83,7 @@ if [ "$(id -u)" = "0" ]; then
     ensure_dir "$CERT_DIR" 750
     ensure_dir /home/netpac/bin/netpac_backups 750
 
-    for dir in "$APP_DIR/venv" /home/netpac/.ansible /home/netpac/.ssh /home/netpac/config; do
+    for dir in "$APP_DIR/venv" /home/netpac/.ansible /home/netpac/.ssh /home/netpac/state; do
         ensure_volume_owner "$dir"
     done
 

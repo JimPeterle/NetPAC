@@ -3,7 +3,7 @@
 ## Supported Versions
 
 Only the latest version on the `main` branch receives security fixes.
-Update with `update_netpac.sh` before reporting an issue.
+Update with `netpac update` before reporting an issue.
 
 ## Reporting a Vulnerability
 
@@ -74,7 +74,7 @@ The following follow from the model above and are not vulnerabilities:
 
 - Restrict access to port 443 to your management network with a firewall.
 - Change the default `admin` password immediately after installation.
-- Keep a secure copy of `secret.env`. Without the `ENCRYPTION_KEY`, stored
+- Keep a secure copy of `config/secret.env`. Without the `ENCRYPTION_KEY`, stored
   secrets and TOTP secrets cannot be decrypted (see README,
   "Lost or changed ENCRYPTION_KEY").
 - Keep the server up to date (e.g. `unattended-upgrades`); NetPAC's Python

@@ -52,7 +52,9 @@ echo -e "${YELLOW}This script will remove NetPAC components.${NC}"
 echo -e "${YELLOW}You will be asked before each step.${NC}"
 echo ""
 
-APP_DIR="$(pwd)"
+APP_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+SECRET_FILE="$APP_DIR/config/secret.env"
+[ -f "$SECRET_FILE" ] || SECRET_FILE="$APP_DIR/secret.env"
 
 SERVICES=("netpac-web" "netpac-scheduler" "netpac-executor" "netpac")
 CERT_BASE_DIR="/etc/netpac"
@@ -62,8 +64,8 @@ BACKUP_DIR="$(dirname "$APP_DIR")/netpac_backups"
 DB_NAME="netpac_db"
 
 DB_USER=""
-if [ -f "$APP_DIR/secret.env" ]; then
-    DB_USER="$(grep -E '^DB_USER=' "$APP_DIR/secret.env" | head -n1 | cut -d= -f2- | tr -d '"'"'"'')"
+if [ -f "$SECRET_FILE" ]; then
+    DB_USER="$(grep -E '^DB_USER=' "$SECRET_FILE" | head -n1 | cut -d= -f2- | tr -d '"'"'"'')"
 fi
 
 # ===================================
@@ -261,8 +263,12 @@ fi
 echo ""
 echo -e "${YELLOW}Step 9: Remove generated files and credentials in $APP_DIR${NC}"
 
-if confirm "Remove gunicorn_config.py, gunicorn.pid, db_secrets.cnf and git_config.json?"; then
-    for f in gunicorn_config.py gunicorn.pid db_secrets.cnf git_config.json; do
+if confirm "Remove gunicorn_config.py, gunicorn.pid, db_secrets.cnf, git_config.json and the netpac command?"; then
+    if [ -L /usr/local/bin/netpac ]; then
+        sudo rm /usr/local/bin/netpac
+        print_status "netpac command removed"
+    fi
+    for f in gunicorn_config.py gunicorn.pid config/db_secrets.cnf config/git_config.json db_secrets.cnf git_config.json; do
         if sudo test -f "$APP_DIR/$f"; then
             sudo rm "$APP_DIR/$f"
             print_status "$f removed"
@@ -344,7 +350,7 @@ echo -e "${GREEN}║      Uninstall completed!          ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
 echo ""
 print_warning "The NetPAC application directory ($APP_DIR) was NOT removed."
-print_warning "It may still contain secret.env with your encryption key and database password."
+print_warning "It may still contain config/secret.env with your encryption key and database password."
 print_warning "Remove it manually if needed: rm -rf $APP_DIR"
 echo ""
 echo -e "${GREEN}Done!${NC}"

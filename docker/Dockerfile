@@ -3,7 +3,7 @@ FROM ubuntu:26.04
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     NETPAC_DOCKER=1 \
-    NETPAC_CONFIG_DIR=/home/netpac/config \
+    NETPAC_STATE_DIR=/home/netpac/state \
     APP_DIR=/home/netpac/bin/NetPAC
 
 RUN apt-get update \
@@ -27,8 +27,8 @@ RUN cp docker/gunicorn_config.py gunicorn_config.py \
     && chmod 755 docker/entrypoint.sh \
     && python3 -m venv venv \
     && venv/bin/pip install --no-cache-dir ansible-playbook-grapher \
-    && mkdir -p /home/netpac/config /home/netpac/.ansible /home/netpac/.ssh /home/netpac/bin/netpac_backups \
-    && chmod 700 /home/netpac/.ssh /home/netpac/config \
+    && mkdir -p /home/netpac/state /home/netpac/.ansible /home/netpac/.ssh /home/netpac/bin/netpac_backups \
+    && chmod 700 /home/netpac/.ssh /home/netpac/state \
     && chown -R netpac:netpac /home/netpac
 
 ENTRYPOINT ["/home/netpac/bin/NetPAC/docker/entrypoint.sh"]

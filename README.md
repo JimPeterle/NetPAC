@@ -181,7 +181,13 @@ see `database/migrations`). Before changing an existing database, NetPAC creates
 in the `netpac_backups` folder. The current state can be checked with:
 
 ```Bash
-python3 netpac_migrations.py
+netpac db
+```
+
+With Docker, the migrations are part of the image. Check the state with:
+
+```Bash
+docker compose exec web python3 app/db_migrations.py
 ```
 
 ## NetPAC configuration
@@ -209,16 +215,26 @@ cd NetPAC
 
 The user `netpac` and the directory `~/bin/NetPAC` are the recommended layout, 
 but not required: all services run as the user that executes `setup.sh`, from 
-the directory it is executed in. Database backups are stored next to the 
+the folder NetPAC was cloned to. Database backups are stored next to the 
 application directory (e.g. `~/bin/netpac_backups`).
+
+The repository is organised in these folders:
+
+| Folder | Content |
+|---|---|
+| `app/` | NetPAC itself (web interface, scheduler, executor, database migrations, templates, static files) |
+| `config/` | Configuration: `secret.env` (created by you), the template `secret_examples.env`, the RADIUS dictionary |
+| `maintenance/` | `setup.sh`, `update_netpac.sh`, `uninstall.sh`, `update_vendor.py` and the `netpac` command |
+| `database/migrations/` | Database changes, applied automatically on start |
+| `docker/` | Docker image and docker-compose.yml |
 
 Create your configuration from the template and fill in the values. 
 secret.env is excluded from Git, so later updates via `git pull` never 
 overwrite it.
 
 ```Bash
-cp secret_examples.env secret.env
-vim secret.env
+cp config/secret_examples.env config/secret.env
+vim config/secret.env
 ```
 
 Generate the ENCRYPTION_KEY (encrypts the stored secrets, tokens and TOTP secrets in the database):
@@ -227,7 +243,7 @@ sudo apt install python3-cryptography
 python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Keep a backup of secret.env. Without the ENCRYPTION_KEY, the stored secrets 
+Keep a backup of config/secret.env. Without the ENCRYPTION_KEY, the stored secrets 
 can no longer be decrypted (Store the keys inside a Keepass).
 
 ### Lost or changed ENCRYPTION_KEY
@@ -249,15 +265,19 @@ SMTP password / Matrix token of the notifications.
 
 When everything is ready, the final step can be carried out.
 ```Bash
-bash setup.sh
+bash maintenance/setup.sh
 ```
+
+setup.sh also installs the `netpac` command (see [The netpac command](#the-netpac-command)).
 
 ## Installation with Docker
 
 Instead of `setup.sh`, NetPAC can run in Docker. The image contains NetPAC with
 Python, Ansible and all dependencies on its own Ubuntu base, so the host can run
 any Linux distribution with Docker (e.g. Ubuntu 24.04). The database stays on the
-host: set it up as described in [Database configuration](#database-configuration).
+host: install MariaDB and create an empty database and user as described in
+[Database configuration](#database-configuration). No schema has to be imported —
+NetPAC creates all tables on the first start, the migrations are included in the image.
 All Docker files are in the `docker/` folder of the repository.
 
 Requirements on the host:
@@ -276,7 +296,7 @@ for the values and how to create the ENCRYPTION_KEY):
 ```Bash
 mkdir netpac && cd netpac
 curl -O https://raw.githubusercontent.com/JimPeterle/NetPAC/main/docker/docker-compose.yml
-curl -o secret.env https://raw.githubusercontent.com/JimPeterle/NetPAC/main/secret_examples.env
+curl -o secret.env https://raw.githubusercontent.com/JimPeterle/NetPAC/main/config/secret_examples.env
 chmod 600 secret.env
 vim secret.env
 ```
@@ -338,34 +358,35 @@ not on the host.
 
 NetPAC loads nothing from the internet: all frontend libraries (anime.js, 
 highlight.js, Chart.js, flatpickr, github-markdown-css) and the JetBrains Mono 
-font are stored in `static/vendor/`. This also works in management networks 
+font are stored in `app/static/vendor/`. This also works in management networks 
 without internet access and transfers no user data to third parties.
 
-The versions are defined in `static/vendor/manifest.json`. To update them:
+The versions are defined in `app/static/vendor/manifest.json`. Update them on your
+development machine and commit the result — servers get them with the next update:
 
 Show available updates (changes nothing):
 ```Bash
-python3 update_vendor.py
+python3 maintenance/update_vendor.py
 ```
 
 Update all libraries to their latest release. The new version is downloaded,
-`static/vendor/manifest.json` is updated and the old version is removed.
+`app/static/vendor/manifest.json` is updated and the old version is removed.
 If a download fails, the library stays on its current version.
 ```Bash
-python3 update_vendor.py --update
+python3 maintenance/update_vendor.py --update
 ```
 
 New major versions (e.g. 4.x -> 5.x) are skipped, as they may break NetPAC.
 Check the changelog first, then install them explicitly, optionally only for
 single libraries:
 ```Bash
-python3 update_vendor.py --update --major chartjs
+python3 maintenance/update_vendor.py --update --major chartjs
 ```
 
-Restart NetPAC afterwards (`sudo systemctl restart netpac-web`), because the
+Restart NetPAC afterwards (`netpac restart`), because the
 manifest is read at startup.
 
-Each library keeps its license file in its own folder under `static/vendor/`.
+Each library keeps its license file in its own folder under `app/static/vendor/`.
 
 ## Additional information
 
@@ -374,16 +395,28 @@ For all users who need to create scripts:
 sudo usermod -aG netpacscript <user>
 ```
 
-If you want to update NetPac run the script:
-``` Bash
-bash update_netpac.sh
-```
+## The netpac command
+
+setup.sh installs the command `netpac` (`/usr/local/bin/netpac`). Run it as the NetPAC user:
+
+| Command | |
+|---|---|
+| `netpac status` | State of the NetPAC services |
+| `netpac start` / `stop` / `restart` | Start, stop or restart all NetPAC services |
+| `netpac update` | Update NetPAC (git pull, database changes, restart) |
+| `netpac logs [name]` | Follow a log file: `netpac` (default), `execution`, `scheduler`, `gunicorn_error`, `gunicorn_access` |
+| `netpac db` | Database migration state (`--apply` applies pending changes now) |
+| `netpac version` | NetPAC version and Git commit |
+| `netpac uninstall` | Remove NetPAC from the server (asks before every step) |
+| `netpac help` | All commands |
+
+With Docker, use `docker compose` instead (see [Installation with Docker](#installation-with-docker)).
 
 ## Remove Netpac
 
 If you want to remove netpac do these steps as netpac user:
 ``` Bash
-bash uninstall.sh
+netpac uninstall
 ```
 
 Then as root:
@@ -399,5 +432,5 @@ After this steps netpac is removed from your system.
 NetPAC is released under the MIT License: use, copy, modify and distribute it for any
 purpose, as long as the license text is included. See [LICENSE](LICENSE).
 
-The third-party libraries and fonts in `static/vendor` keep their own licenses
+The third-party libraries and fonts in `app/static/vendor` keep their own licenses
 (their license files are included in each folder).

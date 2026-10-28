@@ -55,21 +55,35 @@ import urllib.error
 import smtplib
 import ssl
 from email.message import EmailMessage
-from netpac_migrations import run_migrations, MigrationError
+from db_migrations import run_migrations, MigrationError
 
 
 # --------------------
 #   Configuration variables
 # --------------------
 dir_path = os.path.dirname(os.path.realpath(__file__))
-APP_VERSION = "7.0.0"
+BASE_DIR = os.path.dirname(dir_path)
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
+STATE_DIR = os.environ.get("NETPAC_STATE_DIR") or CONFIG_DIR
+
+
+def config_path(name, folder=CONFIG_DIR):
+    """Returns the path of a local config file; falls back to its old place in the main folder (before 7.0.0)."""
+
+    path = os.path.join(folder, name)
+    legacy = os.path.join(BASE_DIR, name)
+    return legacy if not os.path.exists(path) and os.path.exists(legacy) else path
+
+
+APP_VERSION = "8.0.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
 IN_DOCKER = os.environ.get("NETPAC_DOCKER") == "1"
-CONFIG_DIR = os.environ.get("NETPAC_CONFIG_DIR") or dir_path
-BACKUP_DIR = os.path.join(os.path.dirname(dir_path), "netpac_backups")
-DB_CNF_FILE = os.path.join(dir_path, "db_secrets.cnf")
+BACKUP_DIR = os.path.join(os.path.dirname(BASE_DIR), "netpac_backups")
+SECRET_FILE = config_path("secret.env")
+DB_CNF_FILE = config_path("db_secrets.cnf")
+VENV_DIR = os.path.join(BASE_DIR, "venv")
 
 
 # --------------------
@@ -143,7 +157,7 @@ file_handler.addFilter(TracebackInfoFilter())
 # -----------------------------------------
 #   Load .env file and map them to variable
 # -----------------------------------------
-secret_config = dotenv_values(f"{dir_path}/secret.env")
+secret_config = dotenv_values(SECRET_FILE)
 
 
 # -----------------------------------------
@@ -457,7 +471,7 @@ def make_radius_client(server_host, server_port, secret, timeout):
         server=server_host,
         authport=server_port,
         secret=secret.encode(),
-        dict=Dictionary(f"{dir_path}/dictionary"),
+        dict=Dictionary(os.path.join(CONFIG_DIR, "dictionary")),
         timeout=timeout,
         **options
     )
@@ -2634,7 +2648,7 @@ def delete_host():
 # ---------------------
 #   Git Config
 # ---------------------
-GIT_CONFIG_FILE = os.path.join(CONFIG_DIR, "git_config.json")
+GIT_CONFIG_FILE = config_path("git_config.json", STATE_DIR)
 
 def load_git_config():
     """Loads the Git repository settings from git_config.json."""
@@ -2670,7 +2684,7 @@ def scripts():
 
     if not os.path.isdir(SCRIPTS_DIR):
         logger.error(f"Script directory {SCRIPTS_DIR} does not exist")
-        flash(f"Script directory {SCRIPTS_DIR} does not exist — run setup.sh again or create it", "warning")
+        flash(f"Script directory {SCRIPTS_DIR} does not exist — run maintenance/setup.sh again or create it", "warning")
 
     entries = [e for e in list_dir_entries(SCRIPTS_DIR, "", SCRIPTS_DIR) if e["is_dir"] or e["name"].endswith('.py')]
     if os.path.exists(GIT_DIR):
@@ -2765,7 +2779,7 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
 
     exec_logger.info(f"Background executing: {filename}")
 
-    venv_python = os.path.join(dir_path, 'venv', 'bin', 'python3')
+    venv_python = os.path.join(VENV_DIR, 'bin', 'python3')
     system_python = shutil.which("python3") or "/usr/bin/python3"
     python = venv_python if use_venv and os.path.exists(venv_python) else system_python
     
@@ -2902,7 +2916,6 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
 # --------------------
 #   VENV
 # --------------------
-VENV_DIR = os.path.join(dir_path, 'venv')
 VENV_PIP = os.path.join(VENV_DIR, 'bin', 'pip')
 
 @app.route("/venv")
@@ -3145,7 +3158,7 @@ def browse_playbooks(subpath):
 
     if subpath == "" and not os.path.isdir(target):
         logger.error(f"Playbook directory {target} does not exist")
-        flash(f"Playbook directory {target} does not exist — run setup.sh again or create it", "warning")
+        flash(f"Playbook directory {target} does not exist — run maintenance/setup.sh again or create it", "warning")
     elif not os.path.exists(target):
         abort(404)
 
@@ -3188,7 +3201,7 @@ def playbook_graph(subpath):
     graph_name = subpath.replace("/", "_").replace(".yml", "").replace(".yaml", "")
     output_path = os.path.join(GRAPH_DIR, graph_name)
 
-    grapher = os.path.join(dir_path, "venv", "bin", "ansible-playbook-grapher")
+    grapher = os.path.join(VENV_DIR, "bin", "ansible-playbook-grapher")
 
     if not os.path.exists(grapher) and not shutil.which("ansible-playbook-grapher"):
         flash("ansible-playbook-grapher is not installed. Install it manually over the Web-Interface -> Python -> Environment", "danger")
@@ -6358,7 +6371,7 @@ def health():
 
     for key, folder, extensions in (('scripts_dir', SCRIPTS_DIR, ('.py',)), ('playbooks_dir', PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)):
         if not os.path.isdir(folder):
-            checks[key] = {'status': 'error', 'message': f"{folder} does not exist — run setup.sh again"}
+            checks[key] = {'status': 'error', 'message': f"{folder} does not exist — run maintenance/setup.sh again"}
         elif not os.access(folder, os.W_OK | os.X_OK):
             checks[key] = {'status': 'error', 'message': f"{folder} is not writable for the NetPAC user"}
         else:
@@ -6399,8 +6412,8 @@ def health():
         checks['encryption'] = {'status': 'error', 'message': str(e)}
 
     try:
-        venv_python = os.path.join(dir_path, 'venv', 'bin', 'python3')
-        venv_pip = os.path.join(dir_path, 'venv', 'bin', 'pip')
+        venv_python = os.path.join(VENV_DIR, 'bin', 'python3')
+        venv_pip = os.path.join(VENV_DIR, 'bin', 'pip')
         
         if os.path.exists(venv_python) and os.path.exists(venv_pip):
             result = subprocess.run(

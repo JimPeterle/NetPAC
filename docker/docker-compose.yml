@@ -18,12 +18,12 @@ x-netpac: &netpac
     PGID: "1000"
     TZ: Europe/Berlin
   volumes:
-    - ./secret.env:/home/netpac/bin/NetPAC/secret.env:ro
+    - ./secret.env:/home/netpac/bin/NetPAC/config/secret.env:ro
     - ./backups:/home/netpac/bin/netpac_backups
     - /var/lib/netpac:/var/lib/netpac
     - /var/log/netpac:/var/log/netpac
     - /etc/netpac/certs:/etc/netpac/certs
-    - netpac-config:/home/netpac/config
+    - netpac-state:/home/netpac/state
     - netpac-venv:/home/netpac/bin/NetPAC/venv
     - netpac-ansible:/home/netpac/.ansible
     - netpac-ssh:/home/netpac/.ssh
@@ -127,7 +127,7 @@ configs:
       }
 
 volumes:
-  netpac-config:
+  netpac-state:
   netpac-venv:
   netpac-ansible:
   netpac-ssh:

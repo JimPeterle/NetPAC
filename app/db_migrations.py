@@ -9,7 +9,8 @@ from datetime import datetime
 import pymysql
 from dotenv import dotenv_values
 
-BASE_DIR = os.path.dirname(os.path.realpath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
 MIGRATIONS_DIR = os.path.join(BASE_DIR, "database", "migrations")
 MIGRATION_FILE_RE = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 LOCK_NAME = "netpac_migrations"
@@ -179,6 +180,14 @@ def migration_status(get_db):
     return [n for v, n, _ in migrations if v in done], [n for v, n, _ in migrations if v not in done]
 
 
+def config_path(name):
+    """Returns the path of a local config file; falls back to its old place in the main folder (before 7.0.0)."""
+
+    path = os.path.join(CONFIG_DIR, name)
+    legacy = os.path.join(BASE_DIR, name)
+    return legacy if not os.path.exists(path) and os.path.exists(legacy) else path
+
+
 def main():
     """Command line: show the migration status or apply pending migrations."""
 
@@ -186,7 +195,7 @@ def main():
     parser.add_argument("--apply", action="store_true", help="apply pending migrations (with backup)")
     args = parser.parse_args()
 
-    config = dotenv_values(os.path.join(BASE_DIR, "secret.env"))
+    config = dotenv_values(config_path("secret.env"))
 
     def get_db():
         """Opens a database connection with the values from secret.env."""
@@ -198,7 +207,7 @@ def main():
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         try:
             applied = run_migrations(get_db, logging.getLogger("netpac_migrations"),
-                                     os.path.join(BASE_DIR, "db_secrets.cnf"),
+                                     config_path("db_secrets.cnf"),
                                      os.path.join(os.path.dirname(BASE_DIR), "netpac_backups"), "netpac_db")
         except MigrationError as e:
             print(f"Error: {e}", file=sys.stderr)
@@ -212,7 +221,7 @@ def main():
     for name in pending:
         print(f"  pending   {name}")
     print("\nDatabase is up to date." if not pending else "\nPending migrations are applied on the next NetPAC start "
-                                                         "(or now with: python3 netpac_migrations.py --apply).")
+                                                         "(or now with: netpac db --apply).")
 
 
 if __name__ == "__main__":

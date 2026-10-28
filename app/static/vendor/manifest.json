@@ -1,5 +1,5 @@
 {
-    "_comment": "Third-party frontend libraries, served locally from static/vendor/<name>-<version>/. Check for updates: python3 update_vendor.py — install them: python3 update_vendor.py --update",
+    "_comment": "Third-party frontend libraries, served locally from app/static/vendor/<name>-<version>/. Check for updates: netpac vendor — install them: netpac vendor --update",
     "animejs": {
         "package": "animejs",
         "version": "4.5.0",

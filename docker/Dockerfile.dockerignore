@@ -11,6 +11,9 @@ __pycache__
 
 secret.env
 db_secrets.cnf
+config/secret.env
+config/db_secrets.cnf
+config/git_config.json
 git_config.json
 gunicorn_config.py
 gunicorn.pid
@@ -22,5 +25,5 @@ backups
 
 *.sql
 !database/migrations/*.sql
-static/vendor/*.tmp
+app/static/vendor/*.tmp
 docs/screenshots
