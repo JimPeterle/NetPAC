@@ -4921,13 +4921,23 @@ def change_password():
     return redirect(url_for("settings", tab="user"))
 
 
+ADMIN_ONLY_MESSAGE = "Only the user admin can make this change"
+
+
+def admin_only_redirect(tab):
+    """Shows that a setting can only be changed by the admin user and returns to its settings tab."""
+
+    flash(ADMIN_ONLY_MESSAGE, "warning")
+    return redirect(url_for("settings", tab=tab))
+
+
 @app.route("/settings/add_user", methods=["POST"])
 @login_required
 def add_user():
     """Creates a local user (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("user")
 
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
@@ -4982,7 +4992,7 @@ def delete_user():
     """Deletes a user (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("user")
 
     username = request.form.get("username", "").strip()
 
@@ -5017,7 +5027,7 @@ def save_radius_config():
     """Saves the RADIUS settings (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("radius")
 
     server_host = request.form.get("server_host", "").strip()
     server_port = request.form.get("server_port", "1812").strip()
@@ -5079,7 +5089,7 @@ def test_radius_config():
     """Tests the RADIUS settings with a login attempt (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return jsonify({"success": False, "message": ADMIN_ONLY_MESSAGE}), 403
 
     test_username = request.form.get("test_username", "").strip()
     test_password = request.form.get("test_password", "")
@@ -5470,7 +5480,7 @@ def upload_ssl_cert():
     """Replaces the TLS certificate and key (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("ssl")
 
     cert_file = request.files.get('cert_file')
     key_file = request.files.get('key_file')
@@ -6021,7 +6031,7 @@ def create_backup():
     """Starts a hosts or full backup (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("backup")
 
     backup_type = request.form.get("backup_type", "").strip()
 
@@ -6067,7 +6077,7 @@ def download_backup(filename):
     """Downloads a backup file (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("backup")
 
     safe_filename = secure_filename(filename)
     backup_dir = os.path.realpath(BACKUP_DIR)
@@ -6090,7 +6100,7 @@ def delete_backup():
     """Deletes a backup file (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("backup")
 
     filename = request.form.get("filename", "").strip()
     safe_filename = secure_filename(filename)
@@ -6122,7 +6132,7 @@ def restore_backup():
     """Restores a backup after password and TOTP check (admin only)."""
 
     if current_user.id != 'admin':
-        abort(403)
+        return admin_only_redirect("backup")
 
     filename = request.form.get("filename", "").strip()
     password = request.form.get("confirm_password", "")

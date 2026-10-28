@@ -576,6 +576,7 @@ body {
     font-family: inherit;
     font-size: 0.82rem;
     font-weight: 600;
+    line-height: 1.2;
     letter-spacing: 0.04em;
     cursor: pointer;
     transition: var(--transition);
