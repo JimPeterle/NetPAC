@@ -6,7 +6,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NETPAC_STATE_DIR=/home/netpac/state \
     APP_DIR=/home/netpac/bin/NetPAC
 
-RUN apt-get update \
+ARG APT_REFRESH=manual
+
+RUN echo "Package refresh: $APT_REFRESH" \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 python3-venv \
         python3-flask python3-flask-login python3-flask-bcrypt python3-flask-limiter python3-flaskext.wtf \

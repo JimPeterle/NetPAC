@@ -323,6 +323,16 @@ Requirements on the host:
   available from the official MariaDB repository.
 - Free ports 80 and 443.
 
+Install Docker and the Compose plugin from the Ubuntu packages:
+```Bash
+sudo apt install docker.io docker-compose-v2
+docker compose version
+```
+`docker compose version` must show 2.23 or newer. Don't install the package `docker-compose`:
+it is the old Compose v1 (command `docker-compose` with a hyphen), which can't read NetPAC's
+docker-compose.yml. If the Ubuntu version is too old, use Docker's official repository instead
+(docs.docker.com, "Install Docker Engine on Ubuntu").
+
 Web interface, scheduler and executor run as three containers from the same image,
 plus nginx as reverse proxy. All containers use the host network, so `DB_IP=127.0.0.1`
 works as with a normal installation.
@@ -389,6 +399,12 @@ e.g. `/etc/logrotate.d/netpac`:
 ```
 
 ### Update and commands
+
+The image of the latest release is rebuilt every Monday with the current Ubuntu packages
+(security updates, bug fixes of Ansible and Python). `docker compose pull` fetches it; your
+data, Python packages and Ansible collections are kept. The image tags are `latest`, the major
+version (e.g. `9`) and the exact version (e.g. `9.0.0`) — set the image in docker-compose.yml to
+`ghcr.io/jimpeterle/netpac:9` to receive updates only within one major version.
 
 ```Bash
 docker compose pull && docker compose up -d   # update (database changes are applied automatically)
@@ -472,6 +488,44 @@ sudo deluser netpac sudo
 sudo deluser --remove-home netpac
 ```
 After this steps netpac is removed from your system.
+
+### Remove NetPAC installed with Docker
+
+1. As user `netpac`, in the folder with docker-compose.yml: stop and remove the containers,
+   the Docker volumes (Python venv, Ansible collections, SSH known_hosts, Git sync settings) and the images:
+   ```Bash
+   docker compose down --volumes --rmi all
+   ```
+
+2. Remove the data on the host. This deletes scripts, playbooks, logs and the certificate:
+   ```Bash
+   sudo rm -rf /var/lib/netpac /var/log/netpac /etc/netpac
+   sudo rm -f /etc/logrotate.d/netpac
+   ```
+
+3. Remove the database and its user in MariaDB (`sudo mariadb -u root -p`, use the DB_USER from secret.env):
+   ```sql
+   DROP DATABASE IF EXISTS `netpac_db`;
+   DROP USER IF EXISTS '#YOUR-USER#'@'localhost';
+   ```
+
+4. Remove the folder with docker-compose.yml. It contains secret.env with the encryption key and the
+   `backups` folder — keep a copy of the backups first if you may need them later:
+   ```Bash
+   cd ~ && rm -rf ~/bin/netpac
+   ```
+
+5. Remove the user `netpac` as root:
+   ```Bash
+   sudo pkill -u netpac
+   sudo deluser --remove-home netpac
+   ```
+
+6. Optional, only if nothing else on the server uses Docker or MariaDB:
+   ```Bash
+   sudo apt remove --purge docker.io docker-compose-v2
+   sudo apt remove --purge mariadb-server
+   ```
 
 ## License
 
