@@ -1,6 +1,6 @@
 # Remove NetPAC
 
-## Installation with setup.sh
+## setup.sh
 
 As user `netpac`:
 
@@ -17,7 +17,7 @@ sudo deluser netpac sudo
 sudo deluser --remove-home netpac
 ```
 
-## Docker installation
+## Docker
 
 1. As user `netpac`, in the folder with docker-compose.yml: remove the containers, the Docker volumes
    (Python venv, Ansible collections, SSH known_hosts, Git sync settings) and the images:
