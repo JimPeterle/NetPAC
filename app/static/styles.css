@@ -969,6 +969,77 @@ select.form-input {
     align-items: center;
 }
 
+.segmented {
+    display: inline-flex;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.segmented-btn {
+    padding: 9px 14px;
+    border: none;
+    border-left: 1px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.segmented-btn:first-child { border-left: none; }
+
+.segmented-btn:hover { background: var(--accent-dim); color: var(--accent); }
+
+.segmented-btn.active,
+.segmented-btn.active:hover { background: var(--accent); color: var(--accent-contrast); }
+
+.host-table .host-col-narrow { width: 1%; white-space: nowrap; }
+
+.host-table tbody td.host-name { color: var(--text-primary); font-weight: 600; }
+
+.host-status-dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 0 3px var(--success-dim);
+}
+
+.host-status-dot.inactive {
+    background: var(--text-muted);
+    box-shadow: none;
+}
+
+.host-row-inactive .host-dim { opacity: 0.55; }
+
+.group-chip {
+    display: inline-flex;
+    align-items: center;
+    margin: 2px 4px 2px 0;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.4;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+a.group-chip:hover { border-color: var(--accent); }
+
+.host-description { color: var(--text-secondary); }
+
+.host-empty { color: var(--text-muted); }
+
 /* ============================================================
    GROUP / SCRIPT ITEMS
    ============================================================ */

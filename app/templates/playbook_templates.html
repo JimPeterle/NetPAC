@@ -9,9 +9,11 @@
         <p class="page-subtitle">Saved job templates for quick launch</p>
     </div>
     <div class="page-header-actions">
+        {% if can('operator') %}
         <button class="action-button action-button-primary" onclick="openModalAnimated('createModal')">
             + New Template
         </button>
+        {% endif %}
     </div>
 </div>
 
@@ -53,6 +55,7 @@
                         </td>
                         <td style="color: var(--text-muted); font-size: 0.875rem;">{{ t.created_by }}</td>
                         <td style="text-align: right;">
+                            {% if can('operator') %}
                             <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                                 <form method="POST" action="{{ url_for('launch_playbook_template', template_id=t.template_id) }}" style="margin: 0; display: flex; gap: 0.5rem;"
                                       data-name="{{ t.name }}" data-fields='{{ t.fields|tojson }}' onsubmit="return launchTemplate(event, this)">
@@ -83,6 +86,9 @@
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                                 </button>
                             </div>
+                            {% else %}
+                            <span style="color: var(--text-muted); padding-right: 3rem;">–</span>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

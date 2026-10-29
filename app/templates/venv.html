@@ -9,7 +9,7 @@
         <p class="page-subtitle">Manage packages in the NetPAC virtual environment</p>
     </div>
     <div class="page-header-actions">
-        {% if venv_exists %}
+        {% if venv_exists and can('operator') %}
         <form method="POST" action="{{ url_for('venv_update_all') }}" style="margin: 0;" onsubmit="showSpinner(this)">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="action-button action-button-secondary">
@@ -54,6 +54,7 @@
                         <td style="font-weight: 600; color: var(--accent);">{{ pkg.name }}</td>
                         <td style="color: var(--text-muted); font-size: 0.875rem;">{{ pkg.version }}</td>
                         <td style="text-align: right;">
+                            {% if can('operator') %}
                             <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
                                 <form method="POST" action="{{ url_for('venv_update') }}" style="margin: 0;">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -72,6 +73,7 @@
                                     </button>
                                 </form>
                             </div>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

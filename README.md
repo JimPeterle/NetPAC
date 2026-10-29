@@ -27,7 +27,7 @@ For login, you can use RADIUS or a local user. All users are required to
 set up two-factor authentication (TOTP) on first login.
 
 For local login you can use for first startup the user **admin** with password **admin**, after login and totp verification please change the default password under Settings -> Change Password of local user. 
-If you logged in with the local admin user, you can add more local user. 
+Admins can add more local users and assign roles under Settings -> User (see [Users and roles](#users-and-roles)). 
 
 For RADIUS login, the local admin configures the RADIUS server under 
 Settings -> Radius. The shared secret is stored encrypted in the database.
@@ -105,6 +105,32 @@ the end are kept.
 
 Hosts can be created, edited, and deleted in the GUI and assigned to 
 multiple groups.
+
+## Users and roles
+
+Every user has one of three roles:
+
+| Role | Permissions |
+|---|---|
+| **Admin** | Everything, including Settings (users and roles, RADIUS, notifications, Git repository, SSL, backups, logs, audit log) and Health |
+| **Operator** | Everything except Settings and Health: run scripts and playbooks, manage hosts, groups, templates, schedules, secrets, Python packages and Ansible collections |
+| **Viewer** | View only: hosts, scripts, playbooks, templates, schedules, job history and the list of secrets — no changes |
+
+- Roles are assigned by an admin under Settings -> User and take effect immediately.
+- The local user `admin` always has the Admin role and can't be deleted; further users can be admins as well.
+- RADIUS users are created as Viewer on their first login; an admin assigns their role in NetPAC.
+- Every user can change their own password (local users only — RADIUS passwords are managed by the RADIUS server).
+- Actions that are not allowed are hidden; if called anyway, NetPAC shows a message instead of performing them.
+- All operators see and manage all schedules. A schedule runs in the name of its owner; if the owner is deleted
+  or downgraded to Viewer, their schedules are paused. An operator who activates such a schedule again becomes its owner.
+- Denied actions are recorded in the audit log (`access.denied`).
+
+> [!IMPORTANT]
+> Give the Operator role only to people you trust with the server itself. Operators run scripts and playbooks,
+> set Ansible variables and install Python packages and Ansible collections — all of this executes code on the
+> NetPAC server as the NetPAC user, which can read `config/secret.env`. The roles protect against mistakes and
+> limit Viewers; they are not a barrier against a malicious Operator.
+- When roles are introduced by an update, existing users become Operator and `admin` becomes Admin.
 
 ## Monitoring & Logs
 

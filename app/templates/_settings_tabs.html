@@ -1,5 +1,6 @@
 {% macro settings_tabs(active, links=False) %}
 {% set tabs = [('user', 'User'), ('radius', 'Radius'), ('notifications', 'Notifications'), ('git', 'Git'), ('ssl', 'SSL/TLS'), ('backup', 'Backup'), ('logs', 'Logs')] %}
+{% if not can('admin') %}{% set tabs = [('user', 'User')] %}{% endif %}
 <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border);">
     {% for key, label in tabs %}
     {% if links %}
@@ -10,6 +11,8 @@
     </button>
     {% endif %}
     {% endfor %}
+    {% if can('admin') %}
     <a href="{{ url_for('audit_log_page') }}" class="action-button {{ 'action-button-primary' if active == 'audit' else 'action-button-secondary' }}" style="border-radius: 8px 8px 0 0; border-bottom: none; opacity: {{ '1' if active == 'audit' else '0.6' }};">Audit</a>
+    {% endif %}
 </div>
 {% endmacro %}

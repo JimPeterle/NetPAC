@@ -26,6 +26,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 import re
 import threading
 import json
+import functools
 import math
 import collections
 import csv
@@ -75,7 +76,7 @@ def config_path(name, folder=CONFIG_DIR):
     return legacy if not os.path.exists(path) and os.path.exists(legacy) else path
 
 
-APP_VERSION = "8.0.1"
+APP_VERSION = "9.0.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
@@ -374,8 +375,20 @@ def inject_app_info():
         """Returns the URL of a static file with its cache-busting hash."""
 
         return url_for("static", filename=filename, v=static_file_hash(filename))
-    return {"app_version": APP_VERSION, "static_file": static_file,
+    def can(role):
+        """True if the logged-in user has at least the given role."""
+
+        return current_user.is_authenticated and current_user.has_role(role)
+
+    return {"app_version": APP_VERSION, "static_file": static_file, "can": can, "role_labels": ROLE_LABELS,
             "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH}
+
+
+@app.template_filter("hide_sensitive")
+def hide_sensitive_filter(extra_vars):
+    """Formats extra vars as 'key=value, …' with sensitive values hidden (e.g. on the schedule page)."""
+
+    return ", ".join(f"{k}={REDACTED_VALUE if SENSITIVE_VAR_RE.search(str(k)) else v}" for k, v in extra_vars.items())
 
 
 @app.template_filter("filesize")
@@ -842,6 +855,30 @@ def parse_schedule(expression):
         'day_of_week': parts[4]
     }
 
+def schedule_owner_allowed(cur, username):
+    """True if the owner of a schedule still exists and has at least the operator role."""
+
+    if username == PROTECTED_ADMIN:
+        return True
+    cur.execute("SELECT role FROM user WHERE name = %s", (username,))
+    row = cur.fetchone()
+    return bool(row) and ROLE_LEVELS.get(row[0], 0) >= ROLE_LEVELS["operator"]
+
+
+def pause_user_schedules(cur, username):
+    """Deactivates all schedules of a user (deleted or downgraded to viewer); returns their ids."""
+
+    cur.execute("SELECT job_id FROM schedule_jobs WHERE user_id = %s AND is_active = TRUE", (username,))
+    ids = [row[0] for row in cur.fetchall()]
+    for schedule_id in ids:
+        cur.execute("UPDATE schedule_jobs SET is_active = FALSE WHERE job_id = %s", (schedule_id,))
+        try:
+            scheduler.remove_job(str(schedule_id))
+        except Exception:
+            pass
+    return ids
+
+
 def trigger_schedule_job(job_id, script_name, user_id, target, variables, secrets_json, use_venv=False, job_type='python'):
     """Queues a scheduled script or playbook (called by the scheduler); the executor runs it."""
 
@@ -856,7 +893,7 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
         if lock != 1:
             return
 
-        cur.execute("SELECT is_active FROM schedule_jobs WHERE job_id = %s", (job_id,))
+        cur.execute("SELECT is_active, user_id FROM schedule_jobs WHERE job_id = %s", (job_id,))
         active_row = cur.fetchone()
         if not active_row or not active_row[0]:
             scheduler_logger.info(f"Job {job_id} ({script_name}) is inactive in DB — removing from scheduler and skipping")
@@ -864,6 +901,18 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
                 scheduler.remove_job(str(job_id))
             except Exception:
                 pass
+            return
+
+        user_id = active_row[1]
+        if not schedule_owner_allowed(cur, user_id):
+            cur.execute("UPDATE schedule_jobs SET is_active = FALSE WHERE job_id = %s", (job_id,))
+            conn.commit()
+            try:
+                scheduler.remove_job(str(job_id))
+            except Exception:
+                pass
+            scheduler_logger.warning(f"Schedule #{job_id} ({script_name}) paused: owner '{user_id}' no longer exists or is not an operator")
+            audit("schedule.paused", f"#{job_id}", f"owner {user_id} no longer exists or is not an operator", user="scheduler")
             return
 
         cur.execute("""
@@ -1717,14 +1766,63 @@ login_manager.login_message_category = "warning"
 # --------------------
 #   Define user
 # --------------------
+ROLE_LEVELS = {"viewer": 1, "operator": 2, "admin": 3}
+ROLE_LABELS = {"admin": "Admin", "operator": "Operator", "viewer": "Viewer"}
+PROTECTED_ADMIN = "admin"
+ROLE_DENIED_MESSAGES = {
+    "admin": "Only an admin can do this",
+    "operator": "Your role (Viewer) can only view NetPAC — ask an admin for the Operator role",
+}
+
+
 class User(UserMixin):
     """Logged-in user for Flask-Login."""
 
-    def __init__(self, username):
-        """Creates the user object for a username."""
+    def __init__(self, username, role="viewer"):
+        """Creates the user object for a username; the user 'admin' always has the admin role."""
 
         self.id = username
         self.username = username
+        self.role = "admin" if username == PROTECTED_ADMIN else (role if role in ROLE_LEVELS else "viewer")
+
+    def has_role(self, role):
+        """True if the user has at least the given role."""
+
+        return ROLE_LEVELS[self.role] >= ROLE_LEVELS[role]
+
+
+def safe_back_url(fallback="dashboard"):
+    """Returns the page the user came from (same site only), else the fallback page."""
+
+    referrer = request.referrer
+    if referrer:
+        parsed = urllib.parse.urlparse(referrer)
+        if parsed.netloc == request.host and parsed.path.startswith("/") and parsed.path != request.path:
+            return parsed.path + (f"?{parsed.query}" if parsed.query else "")
+    return url_for(fallback)
+
+
+def role_required(role, tab=None, json=False):
+    """Allows a route only for users with at least this role; others get a message instead of an error page."""
+
+    def decorator(view):
+        """Wraps the view with the role check."""
+
+        @functools.wraps(view)
+        def wrapper(*args, **kwargs):
+            """Runs the view if the role is sufficient."""
+
+            if current_user.has_role(role):
+                return view(*args, **kwargs)
+            message = ROLE_DENIED_MESSAGES[role]
+            logger.warning(f"{current_user.id} ({current_user.role}) was denied {request.endpoint} (needs {role})")
+            audit("access.denied", request.endpoint, f"role {current_user.role}, needs {role}")
+            if json:
+                return jsonify({"success": False, "message": message}), 403
+            flash(message, "warning")
+            return redirect(url_for("settings", tab=tab) if tab else safe_back_url())
+        return wrapper
+    return decorator
 
 
 # --------------------
@@ -1738,9 +1836,9 @@ def auth_fingerprint(password_hash, totp_secret):
 
 
 def load_auth_row(cur, username):
-    """Loads password hash and TOTP secret of a user."""
+    """Loads password hash, TOTP secret and role of a user."""
 
-    cur.execute("SELECT password, totp_secret FROM user WHERE name = %s", (username,))
+    cur.execute("SELECT password, totp_secret, role FROM user WHERE name = %s", (username,))
     return cur.fetchone()
 
 
@@ -1755,7 +1853,7 @@ def remember_auth_state(username):
         cur.close()
         conn.close()
     if row:
-        session["auth_fp"] = auth_fingerprint(*row)
+        session["auth_fp"] = auth_fingerprint(row[0], row[1])
 
 
 @login_manager.user_loader
@@ -1773,10 +1871,10 @@ def load_user(user_id):
     if row is None:
         return None
 
-    if not hmac.compare_digest(session.get("auth_fp", ""), auth_fingerprint(*row)):
+    if not hmac.compare_digest(session.get("auth_fp", ""), auth_fingerprint(row[0], row[1])):
         return None
 
-    return User(user_id)
+    return User(user_id, row[2])
 
 
 # --------------------
@@ -2239,6 +2337,7 @@ def normalize_group_vars(raw):
 
 @app.route("/groups", methods=["POST"])
 @login_required
+@role_required("operator")
 def add_group():
     """Creates a host group."""
 
@@ -2275,6 +2374,7 @@ def add_group():
 
 @app.route("/groups/edit/<int:group_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def edit_group(group_id):
     """Updates the Ansible variables of a group."""
 
@@ -2310,6 +2410,7 @@ def edit_group(group_id):
 
 @app.route("/groups/delete", methods=["POST"])
 @login_required
+@role_required("operator")
 def delete_group():
     """Deletes a host group."""
 
@@ -2435,6 +2536,7 @@ def hosts():
 
 @app.route("/hosts", methods=["POST"])
 @login_required
+@role_required("operator")
 def add_host():
     """Creates a host with its groups."""
 
@@ -2486,6 +2588,7 @@ def add_host():
 
 @app.route("/update_host", methods=["POST"])
 @login_required
+@role_required("operator")
 def update_host():
     """Updates name, description and groups of a host."""
 
@@ -2536,6 +2639,7 @@ def update_host():
 
 @app.route("/hosts/edit/bulk", methods=["POST"])
 @login_required
+@role_required("operator")
 def bulk_update_hosts():
     """Adds groups and/or sets the description for several hosts."""
 
@@ -2579,6 +2683,7 @@ def bulk_update_hosts():
 
 @app.route("/hosts/toggle/<int:host_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def toggle_host(host_id):
     """Activates or deactivates a host."""
 
@@ -2613,6 +2718,7 @@ def toggle_host(host_id):
 
 @app.route("/hosts/delete", methods=["POST"])
 @login_required
+@role_required("operator")
 def delete_host():
     """Deletes a host."""
 
@@ -2726,6 +2832,7 @@ def view_script(subpath):
 
 @app.route("/run_scripts/<path:subpath>", methods=["POST"])
 @login_required
+@role_required("operator")
 def run_script(subpath):
     """Starts a Python script as a background job."""
 
@@ -2942,6 +3049,7 @@ def venv_manager():
 
 @app.route("/venv/install", methods=["POST"])
 @login_required
+@role_required("operator")
 def venv_install():
     """Installs a package into the venv."""
 
@@ -2976,6 +3084,7 @@ def venv_install():
 
 @app.route("/venv/uninstall", methods=["POST"])
 @login_required
+@role_required("operator")
 def venv_uninstall():
     """Removes a package from the venv."""
 
@@ -3010,6 +3119,7 @@ def venv_uninstall():
 
 @app.route("/venv/update", methods=["POST"])
 @login_required
+@role_required("operator")
 def venv_update():
     """Updates a package in the venv."""
 
@@ -3044,6 +3154,7 @@ def venv_update():
 
 @app.route("/venv/update_all", methods=["POST"])
 @login_required
+@role_required("operator")
 def venv_update_all():
     """Updates all outdated packages in the venv."""
 
@@ -3078,6 +3189,7 @@ def venv_update_all():
 # ---------------------
 @app.route("/scripts/sync", methods=["POST"])
 @login_required
+@role_required("operator")
 def sync_scripts():
     """Clones or pulls the configured Git repository."""
 
@@ -3187,6 +3299,7 @@ def browse_playbooks(subpath):
 
 @app.route("/playbook_graph/<path:subpath>", methods=["POST"])
 @login_required
+@role_required("operator")
 def playbook_graph(subpath):
     """Generates a graph of a playbook with ansible-playbook-grapher."""
 
@@ -3264,6 +3377,7 @@ def raw_playbook_graph(filename):
 
 @app.route("/playbook_syntax_check/<path:subpath>", methods=["POST"])
 @login_required
+@role_required("operator")
 def playbook_syntax_check(subpath):
     """Runs ansible-playbook --syntax-check on a playbook."""
 
@@ -3296,6 +3410,7 @@ def playbook_syntax_check(subpath):
 
 @app.route("/run_playbook/<path:subpath>", methods=["POST"])
 @login_required
+@role_required("operator")
 def run_playbook(subpath):
     """Starts a playbook as a background job."""
 
@@ -3495,6 +3610,7 @@ def collect_survey_values(fields, form):
 
 @app.route("/playbook_templates/create", methods=["POST"])
 @login_required
+@role_required("operator")
 def create_playbook_template():
     """Creates a playbook template."""
 
@@ -3547,6 +3663,7 @@ def create_playbook_template():
 
 @app.route("/playbook_templates/edit/<int:template_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def edit_playbook_template(template_id):
     """Updates a playbook template."""
 
@@ -3600,6 +3717,7 @@ def edit_playbook_template(template_id):
 
 @app.route("/playbook_templates/delete/<int:template_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def delete_playbook_template(template_id):
     """Deletes a playbook template."""
 
@@ -3624,6 +3742,7 @@ def delete_playbook_template(template_id):
 
 @app.route("/playbook_templates/launch/<int:template_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def launch_playbook_template(template_id):
     """Starts a playbook from a template as a background job."""
 
@@ -3903,6 +4022,7 @@ def ansible_collections():
 
 @app.route("/ansible_collections/install", methods=["POST"])
 @login_required
+@role_required("operator")
 def ansible_collections_install():
     """Installs an Ansible collection."""
 
@@ -3935,6 +4055,7 @@ def ansible_collections_install():
 
 @app.route("/ansible_collections/uninstall", methods=["POST"])
 @login_required
+@role_required("operator")
 def ansible_collections_uninstall():
     """Removes a user-installed Ansible collection."""
 
@@ -3970,6 +4091,7 @@ def ansible_collections_uninstall():
 
 @app.route("/ansible_collections/update", methods=["POST"])
 @login_required
+@role_required("operator")
 def ansible_collections_update():
     """Updates an Ansible collection."""
 
@@ -4001,6 +4123,7 @@ def ansible_collections_update():
 
 @app.route("/ansible_collections/update_all", methods=["POST"])
 @login_required
+@role_required("operator")
 def ansible_collections_update_all():
     """Updates all user-installed Ansible collections."""
 
@@ -4195,6 +4318,7 @@ def parse_play_recap(output):
 
 @app.route("/history/<int:job_id>/rerun_failed", methods=["POST"])
 @login_required
+@role_required("operator")
 def rerun_failed_hosts(job_id):
     """Starts the playbook of a job again, limited to the hosts that failed or were unreachable."""
 
@@ -4283,6 +4407,7 @@ def history_job_status(job_id):
 
 @app.route("/history/<int:job_id>/cancel", methods=["POST"])
 @login_required
+@role_required("operator")
 def cancel_job(job_id):
     """Stops a running job or removes a queued one from the queue."""
 
@@ -4408,6 +4533,7 @@ def audit_filters(args):
 
 @app.route("/audit")
 @login_required
+@role_required("admin")
 def audit_log_page():
     """Audit log with filters and pagination."""
 
@@ -4450,6 +4576,7 @@ def csv_safe(value):
 
 @app.route("/audit/export")
 @login_required
+@role_required("admin")
 def export_audit_csv():
     """Downloads the filtered audit log as CSV."""
 
@@ -4503,6 +4630,7 @@ def schedule():
 
 @app.route("/schedule/add", methods=["POST"])
 @login_required
+@role_required("operator")
 def add_schedule():
     """Creates a schedule and registers it in the scheduler."""
 
@@ -4602,6 +4730,7 @@ def add_schedule():
 
 @app.route("/schedule/toggle/<int:cron_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def toggle_schedule(cron_id):
     """Activates or deactivates a schedule."""
 
@@ -4609,7 +4738,7 @@ def toggle_schedule(cron_id):
     cur = conn.cursor()
 
     try:
-        cur.execute("SELECT is_active FROM schedule_jobs WHERE job_id = %s", (cron_id,))
+        cur.execute("SELECT is_active, user_id FROM schedule_jobs WHERE job_id = %s", (cron_id,))
         row = cur.fetchone()
 
         if not row:
@@ -4617,6 +4746,10 @@ def toggle_schedule(cron_id):
 
         new_status = not row[0]
         cur.execute("UPDATE schedule_jobs SET is_active = %s WHERE job_id = %s", (new_status, cron_id))
+        if new_status and not schedule_owner_allowed(cur, row[1]):
+            cur.execute("UPDATE schedule_jobs SET user_id = %s WHERE job_id = %s", (current_user.id, cron_id))
+            audit("schedule.owner", f"#{cron_id}", f"{row[1]} -> {current_user.id}")
+            flash(f"The previous owner ({row[1]}) is no longer an operator — the schedule now runs as {current_user.id}", "warning")
         conn.commit()
 
         if new_status:
@@ -4647,6 +4780,7 @@ def toggle_schedule(cron_id):
 
 @app.route("/schedule/delete/<int:cron_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def delete_schedule(cron_id):
     """Deletes a schedule."""
 
@@ -4685,12 +4819,15 @@ def settings():
     """Settings page with all tabs."""
 
     active_tab = request.args.get("tab", "user")
-    
+    is_admin = current_user.has_role("admin")
+    if not is_admin:
+        active_tab = "user"
+
     log_dir = "/var/log/netpac"
     log_files = []
-    
+
     try:
-        if os.path.exists(log_dir):
+        if is_admin and os.path.exists(log_dir):
             for filename in os.listdir(log_dir):
                 if filename.endswith('.log'):
                     file_path = os.path.join(log_dir, filename)
@@ -4700,14 +4837,14 @@ def settings():
                         'size': stat_info.st_size,
                         'modified': datetime.fromtimestamp(stat_info.st_mtime)
                     })
-            
+
             log_files.sort(key=lambda x: x['modified'], reverse=True)
     except Exception as e:
         logger.error(f"Error listing logs: {e}")
-    
+
     backup_files = []
     try:
-        if os.path.exists(BACKUP_DIR):
+        if is_admin and os.path.exists(BACKUP_DIR):
             for filename in os.listdir(BACKUP_DIR):
                 if filename.endswith('.sql'):
                     file_path = os.path.join(BACKUP_DIR, filename)
@@ -4724,35 +4861,37 @@ def settings():
 
     conn = get_db()
     cur = conn.cursor()
-    
+
     cur.execute("SELECT method FROM user WHERE name = %s", (current_user.id,))
     row = cur.fetchone()
     user_method = row[0] if row else None
 
-    cur.execute("SELECT name FROM user WHERE name != 'admin' AND method = 'local'")
-    users = cur.fetchall()
+    users = []
+    if is_admin:
+        cur.execute("SELECT name, method, role FROM user ORDER BY name = %s DESC, name", (PROTECTED_ADMIN,))
+        users = [{"name": r[0], "method": r[1] or "local", "role": "admin" if r[0] == PROTECTED_ADMIN else r[2]}
+                 for r in cur.fetchall()]
 
     cur.close()
     conn.close()
-    
-    git_config = load_git_config()
-    
-    radius_config = load_radius_config()
 
-    ssl_info_data = get_ssl_info()
-
-    notification_config = load_notification_settings()
-    notification_rules = load_notification_rules()
+    git_config = load_git_config() if is_admin else {}
+    radius_config = load_radius_config() if is_admin else {}
+    ssl_info_data = get_ssl_info() if is_admin else {}
+    notification_config = load_notification_settings() if is_admin else {}
+    notification_rules = load_notification_rules() if is_admin else []
 
     return render_template("settings.html", logs=log_files, git_config=git_config,
                         user_method=user_method, users=users, backups=backup_files,
                         active_tab=active_tab, radius_config=radius_config, ssl_info=ssl_info_data,
                         notification_config=notification_config, notification_rules=notification_rules,
-                        notify_statuses=NOTIFY_STATUSES)
+                        notify_statuses=NOTIFY_STATUSES, is_admin=is_admin, roles=list(ROLE_LEVELS),
+                        protected_admin=PROTECTED_ADMIN)
 
 
 @app.route("/settings/git", methods=["POST"])
 @login_required
+@role_required("admin", tab="git")
 def save_git_config():
     """Saves the Git repository settings."""
 
@@ -4808,6 +4947,7 @@ def save_git_config():
 
 @app.route("/settings/logs/<filename>")
 @login_required
+@role_required("admin", tab="logs")
 def view_log(filename):
     """Shows the last 50 lines of a log file."""
 
@@ -4921,27 +5061,19 @@ def change_password():
     return redirect(url_for("settings", tab="user"))
 
 
-ADMIN_ONLY_MESSAGE = "Only the user admin can make this change"
-
-
-def admin_only_redirect(tab):
-    """Shows that a setting can only be changed by the admin user and returns to its settings tab."""
-
-    flash(ADMIN_ONLY_MESSAGE, "warning")
-    return redirect(url_for("settings", tab=tab))
-
-
 @app.route("/settings/add_user", methods=["POST"])
 @login_required
+@role_required("admin", tab="user")
 def add_user():
-    """Creates a local user (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("user")
+    """Creates a local user with a role (admin only)."""
 
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
     method = "local"
+    role = request.form.get("role", "viewer")
+    if role not in ROLE_LEVELS:
+        flash("Invalid role", "danger")
+        return redirect(url_for("settings", tab="user"))
 
     if not username or not password:
         flash("Username and password are required", "danger")
@@ -4967,13 +5099,13 @@ def add_user():
 
         hashed = bcrypt.generate_password_hash(password).decode('utf-8')
         cur.execute(
-            "INSERT INTO user (name, password, method) VALUES (%s, %s, %s)",
-            (username, hashed, method)
+            "INSERT INTO user (name, password, method, role) VALUES (%s, %s, %s, %s)",
+            (username, hashed, method, role)
         )
         conn.commit()
         flash(f"User '{sanitize_log(username)}' created successfully", "success")
         logger.info(f"User '{sanitize_log(username)}' created by {current_user.id}")
-        audit("user.create", username)
+        audit("user.create", username, f"role: {role}")
 
     except Exception as e:
         logger.error(f"Error creating user: {e}")
@@ -4988,27 +5120,32 @@ def add_user():
 
 @app.route("/settings/delete_user", methods=["POST"])
 @login_required
+@role_required("admin", tab="user")
 def delete_user():
     """Deletes a user (admin only)."""
 
-    if current_user.id != 'admin':
-        return admin_only_redirect("user")
-
     username = request.form.get("username", "").strip()
 
-    if not username or username == 'admin':
+    if not username or username == PROTECTED_ADMIN:
         flash("Cannot delete this user", "danger")
+        return redirect(url_for("settings", tab="user"))
+
+    if username == current_user.id:
+        flash("You can't delete your own user", "danger")
         return redirect(url_for("settings", tab="user"))
 
     conn = get_db()
     cur = conn.cursor()
 
     try:
+        paused = pause_user_schedules(cur, username)
         cur.execute("DELETE FROM user WHERE name = %s", (username,))
         conn.commit()
         flash(f"User '{sanitize_log(username)}' deleted successfully", "success")
         logger.info(f"User '{sanitize_log(username)}' deleted by {current_user.id}")
-        audit("user.delete", username)
+        audit("user.delete", username, f"{len(paused)} schedule(s) paused" if paused else None)
+        if paused:
+            flash(f"{len(paused)} schedule(s) of {username} were paused — an operator can activate them again and becomes their owner", "warning")
 
     except Exception as e:
         logger.error(f"Error deleting user: {e}")
@@ -5021,13 +5158,55 @@ def delete_user():
     return redirect(url_for("settings", tab="user"))
 
 
+@app.route("/settings/user_role", methods=["POST"])
+@login_required
+@role_required("admin", tab="user")
+def set_user_role():
+    """Changes the role of a user (admin only; 'admin' and your own role can't be changed)."""
+
+    username = request.form.get("username", "").strip()
+    role = request.form.get("role", "")
+
+    if role not in ROLE_LEVELS:
+        flash("Invalid role", "danger")
+        return redirect(url_for("settings", tab="user"))
+    if username == PROTECTED_ADMIN:
+        flash(f"The user {PROTECTED_ADMIN} always keeps the Admin role", "warning")
+        return redirect(url_for("settings", tab="user"))
+    if username == current_user.id:
+        flash("You can't change your own role — ask another admin", "warning")
+        return redirect(url_for("settings", tab="user"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT role FROM user WHERE name = %s", (username,))
+        row = cur.fetchone()
+        if not row:
+            flash("User not found", "danger")
+            return redirect(url_for("settings", tab="user"))
+        if row[0] == role:
+            return redirect(url_for("settings", tab="user"))
+        cur.execute("UPDATE user SET role = %s WHERE name = %s", (role, username))
+        paused = pause_user_schedules(cur, username) if ROLE_LEVELS[role] < ROLE_LEVELS["operator"] else []
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"Role of '{sanitize_log(username)}' changed from {row[0]} to {role} by {current_user.id}")
+    audit("user.role", username, f"{row[0]} -> {role}" + (f", {len(paused)} schedule(s) paused" if paused else ""))
+    flash(f"{username} is now {ROLE_LABELS[role]}", "success")
+    if paused:
+        flash(f"{len(paused)} schedule(s) of {username} were paused — an operator can activate them again and becomes their owner", "warning")
+    return redirect(url_for("settings", tab="user"))
+
+
 @app.route("/settings/radius", methods=["POST"])
 @login_required
+@role_required("admin", tab="radius")
 def save_radius_config():
     """Saves the RADIUS settings (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("radius")
 
     server_host = request.form.get("server_host", "").strip()
     server_port = request.form.get("server_port", "1812").strip()
@@ -5085,11 +5264,9 @@ def save_radius_config():
 
 @app.route("/settings/radius/test", methods=["POST"])
 @login_required
+@role_required("admin", json=True)
 def test_radius_config():
     """Tests the RADIUS settings with a login attempt (admin only)."""
-
-    if current_user.id != 'admin':
-        return jsonify({"success": False, "message": ADMIN_ONLY_MESSAGE}), 403
 
     test_username = request.form.get("test_username", "").strip()
     test_password = request.form.get("test_password", "")
@@ -5209,6 +5386,7 @@ def parse_notification_rule_form():
 
 @app.route("/settings/notifications", methods=["POST"])
 @login_required
+@role_required("admin", tab="notifications")
 def save_notification_settings():
     """Saves the SMTP and Matrix settings."""
 
@@ -5285,6 +5463,7 @@ def save_notification_settings():
 
 @app.route("/settings/notifications/rules", methods=["POST"])
 @login_required
+@role_required("admin", tab="notifications")
 def create_notification_rule():
     """Creates a notification rule."""
 
@@ -5319,6 +5498,7 @@ def create_notification_rule():
 
 @app.route("/settings/notifications/rules/edit/<int:rule_id>", methods=["POST"])
 @login_required
+@role_required("admin", tab="notifications")
 def edit_notification_rule(rule_id):
     """Updates a notification rule."""
 
@@ -5359,6 +5539,7 @@ def edit_notification_rule(rule_id):
 
 @app.route("/settings/notifications/rules/toggle/<int:rule_id>", methods=["POST"])
 @login_required
+@role_required("admin", tab="notifications")
 def toggle_notification_rule(rule_id):
     """Activates or deactivates a notification rule."""
 
@@ -5385,6 +5566,7 @@ def toggle_notification_rule(rule_id):
 
 @app.route("/settings/notifications/rules/delete/<int:rule_id>", methods=["POST"])
 @login_required
+@role_required("admin", tab="notifications")
 def delete_notification_rule(rule_id):
     """Deletes a notification rule."""
 
@@ -5413,6 +5595,7 @@ def delete_notification_rule(rule_id):
 @app.route("/settings/notifications/rules/test/<int:rule_id>", methods=["POST"])
 @limiter.limit("5 per minute", methods=["POST"])
 @login_required
+@role_required("admin", tab="notifications")
 def test_notification_rule(rule_id):
     """Sends a test notification for a rule."""
 
@@ -5476,11 +5659,9 @@ def get_ssl_info():
 
 @app.route("/settings/ssl/upload", methods=["POST"])
 @login_required
+@role_required("admin", tab="ssl")
 def upload_ssl_cert():
     """Replaces the TLS certificate and key (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("ssl")
 
     cert_file = request.files.get('cert_file')
     key_file = request.files.get('key_file')
@@ -5788,6 +5969,7 @@ def secrets():
 
 @app.route("/secrets/create", methods=["GET", "POST"])
 @login_required
+@role_required("operator")
 def create_secret():
     """Creates a secret."""
 
@@ -5835,6 +6017,7 @@ def create_secret():
 
 @app.route("/secrets/edit/<int:secret_id>", methods=["GET", "POST"])
 @login_required
+@role_required("operator")
 def edit_secret(secret_id):
     """Updates a secret (password only if a new one is entered)."""
 
@@ -5918,6 +6101,7 @@ def edit_secret(secret_id):
 
 @app.route("/secrets/delete/<int:secret_id>", methods=["POST"])
 @login_required
+@role_required("operator")
 def delete_secret(secret_id):
     """Deletes a secret."""
 
@@ -6027,11 +6211,9 @@ def run_backup_background(backup_type, filename, output_path, tables):
 
 @app.route("/settings/backup", methods=["POST"])
 @login_required
+@role_required("admin", tab="backup")
 def create_backup():
     """Starts a hosts or full backup (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("backup")
 
     backup_type = request.form.get("backup_type", "").strip()
 
@@ -6073,11 +6255,9 @@ def create_backup():
 
 @app.route("/settings/backup/download/<filename>")
 @login_required
+@role_required("admin", tab="backup")
 def download_backup(filename):
     """Downloads a backup file (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("backup")
 
     safe_filename = secure_filename(filename)
     backup_dir = os.path.realpath(BACKUP_DIR)
@@ -6096,11 +6276,9 @@ def download_backup(filename):
 
 @app.route("/settings/backup/delete", methods=["POST"])
 @login_required
+@role_required("admin", tab="backup")
 def delete_backup():
     """Deletes a backup file (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("backup")
 
     filename = request.form.get("filename", "").strip()
     safe_filename = secure_filename(filename)
@@ -6128,11 +6306,9 @@ def delete_backup():
 
 @app.route("/settings/backup/restore", methods=["POST"])
 @login_required
+@role_required("admin", tab="backup")
 def restore_backup():
     """Restores a backup after password and TOTP check (admin only)."""
-
-    if current_user.id != 'admin':
-        return admin_only_redirect("backup")
 
     filename = request.form.get("filename", "").strip()
     password = request.form.get("confirm_password", "")
@@ -6273,6 +6449,7 @@ def restore_backup():
 # ---------------------
 @app.route("/health")
 @login_required
+@role_required("admin")
 def health():
     """System health page (database, scheduler, venv, collections)."""
 

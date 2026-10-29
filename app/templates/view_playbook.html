@@ -13,6 +13,7 @@
         <p class="page-subtitle">Ansible Playbook</p>
     </div>
     <div class="page-header-actions">
+        {% if can('operator') %}
         <button class="action-button action-button-primary" onclick="openModalAnimated('runPlaybookModal')">
             <span>Run Playbook</span>
         </button>
@@ -28,6 +29,7 @@
                 <span>Syntax Check</span>
             </button>
         </form>
+        {% endif %}
         <a href="{{ url_for('browse_playbooks', subpath=filename.rsplit('/', 1)[0] if '/' in filename else '') }}" class="action-button action-button-secondary">
             <span>← Back</span>
         </a>

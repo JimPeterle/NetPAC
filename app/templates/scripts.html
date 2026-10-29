@@ -10,7 +10,7 @@
         <p class="page-subtitle">Manage your scripts</p>
     </div>
     <div class="page-header-actions">
-        {% if git_config.repo_url %}
+        {% if git_config.repo_url and can('operator') %}
         <form action="{{ url_for('sync_scripts') }}" method="POST" style="display:inline; margin:0;">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
             <button type="submit" class="action-button action-button-secondary"

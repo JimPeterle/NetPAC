@@ -54,7 +54,59 @@
     </div>
     {% endif %}
 
-    {% if current_user.id == 'admin' %}
+    {% if is_admin %}
+    <div class="content-card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h3 class="card-title">Users and roles</h3>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Login</th>
+                        <th>Role</th>
+                        <th style="text-align: right; padding-right: 1.5rem;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for user in users %}
+                    <tr>
+                        <td style="font-weight: 600;">{{ user.name }}{% if user.name == current_user.id %} <span style="color: var(--text-muted); font-weight: normal;">(you)</span>{% endif %}</td>
+                        <td style="color: var(--text-muted);">{{ 'RADIUS' if user.method == 'radius' else 'Local' }}</td>
+                        <td>
+                            {% if user.name == protected_admin or user.name == current_user.id %}
+                            <span class="status-badge status-running" title="{{ 'The user admin always keeps the Admin role' if user.name == protected_admin else 'Your own role can only be changed by another admin' }}">{{ role_labels[user.role] }}</span>
+                            {% else %}
+                            <form method="POST" action="{{ url_for('set_user_role') }}" style="margin: 0;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <input type="hidden" name="username" value="{{ user.name }}"/>
+                                <select name="role" class="form-input" style="width: auto; padding: 0.35rem 0.6rem;" onchange="this.form.submit()">
+                                    {% for role in roles %}
+                                    <option value="{{ role }}" {% if role == user.role %}selected{% endif %}>{{ role_labels[role] }}</option>
+                                    {% endfor %}
+                                </select>
+                            </form>
+                            {% endif %}
+                        </td>
+                        <td style="text-align: right; padding-right: 1.5rem;">
+                            {% if user.name != protected_admin and user.name != current_user.id %}
+                            <button type="button" class="action-button action-button-secondary" title="Delete user" data-username="{{ user.name }}" onclick="openDeleteModal(this.dataset.username)">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                            </button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <p class="form-hint" style="padding: 1rem 1.5rem; margin: 0;">
+                Admin: everything · Operator: everything except Settings and Health · Viewer: view only.
+                RADIUS users are added as Viewer on their first login.
+            </p>
+        </div>
+    </div>
+
     <div class="content-card" style="margin-top: 1.5rem;">
         <div class="card-header">
             <h3 class="card-title">Add local user</h3>
@@ -71,45 +123,24 @@
                     <input type="password" name="password" class="form-input" required>
                     <span class="form-hint">Min. 8 characters · uppercase · lowercase · number · special character</span>
                 </div>
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label class="form-label">Role</label>
+                    <select name="role" class="form-input">
+                        {% for role in roles %}
+                        <option value="{{ role }}" {% if role == 'viewer' %}selected{% endif %}>{{ role_labels[role] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
                 <div class="form-actions">
                     <button type="submit" class="action-button action-button-primary">Add User</button>
                 </div>
             </form>
         </div>
     </div>
-
-    <div class="content-card" style="margin-top: 1.5rem;">
-        <div class="card-header">
-            <h3 class="card-title">Delete local user</h3>
-        </div>
-        <div class="card-body" style="padding: 30px;">
-            {% if users %}
-            <form method="POST" action="{{ url_for('delete_user') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <select name="username" class="form-input" id="userSelect" onchange="toggleDeleteBtn(this.value)" required>
-                        <option value="">Select user...</option>
-                        {% for user in users %}
-                        <option value="{{ user[0] }}">{{ user[0] }}</option>
-                        {% endfor %}
-                    </select>
-                    <div class="form-actions">
-                        <button type="button" id="deleteUserBtn" class="action-button action-button-primary" 
-                                onclick="openDeleteModal(document.getElementById('userSelect').value)"
-                                disabled style="opacity: 0.5; cursor: not-allowed;">
-                            Delete User
-                        </button>
-                    </div>
-                </div>
-            </form>
-            {% else %}
-            <p style="color: var(--text-muted);">No other users available</p>
-            {% endif %}
-        </div>
-    </div>
     {% endif %}
 </div>
 
+{% if is_admin %}
 <div id="tabRadius" style="{{ 'display: none;' if active_tab != 'radius' else '' }}">
     <div class="content-card" style="margin-top: 0;">
         <div class="card-header">
@@ -548,6 +579,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <div id="deleteModalOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg-overlay); z-index: 9999; justify-content: center; align-items: center;">
     <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 0; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);">
@@ -752,6 +784,7 @@
 
         Object.entries(tabs).forEach(([key, id]) => {
             const el = document.getElementById(id);
+            if (!el) return;
             if (key === tab) {
                 el.style.display = 'block';
                 anime.animate(el, {
@@ -802,18 +835,6 @@
         }
     });
 
-    function toggleDeleteBtn(value) {
-        const btn = document.getElementById('deleteUserBtn');
-        if (value) {
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            btn.style.cursor = 'pointer';
-        } else {
-            btn.disabled = true;
-            btn.style.opacity = '0.5';
-            btn.style.cursor = 'not-allowed';
-        }
-    }
 
     function confirmDeleteBackup(filename) {
         document.getElementById('deleteBackupMessage').textContent = `Do you really want to delete the backup "${filename}"?`;

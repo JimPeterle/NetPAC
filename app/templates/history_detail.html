@@ -16,9 +16,11 @@
         <button class="action-button action-button-secondary" onclick="location.reload()">
             <span>Refresh</span>
         </button>
+        {% if can('operator') %}
         <button type="button" class="action-button action-button-danger" onclick="openModalAnimated('cancelModalOverlay')">
             <span>Cancel Job</span>
         </button>
+        {% endif %}
         {% endif %}
     </div>
 </div>
@@ -103,10 +105,12 @@
             <span class="status-badge status-warning">{{ hosts|selectattr('changed')|list|length }} changed</span>
             {% if failed_hosts %}
             <span class="status-badge status-error">{{ failed_hosts|length }} failed / unreachable</span>
+            {% if can('operator') %}
             <form method="POST" action="{{ url_for('rerun_failed_hosts', job_id=job.job_id) }}" style="margin: 0;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="action-button action-button-primary">Re-run failed hosts</button>
             </form>
+            {% endif %}
             {% endif %}
         </div>
     </div>

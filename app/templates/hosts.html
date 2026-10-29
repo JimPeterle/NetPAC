@@ -10,11 +10,13 @@
         <p class="page-subtitle">Manage your host systems</p>
     </div>
     <div class="page-header-actions">
+        {% if can('operator') %}
         <button class="action-button action-button-primary" onclick="openModalAnimated('addHostModal')">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             <span>Add Host</span>
         </button>
-        {% if hosts %}
+        {% endif %}
+        {% if hosts and can('operator') %}
         <div id="bulkBar" style="display: flex; align-items: center; gap: 0.5rem; padding-left: 0.75rem; border-left: 1px solid var(--border);">
             <label class="action-button action-button-secondary" style="cursor: pointer; font-weight: normal;">
                 <input type="checkbox" id="selectAllHosts" onchange="toggleSelectAll(this.checked)" style="width: 14px; height: 14px; margin: 0; accent-color: var(--accent);">
@@ -22,6 +24,13 @@
             </label>
             <button type="button" class="action-button action-button-secondary" onclick="clearSelection()">Clear</button>
             <button type="button" id="bulkEditBtn" class="action-button action-button-primary" onclick="openBulkModal()" disabled style="opacity: 0.5; cursor: not-allowed;">Edit selected <span id="bulkCount"></span></button>
+        </div>
+        {% endif %}
+        {% if hosts %}
+        <div class="segmented" id="statusFilter" role="group" aria-label="Filter hosts by status">
+            <button type="button" class="segmented-btn active" data-status="all">All</button>
+            <button type="button" class="segmented-btn" data-status="active">Active</button>
+            <button type="button" class="segmented-btn" data-status="inactive">Inactive</button>
         </div>
         {% endif %}
         <div class="search-container" style="position: relative;">
@@ -36,80 +45,102 @@
             {% if filtered_group is defined and filtered_group %}
                 Hosts in group "{{ filtered_group }}"
             {% else %}
-                Hostname - Groups - Description
+                All hosts
             {% endif %}
         </h3>
-        <span class="card-badge">{{ hosts|length }} Hosts</span>
+        <span class="card-badge" id="hostCount">{{ hosts|length }} Hosts</span>
     </div>
 
-    <div class="card-body">
+    <div class="card-body" style="padding: 0;">
         {% if hosts %}
-        <ul class="host-list" id="hostList">
-            {% for row in hosts %}
-            <li class="host-item">
+        {% set group_ids = {} %}
+        {% for g in available_groups %}{% set _ = group_ids.update({g[1]: g[0]}) %}{% endfor %}
+        <div class="table-container">
+            <table class="data-table host-table">
+                <thead>
+                    <tr>
+                        {% if can('operator') %}<th class="host-col-narrow"></th>{% endif %}
+                        <th class="host-col-narrow">Status</th>
+                        <th>Hostname</th>
+                        <th>Groups</th>
+                        <th>Description</th>
+                        {% if can('operator') %}<th style="text-align: right;">Actions</th>{% endif %}
+                    </tr>
+                </thead>
+                <tbody id="hostList">
+                    {% for row in hosts %}
+                    <tr class="{{ '' if row[3] else 'host-row-inactive' }}" data-active="{{ 1 if row[3] else 0 }}">
+                        {% if can('operator') %}
+                        <td>
+                            <input type="checkbox" class="host-select" value="{{ row[0] }}" onchange="updateBulkBar()"
+                                style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; margin: 0;">
+                        </td>
+                        {% endif %}
+                        <td>
+                            <span class="host-status-dot{{ '' if row[3] else ' inactive' }}" title="{{ 'Active' if row[3] else 'Inactive' }}"></span>
+                        </td>
+                        <td class="host-name host-dim">{{ row[1] }}</td>
+                        <td class="host-dim">
+                            {% for name in (host_groups[row[1]].split(',') if host_groups[row[1]] else []) %}
+                            {% if name in group_ids %}
+                            <a class="group-chip" href="{{ url_for('hosts_by_group', group_id=group_ids[name]) }}" title="Show hosts in {{ name }}">{{ name }}</a>
+                            {% else %}
+                            <span class="group-chip">{{ name }}</span>
+                            {% endif %}
+                            {% else %}
+                            <span class="host-empty">—</span>
+                            {% endfor %}
+                        </td>
+                        <td class="host-description host-dim">{% if row[2] %}{{ row[2] }}{% else %}<span class="host-empty">—</span>{% endif %}</td>
+                        {% if can('operator') %}
+                        <td>
+                            <div class="host-buttons" style="display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end;">
+                                <form method="POST" action="{{ url_for('toggle_host', host_id=row[0]) }}" style="margin: 0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <label class="ios-toggle" title="{{ 'Host active' if row[3] else 'Host inactive' }}">
+                                        <input type="checkbox" {% if row[3] %}checked{% endif %} onchange="this.form.submit()">
+                                        <span class="ios-slider"></span>
+                                    </label>
+                                </form>
 
-                <input type="checkbox" class="host-select" value="{{ row[0] }}" onchange="updateBulkBar()"
-                    style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; margin-right: 0.75rem; flex-shrink: 0;">
+                                <button type="button" onclick="openEditHostModal({{ loop.index }})" class="action-button action-button-secondary" title="Edit host">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                    </svg>
+                                </button>
 
-                <div class="host-info" style="{% if not row[3] %}opacity: 0.5;{% endif %}">
-                    <span class="host-name">{{ row[1] }}</span>
-                    
-                    {% if not row[3] %}
-                    <span style="background: var(--danger-dim); color: var(--danger); font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; margin-left: 0.5rem; border: 1px solid var(--danger);">inactive</span>
-                    {% endif %}
-                    
-                    {% if host_groups[row[1]] %}
-                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ host_groups[row[1]] }}</span>
-                    {% endif %}
-
-                    {% if row[2] %}
-                    <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ row[2] }}</span>
-                    {% endif %}
-                </div>
-
-                <div class="host-buttons" style="display: flex; gap: 0.5rem; align-items: center;">
-
-                    <form method="POST" action="{{ url_for('toggle_host', host_id=row[0]) }}" style="margin: 0;">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <label class="ios-toggle" title="{{ 'Host active' if row[3] else 'Host inactive' }}">
-                            <input type="checkbox" {% if row[3] %}checked{% endif %} onchange="this.form.submit()">
-                            <span class="ios-slider"></span>
-                        </label>
-                    </form>
-
-                    <button type="button" onclick="openEditHostModal({{ loop.index }})" class="action-button action-button-secondary" title="Edit host">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                        </svg>
-                    </button>
-
-                    <button type="button" class="action-button action-button-secondary" title="Delete host" onclick='confirmDelete({{ row[1]|tojson }})'>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                            <path d="M10 11v6M14 11v6"/>
-                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                        </svg>
-                    </button>
-                </div>
-
-                <template id="editData-{{ loop.index }}">
-                    <span data-hostname="{{ row[1] }}" data-description="{{ row[2] if row[2] else '' }}"
-                          {% for g in available_groups %}data-group-{{ g[0] }}="{{ 'checked' if g[1] in (host_groups[row[1]].split(',') if host_groups[row[1]] else []) else '' }}"{% endfor %}>
-                    </span>
-                </template>
-            </li>
-            {% endfor %}
-        </ul>
+                                <button type="button" class="action-button action-button-secondary" title="Delete host" onclick='confirmDelete({{ row[1]|tojson }})'>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/>
+                                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                        <path d="M10 11v6M14 11v6"/>
+                                        <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <template id="editData-{{ loop.index }}">
+                                <span data-hostname="{{ row[1] }}" data-description="{{ row[2] if row[2] else '' }}"
+                                      {% for g in available_groups %}data-group-{{ g[0] }}="{{ 'checked' if g[1] in (host_groups[row[1]].split(',') if host_groups[row[1]] else []) else '' }}"{% endfor %}>
+                                </span>
+                            </template>
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
         {% else %}
         <div class="empty-state">
             <h3 class="empty-title">No host available</h3>
+            {% if can('operator') %}
             <p class="empty-text">Add your first host</p>
             <button class="action-button action-button-primary" onclick="openModalAnimated('addHostModal')">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 <span>Add first host</span>
             </button>
+            {% endif %}
         </div>
         {% endif %}
     </div>
@@ -327,16 +358,36 @@
     });
 
     const searchInput = document.getElementById("searchInput");
-    const items = document.querySelectorAll("#hostList li");
+    const items = document.querySelectorAll("#hostList tr");
+
+    let statusFilter = "all";
+
+    function applyHostFilters() {
+        const text = searchInput ? searchInput.value.toLowerCase() : "";
+        let shown = 0;
+        items.forEach(item => {
+            const active = item.dataset.active === "1";
+            const visible = item.innerText.toLowerCase().includes(text)
+                && (statusFilter === "all" || (statusFilter === "active") === active);
+            item.style.display = visible ? "" : "none";
+            if (visible) shown++;
+        });
+        const badge = document.getElementById("hostCount");
+        if (badge) badge.textContent = shown === items.length ? `${items.length} Hosts` : `${shown} of ${items.length} Hosts`;
+        if (document.getElementById("bulkBar")) updateBulkBar();
+    }
 
     if (searchInput) {
-        searchInput.addEventListener("input", function () {
-            const filter = this.value.toLowerCase();
-            items.forEach(item => {
-                item.style.display = item.innerText.toLowerCase().includes(filter) ? "" : "none";
-            });
-        });
+        searchInput.addEventListener("input", applyHostFilters);
     }
+
+    document.querySelectorAll("#statusFilter .segmented-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            statusFilter = btn.dataset.status;
+            document.querySelectorAll("#statusFilter .segmented-btn").forEach(b => b.classList.toggle("active", b === btn));
+            applyHostFilters();
+        });
+    });
 
     function selectedHostBoxes() {
         return Array.from(document.querySelectorAll('.host-select:checked'));
@@ -351,15 +402,15 @@
         btn.style.opacity = n === 0 ? '0.5' : '1';
         btn.style.cursor = n === 0 ? 'not-allowed' : 'pointer';
 
-        const visible = Array.from(document.querySelectorAll('#hostList li'))
-            .filter(li => li.style.display !== 'none').length;
+        const visible = Array.from(document.querySelectorAll('#hostList tr'))
+            .filter(row => row.style.display !== 'none').length;
         document.getElementById('selectAllHosts').checked = n > 0 && n === visible;
     }
 
     function toggleSelectAll(checked) {
-        document.querySelectorAll('#hostList li').forEach(li => {
-            if (li.style.display === 'none') return;
-            const cb = li.querySelector('.host-select');
+        document.querySelectorAll('#hostList tr').forEach(row => {
+            if (row.style.display === 'none') return;
+            const cb = row.querySelector('.host-select');
             if (cb) cb.checked = checked;
         });
         updateBulkBar();
