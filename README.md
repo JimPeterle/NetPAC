@@ -151,7 +151,26 @@ rotated weekly and kept for 8 weeks (logrotate, set up by setup.sh).
 
 The UI supports a dark and light mode.
 
-The following explains the steps required to install NetPAC.
+The following explains the steps required to install NetPAC:
+
+1. [Prepare the server](#prepare-the-server) — create the user `netpac` (both ways)
+2. [Database configuration](#database-configuration) — install MariaDB and create the database (both ways)
+3. Install NetPAC either with [setup.sh](#netpac-configuration) or with [Docker](#installation-with-docker)
+
+## Prepare the server
+
+NetPAC runs as its own user `netpac`, with `setup.sh` as well as with Docker.
+Create the user as root:
+```Bash
+sudo -i
+adduser netpac
+```
+
+The user needs sudo rights: `setup.sh` creates the system services with them,
+and the `netpac` command uses them to restart the services.
+```Bash
+usermod -aG sudo netpac
+```
 
 ## Database configuration
 
@@ -218,21 +237,12 @@ docker compose exec web python3 app/db_migrations.py
 
 ## NetPAC configuration
 
-Create a new user and install git.
-```Bash
-sudo -i
-adduser netpac 
-apt install git
-```
+Installation with `setup.sh`. The user `netpac` must exist (see [Prepare the server](#prepare-the-server)).
 
-The user must be listed in the sudoers file to create the system service in the setup script.
-```Bash
-usermod -aG sudo netpac
-```
-
-Create a new user directory and clone git.
+Switch to the user `netpac`, install git and clone NetPAC:
 ```Bash
 su - netpac
+sudo apt install git
 mkdir bin
 cd bin/
 git clone https://github.com/JimPeterle/NetPAC.git
@@ -317,7 +327,17 @@ Web interface, scheduler and executor run as three containers from the same imag
 plus nginx as reverse proxy. All containers use the host network, so `DB_IP=127.0.0.1`
 works as with a normal installation.
 
-Download the two files and fill in secret.env (see [NetPAC configuration](#netpac-configuration)
+The user `netpac` must exist (see [Prepare the server](#prepare-the-server)). After installing Docker,
+allow it to use Docker, then log in again as `netpac` so the new group takes effect:
+```Bash
+sudo usermod -aG docker netpac
+su - netpac
+docker ps
+```
+`docker ps` must work without `sudo`. Members of the `docker` group have root-equivalent rights
+on the host, so only add the NetPAC user.
+
+All following steps are done as user `netpac`. Download the two files and fill in secret.env (see [NetPAC configuration](#netpac-configuration)
 for the values and how to create the ENCRYPTION_KEY):
 ```Bash
 mkdir netpac && cd netpac
@@ -349,12 +369,12 @@ The containers use the same paths as a normal installation. They are stored on t
 Python venv, Ansible collections, SSH known_hosts and the Git sync settings are kept
 in Docker volumes, so they survive updates.
 
-The containers run as UID/GID 1000. If your host user has a different ID, change
-`PUID` and `PGID` in docker-compose.yml (`id -u`, `id -g`). Folders that do not exist
+The containers run as UID/GID 1000. Check the IDs of the user `netpac` with `id -u` and `id -g`;
+if they differ, change `PUID` and `PGID` in docker-compose.yml. Folders that do not exist
 yet are created with this owner; existing folders must be writable by it.
 
 The log files are not rotated inside the containers. Use logrotate on the host,
-e.g. `/etc/logrotate.d/netpac` (replace `<user>` with the host user that has the PUID):
+e.g. `/etc/logrotate.d/netpac`:
 ```
 /var/log/netpac/*.log {
     weekly
@@ -364,7 +384,7 @@ e.g. `/etc/logrotate.d/netpac` (replace `<user>` with the host user that has the
     missingok
     notifempty
     copytruncate
-    su <user> <user>
+    su netpac netpac
 }
 ```
 
