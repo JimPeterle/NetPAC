@@ -993,6 +993,13 @@ select.form-input {
 
 .segmented-btn:first-child { border-left: none; }
 
+.toolbar-divider {
+    display: flex;
+    align-items: center;
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--border);
+}
+
 .segmented-btn:hover { background: var(--accent-dim); color: var(--accent); }
 
 .segmented-btn.active,
@@ -1000,10 +1007,14 @@ select.form-input {
 
 .host-table .host-col-narrow { width: 1%; white-space: nowrap; }
 
+.data-table.host-table thead th.host-col-status,
+.data-table.host-table tbody td.host-col-status { text-align: center; }
+
 .host-table tbody td.host-name { color: var(--text-primary); font-weight: 600; }
 
 .host-status-dot {
     display: inline-block;
+    vertical-align: middle;
     width: 9px;
     height: 9px;
     border-radius: 50%;

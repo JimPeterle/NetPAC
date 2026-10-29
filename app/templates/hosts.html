@@ -27,10 +27,12 @@
         </div>
         {% endif %}
         {% if hosts %}
-        <div class="segmented" id="statusFilter" role="group" aria-label="Filter hosts by status">
-            <button type="button" class="segmented-btn active" data-status="all">All</button>
-            <button type="button" class="segmented-btn" data-status="active">Active</button>
-            <button type="button" class="segmented-btn" data-status="inactive">Inactive</button>
+        <div class="{{ 'toolbar-divider' if can('operator') else '' }}">
+            <div class="segmented" id="statusFilter" role="group" aria-label="Filter hosts by status">
+                <button type="button" class="segmented-btn active" data-status="all">All</button>
+                <button type="button" class="segmented-btn" data-status="active">Active</button>
+                <button type="button" class="segmented-btn" data-status="inactive">Inactive</button>
+            </div>
         </div>
         {% endif %}
         <div class="search-container" style="position: relative;">
@@ -60,7 +62,7 @@
                 <thead>
                     <tr>
                         {% if can('operator') %}<th class="host-col-narrow"></th>{% endif %}
-                        <th class="host-col-narrow">Status</th>
+                        <th class="host-col-narrow host-col-status">Status</th>
                         <th>Hostname</th>
                         <th>Groups</th>
                         <th>Description</th>
@@ -76,7 +78,7 @@
                                 style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; margin: 0;">
                         </td>
                         {% endif %}
-                        <td>
+                        <td class="host-col-status">
                             <span class="host-status-dot{{ '' if row[3] else ' inactive' }}" title="{{ 'Active' if row[3] else 'Inactive' }}"></span>
                         </td>
                         <td class="host-name host-dim">{{ row[1] }}</td>
