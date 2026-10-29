@@ -14,8 +14,8 @@ x-netpac: &netpac
   init: true
   restart: unless-stopped
   environment:
-    PUID: "1000"
-    PGID: "1000"
+    # The containers run as the owner of secret.env (normally the user netpac).
+    # To use another user, set its IDs here: PUID: "1001" and PGID: "1001"
     TZ: Europe/Berlin
   volumes:
     - ./secret.env:/home/netpac/bin/NetPAC/config/secret.env:ro

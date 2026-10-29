@@ -1,8 +1,6 @@
 #!/bin/sh
 set -e
 
-PUID="${PUID:-1000}"
-PGID="${PGID:-1000}"
 SECRET_FILE="$APP_DIR/config/secret.env"
 CNF_FILE="$APP_DIR/config/db_secrets.cnf"
 CERT_DIR=/etc/netpac/certs
@@ -70,9 +68,21 @@ esac
 
 [ -f "$SECRET_FILE" ] || fail "secret.env not found. Put secret.env next to docker-compose.yml (template: secret_examples.env)."
 
+SECRET_UID="$(stat -c %u "$SECRET_FILE")"
+SECRET_GID="$(stat -c %g "$SECRET_FILE")"
+if [ "$SECRET_UID" = "0" ]; then
+    SECRET_UID=1000
+    SECRET_GID=1000
+fi
+PUID="${PUID:-$SECRET_UID}"
+PGID="${PGID:-$SECRET_GID}"
+
 if [ "$(id -u)" = "0" ]; then
     [ "$(id -g netpac)" = "$PGID" ] || groupmod -o -g "$PGID" netpac
     [ "$(id -u netpac)" = "$PUID" ] || usermod -o -u "$PUID" netpac
+
+    setpriv --reuid="$PUID" --regid="$PGID" --clear-groups test -r "$SECRET_FILE" \
+        || fail "secret.env is not readable for UID $PUID. It must belong to the user that runs NetPAC (e.g. chown netpac:netpac secret.env), or set PUID/PGID in docker-compose.yml."
 
     ensure_dir /var/log/netpac 750
     for dir in /var/lib/netpac /var/lib/netpac/scripts /var/lib/netpac/scripts/local \

@@ -369,9 +369,9 @@ The containers use the same paths as a normal installation. They are stored on t
 Python venv, Ansible collections, SSH known_hosts and the Git sync settings are kept
 in Docker volumes, so they survive updates.
 
-The containers run as UID/GID 1000. Check the IDs of the user `netpac` with `id -u` and `id -g`;
-if they differ, change `PUID` and `PGID` in docker-compose.yml. Folders that do not exist
-yet are created with this owner; existing folders must be writable by it.
+The containers run as the owner of `secret.env` — normally the user `netpac`, so files on the host
+belong to `netpac`. To use another user, set `PUID` and `PGID` in docker-compose.yml (`id -u`, `id -g`).
+Folders that do not exist yet are created with this owner; existing folders must be writable by it.
 
 The log files are not rotated inside the containers. Use logrotate on the host,
 e.g. `/etc/logrotate.d/netpac`:
