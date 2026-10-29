@@ -105,7 +105,7 @@ echo -e "${YELLOW}Loading secret.env...${NC}"
 
 if [ ! -f "$SECRET_FILE" ]; then
     print_error "secret.env not found in $APP_DIR/config"
-    print_warning "Create it first (see README) — it must contain at least DB_USER, DB_PW, DB_IP and DB_PORT"
+    print_warning "Create it first (see docs/install-setup.md) — it must contain at least DB_USER, DB_PW, DB_IP and DB_PORT"
     exit 1
 fi
 

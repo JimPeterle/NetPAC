@@ -2,7 +2,7 @@
 #
 # Next to this file you need secret.env (template: secret_examples.env).
 # Build the image yourself from the repository root: docker build -f docker/Dockerfile -t ghcr.io/jimpeterle/netpac:latest .
-# The database runs on the host (see README, "Database configuration").
+# The database runs on the host. Full guide: docs/install-docker.md
 # All containers use the host network, so DB_IP=127.0.0.1 works as with a normal installation.
 #
 # Start:   docker compose up -d

@@ -266,7 +266,7 @@ def decrypt_totp_secret(stored):
     except Exception as e:
         logger.critical(
             f"Cannot decrypt TOTP secret ({type(e).__name__}) — ENCRYPTION_KEY in secret.env is missing or was changed. "
-            "Affected users can't log in until their TOTP is reset, see README 'Lost or changed ENCRYPTION_KEY'."
+            "Affected users can't log in until their TOTP is reset, see docs/troubleshooting.md 'Lost or changed ENCRYPTION_KEY'."
         )
         return None, False
 
