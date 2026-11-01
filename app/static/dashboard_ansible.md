@@ -12,6 +12,17 @@ Remote Playbooks over git, they will be stored here. Please don't put here any l
 
 Hosts from your inventory are automatically passed to Ansible as a dynamic inventory under the group **[targets]**.
 
+The inventory contains only the hosts of your target (e.g. `r5,routers,switches`), so `hosts: targets` and
+`hosts: all` are identical in NetPAC. Prefer `targets`: run elsewhere with a full inventory, `all` would hit every device.
+
+Each host is also listed in its own groups, so a playbook can contain plays for single groups:
+
+```
+- hosts: targets
+- hosts: routers
+- hosts: switches
+```
+
 ## Survey variables
 
 Pass extra variables to your Playbook using the Survey field. One variable per line in the format:
