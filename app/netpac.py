@@ -1082,7 +1082,7 @@ def list_repo_files(local_dir, extensions):
     return sorted(result)
 
 
-def file_entry(full_path, name, path):
+def file_entry(full_path, name, path, extensions=None):
     """Returns name, path and details (item count or size, last change) of a file or folder."""
 
     is_dir = os.path.isdir(full_path)
@@ -1090,7 +1090,9 @@ def file_entry(full_path, name, path):
     try:
         entry["modified"] = datetime.fromtimestamp(os.stat(full_path).st_mtime)
         if is_dir:
-            entry["count"] = len([n for n in os.listdir(full_path) if n != '.git'])
+            entry["count"] = len([n for n in os.listdir(full_path)
+                                  if n != '.git' and (extensions is None or n.endswith(extensions)
+                                                      or os.path.isdir(os.path.join(full_path, n)))])
         else:
             entry["size"] = os.path.getsize(full_path)
     except OSError:
@@ -1114,15 +1116,17 @@ def repo_file_entries(local_dir, extensions):
     return entries
 
 
-def list_dir_entries(target, subpath, base_dir):
-    """Lists the entries of one folder for the file browser, folders first."""
+def list_dir_entries(target, subpath, base_dir, extensions):
+    """Lists the folders and the files with the given extensions of one folder for the file browser."""
 
     entries = []
     for name in (os.listdir(target) if os.path.isdir(target) else []):
         full = os.path.join(target, name)
         if name == '.git' or not is_listable(full, base_dir):
             continue
-        entries.append(file_entry(full, name, os.path.join(subpath, name) if subpath else name))
+        if not os.path.isdir(full) and not name.endswith(extensions):
+            continue
+        entries.append(file_entry(full, name, os.path.join(subpath, name) if subpath else name, extensions))
     return sort_entries(entries)
 
 
@@ -2794,9 +2798,9 @@ def scripts():
         logger.error(f"Script directory {SCRIPTS_DIR} does not exist")
         flash(f"Script directory {SCRIPTS_DIR} does not exist — run maintenance/setup.sh again or create it", "warning")
 
-    entries = [e for e in list_dir_entries(SCRIPTS_DIR, "", SCRIPTS_DIR) if e["is_dir"] or e["name"].endswith('.py')]
+    entries = list_dir_entries(SCRIPTS_DIR, "", SCRIPTS_DIR, ('.py',))
     if os.path.exists(GIT_DIR):
-        entries = sort_entries(entries + [file_entry(GIT_DIR, "git", "git")])
+        entries = sort_entries(entries + [file_entry(GIT_DIR, "git", "git", ('.py',))])
 
     all_scripts = repo_file_entries(SCRIPTS_DIR, ('.py',))
 
@@ -2819,7 +2823,7 @@ def view_script(subpath):
         abort(404)
 
     if os.path.isdir(target):
-        return render_template("scripts.html", entries=list_dir_entries(target, subpath, base_dir), current_path=subpath, git_config=load_git_config())
+        return render_template("scripts.html", entries=list_dir_entries(target, subpath, base_dir, ('.py',)), current_path=subpath, git_config=load_git_config())
 
     try:
         with open(target, "r", encoding="utf-8") as f:
@@ -3277,9 +3281,9 @@ def browse_playbooks(subpath):
         abort(404)
 
     if subpath == "" or os.path.isdir(target):
-        entries = list_dir_entries(target, subpath, base_dir)
+        entries = list_dir_entries(target, subpath, base_dir, PLAYBOOK_EXTENSIONS)
         if subpath == "" and os.path.exists(GIT_DIR):
-            entries = sort_entries(entries + [file_entry(GIT_DIR, "git", "git")])
+            entries = sort_entries(entries + [file_entry(GIT_DIR, "git", "git", PLAYBOOK_EXTENSIONS)])
 
         all_playbooks = repo_file_entries(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)
 

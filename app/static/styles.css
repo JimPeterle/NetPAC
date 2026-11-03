@@ -2071,7 +2071,7 @@ a.group-chip:hover { border-color: var(--accent); }
 .target-toggle-btn.active {
     background: var(--accent);
     border-color: var(--accent);
-    color: #000;
+    color: var(--accent-contrast);
 }
 
 .target-toggle-btn.active.no-active {
