@@ -54,11 +54,11 @@
                     <tr>
                         <td>
                             {% if tpl %}
-                            <span class="status-badge" style="background: var(--accent-dim); color: var(--accent);">Template</span>
+                            <span class="status-badge type-badge">Template</span>
                             {% elif jtype == 'ansible' %}
-                            <span class="status-badge" style="background: var(--accent-dim); color: var(--accent);">Ansible</span>
+                            <span class="status-badge type-badge">Ansible</span>
                             {% else %}
-                            <span class="status-badge" style="background: var(--bg-table-head); color: var(--text-muted);">Python</span>
+                            <span class="status-badge type-badge">Python</span>
                             {% endif %}
                         </td>
                         <td>{% if tpl %}<strong>{{ tpl.name }}</strong><br><span style="color: var(--text-muted); font-size: 0.8rem;">{{ tpl.playbook or job[1] }}</span>{% else %}{{ job[1] }}{% endif %}</td>
@@ -226,9 +226,13 @@
                 <input type="hidden" name="source" id="scheduleSourceHidden" value="playbook">
                 <div class="form-group">
                     <label class="form-label">Run</label>
-                    <div class="segmented" role="group" aria-label="Run a playbook or a template">
-                        <button type="button" class="segmented-btn active" id="sourcePlaybookBtn" onclick="switchAnsibleSource('playbook')">Playbook</button>
-                        <button type="button" class="segmented-btn" id="sourceTemplateBtn" onclick="switchAnsibleSource('template')">Template</button>
+                    <div style="display: flex; gap: 0.75rem;">
+                        <button type="button" class="action-button action-button-primary" id="sourcePlaybookBtn" onclick="switchAnsibleSource('playbook')">
+                            <span>Playbook</span>
+                        </button>
+                        <button type="button" class="action-button action-button-secondary" id="sourceTemplateBtn" onclick="switchAnsibleSource('template')">
+                            <span>Template</span>
+                        </button>
                     </div>
                 </div>
 
@@ -540,8 +544,11 @@
 
     function switchAnsibleSource(source) {
         document.getElementById('scheduleSourceHidden').value = source;
-        document.getElementById('sourcePlaybookBtn').classList.toggle('active', source === 'playbook');
-        document.getElementById('sourceTemplateBtn').classList.toggle('active', source === 'template');
+        [['sourcePlaybookBtn', 'playbook'], ['sourceTemplateBtn', 'template']].forEach(([id, value]) => {
+            const btn = document.getElementById(id);
+            btn.classList.toggle('action-button-primary', source === value);
+            btn.classList.toggle('action-button-secondary', source !== value);
+        });
         applyScheduleSource();
     }
 

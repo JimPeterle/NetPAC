@@ -923,6 +923,12 @@ select.form-input {
     border-color: var(--warning);
 }
 
+.type-badge {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border-color: var(--border);
+}
+
 .status-cancelled {
     background: var(--bg-table-head);
     color: var(--text-muted);
