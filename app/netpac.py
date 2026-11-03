@@ -1013,6 +1013,7 @@ def job_env(**extra):
 
     env = {key: value for key, value in os.environ.items() if key in JOB_ENV_WHITELIST}
     env['PATH'] = TOOL_PATH_PREFIX + env.get('PATH', '')
+    env['NETPAC_DATA_DIR'] = DATA_DIR
     env.update(extra)
     return env
 
@@ -1023,6 +1024,7 @@ def job_env(**extra):
 SCRIPTS_DIR = "/var/lib/netpac/scripts"
 PLAYBOOKS_DIR = "/var/lib/netpac/playbooks"
 GIT_DIR = "/var/lib/netpac/git"
+DATA_DIR = "/var/lib/netpac/data"
 PLAYBOOK_EXTENSIONS = ('.yml', '.yaml')
 
 def is_safe_path(target: str, base_dir: str) -> bool:
@@ -6565,6 +6567,13 @@ def health():
             count = len([f for f in list_repo_files(folder, extensions) if not f.startswith("git/")])
             checks[key] = {'status': 'ok', 'message': f"{folder} · {count} {'file' if count == 1 else 'files'}"}
 
+    if not os.path.isdir(DATA_DIR):
+        checks['data_dir'] = {'status': 'error', 'message': f"{DATA_DIR} does not exist — run netpac update or maintenance/setup.sh again"}
+    elif not os.access(DATA_DIR, os.W_OK | os.X_OK):
+        checks['data_dir'] = {'status': 'error', 'message': f"{DATA_DIR} is not writable for the NetPAC user"}
+    else:
+        checks['data_dir'] = {'status': 'ok', 'message': f"{DATA_DIR} · data that scripts keep between runs (NETPAC_DATA_DIR)"}
+
     git_config = load_git_config()
     if not git_config.get("repo_url"):
         checks['git'] = {'status': 'ok', 'message': "No repository configured"}
@@ -6642,7 +6651,7 @@ def health():
         checks['ansible_galaxy'] = {'status': 'error', 'message': str(e)}
 
     order = ['mariadb', 'sql-size', 'encryption', 'scheduler', 'executor', 'python', 'venv', 'ansible', 'ansible_galaxy',
-             'scripts_dir', 'playbooks_dir', 'git']
+             'scripts_dir', 'playbooks_dir', 'data_dir', 'git']
     checks = {key: checks[key] for key in order if key in checks}
 
     overall = 'ok' if all(c['status'] == 'ok' for c in checks.values()) else 'error'

@@ -87,7 +87,7 @@ if [ "$(id -u)" = "0" ]; then
     ensure_dir /var/log/netpac 750
     for dir in /var/lib/netpac /var/lib/netpac/scripts /var/lib/netpac/scripts/local \
                /var/lib/netpac/playbooks /var/lib/netpac/playbooks/local \
-               /var/lib/netpac/git /var/lib/netpac/graphs; do
+               /var/lib/netpac/git /var/lib/netpac/graphs /var/lib/netpac/data; do
         ensure_dir "$dir" 770
     done
     ensure_dir "$CERT_DIR" 750

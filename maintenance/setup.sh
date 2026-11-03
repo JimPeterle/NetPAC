@@ -386,7 +386,7 @@ fi
 sudo chown -R "$APP_USER":"$APP_GROUP" "$APP_DIR/venv"
 
 # ===================================
-# 13. CREATE GRAPH FOLDER
+# 13. CREATE GRAPH AND DATA FOLDERS
 # ===================================
 
 if [ ! -d "/var/lib/netpac/graphs" ]; then
@@ -394,6 +394,11 @@ if [ ! -d "/var/lib/netpac/graphs" ]; then
     sudo chown "$APP_USER":netpacscript /var/lib/netpac/graphs
     sudo chmod 770 /var/lib/netpac/graphs
     print_status "Created graphs directory"
+fi
+
+if [ ! -d "/var/lib/netpac/data" ]; then
+    sudo install -d -o "$APP_USER" -g netpacscript -m 770 /var/lib/netpac/data
+    print_status "Created data directory for scripts (NETPAC_DATA_DIR)"
 fi
 
 # ===================================

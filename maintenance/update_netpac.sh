@@ -120,6 +120,11 @@ if [ -f "$NGINX_SITE" ] && grep -q "alias $APP_DIR/static/;" "$NGINX_SITE"; then
     fi
 fi
 
+if [ ! -d /var/lib/netpac/data ]; then
+    sudo install -d -o "$(id -un)" -g netpacscript -m 770 /var/lib/netpac/data
+    print_status "Created data directory for scripts: /var/lib/netpac/data (NETPAC_DATA_DIR)"
+fi
+
 if [ "$(readlink /usr/local/bin/netpac 2>/dev/null)" != "$APP_DIR/maintenance/netpac" ]; then
     chmod 755 "$APP_DIR/maintenance/netpac"
     sudo ln -sf "$APP_DIR/maintenance/netpac" /usr/local/bin/netpac

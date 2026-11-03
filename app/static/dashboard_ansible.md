@@ -23,6 +23,19 @@ Each host is also listed in its own groups, so a playbook can contain plays for 
 - hosts: switches
 ```
 
+## Storing data between runs
+
+Playbooks can keep files between runs in the folder from `NETPAC_DATA_DIR` (**/var/lib/netpac/data**) on the
+NetPAC server, e.g. a config backup. Write to it with `delegate_to: localhost`:
+
+```
+- name: Save the running config on the NetPAC server
+  ansible.builtin.copy:
+    content: "{{ config.stdout[0] }}"
+    dest: "{{ lookup('env', 'NETPAC_DATA_DIR') }}/{{ inventory_hostname }}.cfg"
+  delegate_to: localhost
+```
+
 ## Survey variables
 
 Pass extra variables to your Playbook using the Survey field. One variable per line in the format:

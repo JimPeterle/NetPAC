@@ -68,6 +68,8 @@ history, but secrets are the safe place for credentials.
 - All scripts under `/var/lib/netpac/scripts` are shown in the web interface and can be started
   against a host, a group or without a target.
 - Variables can be passed at start; scripts can be scheduled.
+- Scripts and playbooks can keep files between runs in `/var/lib/netpac/data` (environment variable
+  `NETPAC_DATA_DIR`); the folder is kept across updates.
 - A Python virtual environment (venv) is available for scripts. Packages are installed, updated
   and removed in the web interface.
 
