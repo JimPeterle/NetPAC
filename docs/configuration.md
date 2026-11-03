@@ -72,6 +72,9 @@ history, but secrets are the safe place for credentials.
   `NETPAC_DATA_DIR`); the folder is kept across updates.
 - A Python virtual environment (venv) is available for scripts. Packages are installed, updated
   and removed in the web interface.
+- **Script templates** (**Templates** in Python mode) save a script with target, fixed arguments,
+  venv, secrets and survey fields. Survey values reach the script as environment variables
+  `NETPAC_VAR_<NAME>`, e.g. the field `version` as `NETPAC_VAR_VERSION`.
 
 ## Ansible playbooks
 
@@ -97,8 +100,8 @@ Scripts and playbooks can be scheduled with cron expressions (hourly, daily, wee
 each with target, variables and secrets. A schedule is skipped while its previous run is still
 waiting in the queue.
 
-A schedule can also run a **playbook template**. It uses the template's current playbook, target,
-extra vars and secrets at every run, and the default values of its survey fields. Templates with a
+A schedule can also run a **template** (script or playbook). It uses the template's current
+script or playbook, target, variables and secrets at every run, and the default values of its survey fields. Templates with a
 required survey field without default value, or with a required password field, can't be scheduled.
 Deleting a template also deletes the schedules that run it — the delete dialog lists them.
 

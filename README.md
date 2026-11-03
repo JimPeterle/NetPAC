@@ -28,7 +28,7 @@ encrypted credentials and user roles.
 **Automation**
 - Run Python scripts and Ansible playbooks against a host, a group or locally
 - Live output with Ansible colours, result per host, re-run of failed hosts
-- Playbook templates with survey fields, dry run, syntax check and playbook graph
+- Templates for scripts and playbooks with survey fields; dry run, syntax check and playbook graph
 - Schedules with cron expressions
 - Job queue: a host is used by one job at a time, timeout after 4 hours, cancel at any time
 

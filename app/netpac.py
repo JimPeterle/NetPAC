@@ -676,10 +676,12 @@ def build_job_notification(cfg, job_id, job):
 
     status = job['status']
     dry_run = " (dry run)" if job['ansible_dry_run'] else ""
+    is_ansible = job['job_type'] == 'ansible'
+    mode = "Ansible" if is_ansible else "Python"
     subject = f"[NetPAC] {NOTIFY_STATUS_ICONS.get(status, '')} {status} – {job['script_name']}{dry_run} (#{job_id})"
 
     fields = [
-        ("Script", f"{job['script_name']} ({job['job_type']}){dry_run}"),
+        ("Playbook" if is_ansible else "Script", f"{job['script_name']}{dry_run}"),
         ("Target", job['target'] or "-"),
         ("Started by", job['user_id']),
         ("Started", str(job['started_at'] or "-")),
@@ -688,13 +690,13 @@ def build_job_notification(cfg, job_id, job):
     ]
     link = f"{cfg['base_url'].rstrip('/')}/history/{job_id}" if cfg['base_url'] else None
 
-    lines = [f"NetPAC job #{job_id} {status}", ""]
+    lines = [f"NetPAC {mode} job #{job_id} {status}", ""]
     lines += [f"{label + ':':<12} {value}" for label, value in fields]
     if link:
         lines += ["", f"Details: {link}"]
     body = "\n".join(lines)
 
-    html = [f"<b>{NOTIFY_STATUS_ICONS.get(status, '')} NetPAC job #{job_id} {Markup.escape(status)}</b><br>"]
+    html = [f"<b>{NOTIFY_STATUS_ICONS.get(status, '')} NetPAC {mode} job #{job_id} {Markup.escape(status)}</b><br>"]
     html += [f"<b>{label}:</b> {Markup.escape(value)}<br>" for label, value in fields]
     if link:
         html.append(f'<a href="{Markup.escape(link)}">Open job details</a>')
@@ -918,12 +920,13 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
 
         template = None
         if active_row[2]:
-            template, error = template_run_settings(cur, active_row[2])
+            template, error = build_template_job(cur, active_row[2])
             if error:
                 scheduler_logger.warning(f"Schedule #{job_id} skipped: {error}")
                 audit("schedule.skipped", f"#{job_id}", error, user="scheduler")
                 return
-            script_name, target, secrets_json = template["playbook_path"], template["target"], template["secrets_json"]
+            script_name, target, secrets_json = template["script_name"], template["target"], template["secrets_json"]
+            job_type = template["job_type"]
 
         cur.execute("""
             SELECT COUNT(*) FROM history_jobs
@@ -935,7 +938,7 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
 
         history_vars = variables
         if template:
-            payload = {"extra_vars": json.dumps(template["extra_vars"]) if template["extra_vars"] else ""}
+            payload = template["payload"]
             history_vars = template["variables"]
         elif job_type == 'ansible':
             extra_vars = vars_dict.get('extra_vars') or {}
@@ -1603,7 +1606,8 @@ def start_claimed_job(job_id):
         args = (job_id, script_name, target, payload.get("extra_vars", ""), *secret_args, bool(dry_run))
     else:
         target_fn = execute_script_background
-        args = (job_id, script_name, target, payload.get("variables", "{}"), payload.get("use_venv", False), *secret_args)
+        args = (job_id, script_name, target, payload.get("variables", "{}"), payload.get("use_venv", False), *secret_args,
+                payload.get("env"))
 
     threading.Thread(target=run_owned_job, args=(job_id, target_fn, args), daemon=True).start()
     exec_logger.info(f"Job #{job_id} ({sanitize_log(script_name)}) started by the executor")
@@ -2900,7 +2904,7 @@ def run_script(subpath):
 # --------------------
 #   Background Script execution
 # --------------------
-def execute_script_background(job_id, filename, target, variables, use_venv, secret_1, secret_2, secret_3):
+def execute_script_background(job_id, filename, target, variables, use_venv, secret_1, secret_2, secret_3, extra_env=None):
     """Runs a Python script and stores output and result in the job history."""
 
     exec_logger.info(f"Background executing: {filename}")
@@ -2917,7 +2921,7 @@ def execute_script_background(job_id, filename, target, variables, use_venv, sec
     status = "completed"
     temp_hostfile = None
     temp_files = []
-    env = job_env(PYTHONUNBUFFERED='1')
+    env = job_env(PYTHONUNBUFFERED='1', **(extra_env or {}))
 
     process = None 
 
@@ -3479,14 +3483,23 @@ def run_playbook(subpath):
 @app.route("/playbook_templates")
 @login_required
 def playbook_templates():
-    """Lists all playbook templates."""
+    """Lists the templates of the current mode (Python scripts or Ansible playbooks)."""
+
+    mode = request.args.get("mode", "python")
+    if mode not in ("python", "ansible"):
+        mode = "python"
 
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT template_id, name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, created_at, created_by FROM playbook_templates ORDER BY name")
+        cur.execute("""
+            SELECT template_id, name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3,
+                   created_at, created_by, script_args, use_venv
+            FROM playbook_templates WHERE COALESCE(job_type, 'ansible') = %s ORDER BY name
+        """, (mode,))
         rows = cur.fetchall()
-        templates = [dict(zip(['template_id','name','description','playbook_path','target','extra_vars','secret_1','secret_2','secret_3','created_at','created_by'], row)) for row in rows]
+        templates = [dict(zip(['template_id', 'name', 'description', 'playbook_path', 'target', 'extra_vars', 'secret_1',
+                               'secret_2', 'secret_3', 'created_at', 'created_by', 'script_args', 'use_venv'], row)) for row in rows]
         cur.execute("SELECT template_id, job_id, schedule_expression FROM schedule_jobs WHERE template_id IS NOT NULL")
         schedules_by_template = {}
         for template_id, job_id, expression in cur.fetchall():
@@ -3498,8 +3511,9 @@ def playbook_templates():
         cur.close()
         conn.close()
 
-    return render_template("playbook_templates.html", templates=templates,
-                           playbooks=list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS), secrets=load_secret_choices())
+    files = list_repo_files(SCRIPTS_DIR, ('.py',)) if mode == "python" else list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS)
+    return render_template("playbook_templates.html", templates=templates, mode=mode,
+                           playbooks=files, secrets=load_secret_choices())
 
 
 TRUTHY_VALUES = ("true", "1", "yes", "on")
@@ -3527,30 +3541,73 @@ def survey_defaults_form(fields):
     return form
 
 
-def template_run_settings(cur, template_id):
-    """Returns the current run settings of a template with the survey defaults; (settings, error)."""
+def survey_env_value(value):
+    """Formats a survey value for an environment variable (lists comma-separated, booleans true/false)."""
 
-    cur.execute("SELECT name, playbook_path, target, extra_vars, secret_1, secret_2, secret_3 FROM playbook_templates WHERE template_id = %s", (template_id,))
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return ",".join(str(v) for v in value)
+    return str(value)
+
+
+def build_template_job(cur, template_id, form=None):
+    """Builds a job from a template with the given survey form (default values if None); returns (job, error)."""
+
+    cur.execute("""
+        SELECT name, playbook_path, job_type, target, extra_vars, script_args, use_venv, secret_1, secret_2, secret_3
+        FROM playbook_templates WHERE template_id = %s
+    """, (template_id,))
     row = cur.fetchone()
     if not row:
         return None, "Template not found"
-    name, playbook_path, target, extra_vars_raw, secret_1, secret_2, secret_3 = row
-    if not target:
+    name, path, job_type, target, extra_vars_raw, script_args, use_venv, secret_1, secret_2, secret_3 = row
+    job_type = job_type or "ansible"
+    if job_type == "ansible" and not target:
         return None, f"Template '{name}' has no target"
+
     fields = load_template_fields(cur, template_id)
-    survey, error = collect_survey_values(fields, survey_defaults_form(fields))
+    survey, error = collect_survey_values(fields, form if form is not None else survey_defaults_form(fields))
     if error:
+        if form is not None:
+            return None, error
         return None, (f"Template '{name}' can't run unattended: {error}. Scheduled runs use the default values "
                       "of the survey fields; password fields are never stored.")
-    extra_vars = {**parse_extra_vars(extra_vars_raw), **survey}
-    return {
-        "name": name,
-        "playbook_path": playbook_path,
-        "target": target,
-        "extra_vars": extra_vars,
-        "variables": history_variables(extra_vars, template=name),
-        "secrets_json": json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""}),
-    }, None
+    hidden = [f["var_name"] for f in fields if f["field_type"] == "password" and f["var_name"] in survey]
+
+    job = {"name": name, "job_type": job_type, "script_name": path, "target": target or "", "use_venv": bool(use_venv),
+           "secrets_json": json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})}
+    if job_type == "ansible":
+        extra_vars = {**parse_extra_vars(extra_vars_raw), **survey}
+        job["payload"] = {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}
+        job["variables"] = history_variables(extra_vars, hidden, template=name)
+    else:
+        args = [line.strip() for line in (script_args or "").splitlines() if line.strip()]
+        script_vars = {"varCount": len(args), **{f"variable{i}": arg for i, arg in enumerate(args, 1)}}
+        env = {f"NETPAC_VAR_{key.upper()}": survey_env_value(value) for key, value in survey.items()}
+        shown = {k: (REDACTED_VALUE if k in hidden or SENSITIVE_VAR_RE.search(k) else v) for k, v in survey.items()}
+        job["payload"] = {"variables": json.dumps(script_vars), "use_venv": bool(use_venv), "env": env}
+        job["variables"] = json.dumps({**script_vars, "template": name, **({"survey": shown} if shown else {})})
+    return job, None
+
+
+def parse_template_form(form):
+    """Reads type, target, fixed values and venv of the template form; returns (data, error)."""
+
+    job_type = form.get("job_type", "ansible")
+    if job_type not in ("python", "ansible"):
+        return None, "Invalid template type"
+    if job_type == "ansible":
+        target, error = parse_playbook_target(form)
+        if error:
+            return None, error
+        return {"job_type": job_type, "target": target, "extra_vars": form.get("extra_vars", "").strip(),
+                "script_args": None, "use_venv": 0}, None
+    script_args = "\n".join(line.strip() for line in form.get("script_args", "").splitlines() if line.strip())
+    if len(script_args.splitlines()) > MAX_SCRIPT_VARS:
+        return None, f"At most {MAX_SCRIPT_VARS} arguments are allowed"
+    return {"job_type": job_type, "target": form.get("target", "").strip(), "extra_vars": "",
+            "script_args": script_args, "use_venv": 1 if form.get("use_venv") == "on" else 0}, None
 
 
 def parse_playbook_target(form):
@@ -3687,29 +3744,28 @@ def collect_survey_values(fields, form):
 @login_required
 @role_required("operator")
 def create_playbook_template():
-    """Creates a playbook template."""
+    """Creates a script or playbook template."""
 
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     playbook_path = request.form.get("playbook_path", "").strip()
-    extra_vars = request.form.get("extra_vars", "").strip()
     secret_1 = request.form.get("secret_1", "").strip()
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
 
-    if not name or not playbook_path:
-        flash("Name and Playbook are required", "danger")
-        return redirect(url_for("playbook_templates"))
-
-    target, error = parse_playbook_target(request.form)
+    data, error = parse_template_form(request.form)
+    mode = data["job_type"] if data else "ansible"
+    if not error and (not name or not playbook_path):
+        error = "Name and " + ("script" if mode == "python" else "playbook") + " are required"
     if error:
         flash(error, "danger")
-        return redirect(url_for("playbook_templates"))
+        return redirect(url_for("playbook_templates", mode=mode))
+    target, extra_vars = data["target"], data["extra_vars"]
 
     fields, error = parse_template_fields(request.form.get("fields_json"))
     if error:
         flash(error, "danger")
-        return redirect(url_for("playbook_templates"))
+        return redirect(url_for("playbook_templates", mode=mode))
 
     conn = get_db()
     cur = conn.cursor()
@@ -3717,9 +3773,11 @@ def create_playbook_template():
         conn.begin()
         cur.execute("""
             INSERT INTO playbook_templates
-            (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, current_user.id))
+            (name, description, playbook_path, job_type, target, extra_vars, script_args, use_venv,
+             secret_1, secret_2, secret_3, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (name, description, playbook_path, mode, target, extra_vars, data["script_args"], data["use_venv"],
+              secret_1, secret_2, secret_3, current_user.id))
         save_template_fields(cur, cur.lastrowid, fields)
         conn.commit()
         logger.info(f"Template '{sanitize_log(name)}' ({sanitize_log(playbook_path)}) created by {current_user.id}")
@@ -3733,36 +3791,35 @@ def create_playbook_template():
         cur.close()
         conn.close()
 
-    return redirect(url_for("playbook_templates"))
+    return redirect(url_for("playbook_templates", mode=mode))
 
 
 @app.route("/playbook_templates/edit/<int:template_id>", methods=["POST"])
 @login_required
 @role_required("operator")
 def edit_playbook_template(template_id):
-    """Updates a playbook template."""
+    """Updates a script or playbook template."""
 
     name = request.form.get("name", "").strip()
     description = request.form.get("description", "").strip()
     playbook_path = request.form.get("playbook_path", "").strip()
-    extra_vars = request.form.get("extra_vars", "").strip()
     secret_1 = request.form.get("secret_1", "").strip()
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
 
-    if not name or not playbook_path:
-        flash("Name and Playbook are required", "danger")
-        return redirect(url_for("playbook_templates"))
-
-    target, error = parse_playbook_target(request.form)
+    data, error = parse_template_form(request.form)
+    mode = data["job_type"] if data else "ansible"
+    if not error and (not name or not playbook_path):
+        error = "Name and " + ("script" if mode == "python" else "playbook") + " are required"
     if error:
         flash(error, "danger")
-        return redirect(url_for("playbook_templates"))
+        return redirect(url_for("playbook_templates", mode=mode))
+    target, extra_vars = data["target"], data["extra_vars"]
 
     fields, error = parse_template_fields(request.form.get("fields_json"))
     if error:
         flash(error, "danger")
-        return redirect(url_for("playbook_templates"))
+        return redirect(url_for("playbook_templates", mode=mode))
 
     conn = get_db()
     cur = conn.cursor()
@@ -3770,10 +3827,11 @@ def edit_playbook_template(template_id):
         conn.begin()
         cur.execute("""
             UPDATE playbook_templates
-            SET name=%s, description=%s, playbook_path=%s, target=%s,
-                extra_vars=%s, secret_1=%s, secret_2=%s, secret_3=%s
+            SET name=%s, description=%s, playbook_path=%s, job_type=%s, target=%s,
+                extra_vars=%s, script_args=%s, use_venv=%s, secret_1=%s, secret_2=%s, secret_3=%s
             WHERE template_id=%s
-        """, (name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, template_id))
+        """, (name, description, playbook_path, mode, target, extra_vars, data["script_args"], data["use_venv"],
+              secret_1, secret_2, secret_3, template_id))
         save_template_fields(cur, template_id, fields)
         conn.commit()
         logger.info(f"Template {template_id} ('{sanitize_log(name)}') updated by {current_user.id}")
@@ -3782,7 +3840,7 @@ def edit_playbook_template(template_id):
         cur.execute("SELECT COUNT(*) FROM schedule_jobs WHERE template_id = %s", (template_id,))
         linked = cur.fetchone()[0]
         if linked:
-            _, problem = template_run_settings(cur, template_id)
+            _, problem = build_template_job(cur, template_id)
             if problem:
                 flash(f"{linked} schedule(s) use this template and will be skipped: {problem}", "warning")
     except Exception as e:
@@ -3793,7 +3851,7 @@ def edit_playbook_template(template_id):
         cur.close()
         conn.close()
 
-    return redirect(url_for("playbook_templates"))
+    return redirect(url_for("playbook_templates", mode=mode))
 
 
 @app.route("/playbook_templates/delete/<int:template_id>", methods=["POST"])
@@ -3833,54 +3891,39 @@ def delete_playbook_template(template_id):
 @login_required
 @role_required("operator")
 def launch_playbook_template(template_id):
-    """Starts a playbook from a template as a background job."""
+    """Starts a script or playbook from a template as a background job."""
 
     dry_run = request.form.get("dry_run") == "on"
 
     conn = get_db()
     cur = conn.cursor()
     try:
-        cur.execute("SELECT name, playbook_path, target, extra_vars, secret_1, secret_2, secret_3 FROM playbook_templates WHERE template_id = %s", (template_id,))
+        job, error = build_template_job(cur, template_id, request.form)
+        cur.execute("SELECT job_type FROM playbook_templates WHERE template_id = %s", (template_id,))
         row = cur.fetchone()
-        fields = load_template_fields(cur, template_id) if row else []
     finally:
         cur.close()
         conn.close()
 
-    if not row:
-        flash("Template not found", "danger")
-        return redirect(url_for("playbook_templates"))
-
-    name, playbook_path, target, extra_vars_raw, secret_1, secret_2, secret_3 = row
-
-    if not target:
-        flash(f"Template '{name}' has no target. Edit it and enter a target or choose localhost explicitly.", "danger")
-        return redirect(url_for("playbook_templates"))
-
-    survey, error = collect_survey_values(fields, request.form)
+    mode = row[0] if row and row[0] else "ansible"
     if error:
         flash(error, "danger")
-        return redirect(url_for("playbook_templates"))
-
-    extra_vars = {**parse_extra_vars(extra_vars_raw), **survey}
-    extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
-
-    secret_fields = [f["var_name"] for f in fields if f["field_type"] == "password" and f["var_name"] in survey]
-    variables = history_variables(extra_vars, secret_fields, template=name)
-    secrets_json = json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})
+        return redirect(url_for("playbook_templates", mode=mode))
+    dry_run = dry_run and job["job_type"] == "ansible"
 
     try:
-        job_id = enqueue_job(playbook_path, current_user.id, target, variables, secrets_json, 'ansible',
-                             {"extra_vars": extra_vars_str}, dry_run)
+        job_id = enqueue_job(job["script_name"], current_user.id, job["target"], job["variables"], job["secrets_json"],
+                             job["job_type"], job["payload"], dry_run)
     except Exception as e:
         logger.error(f"Failed to queue template job: {e}")
         flash("Failed to launch template", "danger")
-        return redirect(url_for("playbook_templates"))
+        return redirect(url_for("playbook_templates", mode=mode))
 
+    name = job["name"]
     exec_logger.info(f"Template '{sanitize_log(name)}' queued as job #{job_id} by {current_user.id}" + (" (dry run)" if dry_run else ""))
     audit("template.launch", name, f"job #{job_id}" + (" (dry run)" if dry_run else ""))
     flash(f"Template '{name}' queued {'(Dry Run) ' if dry_run else ''}(Job #{job_id})", "success")
-    return redirect(url_for("history", mode="ansible"))
+    return redirect(url_for("history", mode=job["job_type"]))
 
 
 # --------------------
@@ -4709,13 +4752,12 @@ def schedule():
     cur.execute("SELECT * FROM schedule_jobs ORDER BY created_at DESC")
     jobs = cur.fetchall()
 
-    cur.execute("SELECT template_id, name FROM playbook_templates ORDER BY name")
+    cur.execute("SELECT template_id, name, job_type FROM playbook_templates ORDER BY name")
     templates = []
-    for template_id, name in cur.fetchall():
-        settings, error = template_run_settings(cur, template_id)
-        templates.append({"id": template_id, "name": name, "problem": error,
-                          "playbook": settings["playbook_path"] if settings else "",
-                          "target": settings["target"] if settings else ""})
+    for template_id, name, template_type in cur.fetchall():
+        job, error = build_template_job(cur, template_id)
+        templates.append({"id": template_id, "name": name, "job_type": template_type or "ansible", "problem": error,
+                          "playbook": job["script_name"] if job else "", "target": job["target"] if job else ""})
 
     cur.close()
     conn.close()
@@ -4741,7 +4783,7 @@ def parse_schedule_form(form):
         return None, "Invalid job type"
 
     template_id = None
-    if job_type == "ansible" and form.get("source") == "template":
+    if form.get("source") == "template":
         try:
             template_id = int(form.get("template_id", ""))
         except ValueError:
@@ -4806,14 +4848,16 @@ def apply_schedule_template(data):
     conn = get_db()
     cur = conn.cursor()
     try:
-        settings, error = template_run_settings(cur, data["template_id"])
+        job, error = build_template_job(cur, data["template_id"])
     finally:
         cur.close()
         conn.close()
     if error:
         return error
-    data.update(script_name=settings["playbook_path"], target=settings["target"],
-                secrets_json=settings["secrets_json"], variables=json.dumps({"template": settings["name"]}))
+    if job["job_type"] != data["job_type"]:
+        return f"Template '{job['name']}' is for {'Ansible playbooks' if job['job_type'] == 'ansible' else 'Python scripts'}"
+    data.update(script_name=job["script_name"], target=job["target"], secrets_json=job["secrets_json"],
+                use_venv=int(job["use_venv"]), variables=json.dumps({"template": job["name"]}))
     return None
 
 

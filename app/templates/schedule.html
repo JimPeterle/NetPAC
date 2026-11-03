@@ -174,6 +174,33 @@
                 </div>
             </div>
 
+            <input type="hidden" name="source" id="scheduleSourceHidden" value="playbook">
+            <div class="form-group">
+                <label class="form-label">Run</label>
+                <div style="display: flex; gap: 0.75rem;">
+                    <button type="button" class="action-button action-button-primary" id="sourcePlaybookBtn" onclick="switchAnsibleSource('playbook')">
+                        <span id="sourceFileLabel">Script</span>
+                    </button>
+                    <button type="button" class="action-button action-button-secondary" id="sourceTemplateBtn" onclick="switchAnsibleSource('template')">
+                        <span>Template</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="templateSourceFields" style="display: none;">
+                <div class="form-group">
+                    <label class="form-label">Template *</label>
+                    <select name="template_id" id="scheduleTemplate" class="form-input">
+                        <option value="">Select a template...</option>
+                        {% for t in templates %}
+                        <option value="{{ t.id }}" data-type="{{ t.job_type }}" {% if t.problem %}data-problem="1" disabled title="{{ t.problem }}"{% endif %}>{{ t.name }}{% if t.problem %} — can't be scheduled{% else %} ({{ t.playbook }}{% if t.target %} → {{ t.target }}{% endif %}){% endif %}</option>
+                        {% endfor %}
+                    </select>
+                    <span class="form-hint">Script or playbook, target, variables and secrets are taken from the template at every run — changes to the template apply to the schedule. Survey fields use their default values.</span>
+                </div>
+            </div>
+
+
             <div id="pythonFields">
                 <div class="form-group">
                     <label class="form-label">Script *</label>
@@ -223,32 +250,6 @@
             </div>
 
             <div id="ansibleFields" style="display: none;">
-                <input type="hidden" name="source" id="scheduleSourceHidden" value="playbook">
-                <div class="form-group">
-                    <label class="form-label">Run</label>
-                    <div style="display: flex; gap: 0.75rem;">
-                        <button type="button" class="action-button action-button-primary" id="sourcePlaybookBtn" onclick="switchAnsibleSource('playbook')">
-                            <span>Playbook</span>
-                        </button>
-                        <button type="button" class="action-button action-button-secondary" id="sourceTemplateBtn" onclick="switchAnsibleSource('template')">
-                            <span>Template</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div id="templateSourceFields" style="display: none;">
-                    <div class="form-group">
-                        <label class="form-label">Template *</label>
-                        <select name="template_id" id="scheduleTemplate" class="form-input">
-                            <option value="">Select a template...</option>
-                            {% for t in templates %}
-                            <option value="{{ t.id }}" {% if t.problem %}disabled title="{{ t.problem }}"{% endif %}>{{ t.name }}{% if t.problem %} — can't be scheduled{% else %} ({{ t.playbook }} → {{ t.target }}){% endif %}</option>
-                            {% endfor %}
-                        </select>
-                        <span class="form-hint">Playbook, target, extra vars and secrets are taken from the template at every run — changes to the template apply to the schedule. Survey fields use their default values.</span>
-                    </div>
-                </div>
-
                 <div id="playbookSourceFields">
                 <div class="form-group">
                     <label class="form-label">Playbook *</label>
@@ -553,20 +554,34 @@
     }
 
     function applyScheduleSource() {
-        const isAnsible = document.getElementById('jobTypeHidden').value === 'ansible';
-        const fromTemplate = isAnsible && document.getElementById('scheduleSourceHidden').value === 'template';
+        const jobType = document.getElementById('jobTypeHidden').value;
+        const isAnsible = jobType === 'ansible';
+        const fromTemplate = document.getElementById('scheduleSourceHidden').value === 'template';
+        document.getElementById('sourceFileLabel').textContent = isAnsible ? 'Playbook' : 'Script';
         document.getElementById('templateSourceFields').style.display = fromTemplate ? 'block' : 'none';
+        document.getElementById('pythonFields').style.display = !isAnsible && !fromTemplate ? 'block' : 'none';
+        document.getElementById('ansibleFields').style.display = isAnsible ? 'block' : 'none';
         document.getElementById('playbookSourceFields').style.display = fromTemplate ? 'none' : 'block';
         document.getElementById('scheduleTargetGroup').style.display = fromTemplate ? 'none' : '';
         document.getElementById('scheduleSecretsGroup').style.display = fromTemplate ? 'none' : '';
         document.getElementById('scheduleTemplate').required = fromTemplate;
+        document.getElementById('scriptNameHidden').required = !isAnsible && !fromTemplate;
         document.getElementById('playbookNameHidden').required = isAnsible && !fromTemplate;
+
+        const select = document.getElementById('scheduleTemplate');
+        select.querySelectorAll('option[data-type]').forEach(option => {
+            const matches = option.dataset.type === jobType;
+            option.hidden = !matches;
+            option.disabled = !matches || option.dataset.problem === '1';
+        });
+        const current = select.selectedOptions[0];
+        if (current && current.dataset.type && current.dataset.type !== jobType) select.value = '';
         toggleScheduleRunLocal();
     }
 
     function toggleScheduleRunLocal() {
         const isAnsible = document.getElementById('jobTypeHidden').value === 'ansible';
-        const fromTemplate = isAnsible && document.getElementById('scheduleSourceHidden').value === 'template';
+        const fromTemplate = document.getElementById('scheduleSourceHidden').value === 'template';
         const local = isAnsible && document.getElementById('scheduleRunLocal').checked;
         const target = document.getElementById('scheduleTarget');
         target.style.display = local ? 'none' : '';
@@ -666,7 +681,7 @@
 
     document.querySelector('#addCronModal form').addEventListener('submit', function(e) {
         const jobType = document.getElementById('jobTypeHidden').value;
-        const fromTemplate = jobType === 'ansible' && document.getElementById('scheduleSourceHidden').value === 'template';
+        const fromTemplate = document.getElementById('scheduleSourceHidden').value === 'template';
         const finalName = fromTemplate
             ? document.getElementById('scheduleTemplate').value
             : jobType === 'ansible'

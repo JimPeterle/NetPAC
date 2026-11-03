@@ -60,6 +60,24 @@ state_file.write_text(json.dumps(state, indent=2))
 Use a file name per script, as all scripts share this folder.
 
 
+## Templates
+
+Save a script with target, fixed arguments, venv and secrets as a template (**Templates** in Python mode)
+and start it with one click or from a schedule. Fixed arguments arrive as `sys.argv` as usual.
+
+Survey fields of the template are passed as environment variables `NETPAC_VAR_<NAME>`:
+
+```python
+import os
+
+version = os.environ.get("NETPAC_VAR_VERSION")          # number field "version"
+dry_run = os.environ.get("NETPAC_VAR_DRY") == "true"    # checkbox field "dry"
+sites = os.environ.get("NETPAC_VAR_SITES", "").split(",")  # multiple choice "sites"
+```
+
+Password fields are only passed to the script; the job history shows `********`.
+
+
 ## Secrets
 
 Selected secrets are passed as environment variables, numbered by their slot (1–3).

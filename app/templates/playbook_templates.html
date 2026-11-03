@@ -1,11 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Playbook Templates - NetPAC{% endblock %}
+{% set is_python = mode == 'python' %}
+{% set file_label = 'Script' if is_python else 'Playbook' %}
+{% block title %}{{ file_label }} Templates - NetPAC{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div class="page-header-content">
-        <h1 class="page-title">Playbook Templates</h1>
+        <h1 class="page-title">{{ file_label }} Templates</h1>
         <p class="page-subtitle">Saved job templates for quick launch</p>
     </div>
     <div class="page-header-actions">
@@ -29,7 +31,7 @@
                 <thead>
                     <tr>
                         <th>Name</th>
-                        <th>Playbook</th>
+                        <th>{{ file_label }}</th>
                         <th>Target</th>
                         <th>Secrets</th>
                         <th>Created by</th>
@@ -60,9 +62,11 @@
                                 <form method="POST" action="{{ url_for('launch_playbook_template', template_id=t.template_id) }}" style="margin: 0; display: flex; gap: 0.5rem;"
                                       data-name="{{ t.name }}" data-fields='{{ t.fields|tojson }}' onsubmit="return launchTemplate(event, this)">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    {% if not is_python %}
                                     <button type="submit" name="dry_run" value="on" class="action-button action-button-secondary" style="font-size: 0.875rem; padding: 0.4rem 0.9rem; border-color: var(--warning); color: var(--warning); background: var(--warning-dim);" title="--check --diff — simulate without making changes">
                                         Dry Run
                                     </button>
+                                    {% endif %}
                                     <button type="submit" class="action-button action-button-success" style="font-size: 0.875rem; padding: 0.4rem 0.9rem;">
                                         Launch
                                     </button>
@@ -74,6 +78,8 @@
                                         data-playbook="{{ t.playbook_path }}"
                                         data-target="{{ t.target or '' }}"
                                         data-extravars="{{ t.extra_vars or '' }}"
+                                        data-args="{{ t.script_args or '' }}"
+                                        data-venv="{{ '1' if t.use_venv else '' }}"
                                         data-fields='{{ t.fields|tojson }}'
                                         data-secret1="{{ t.secret_1 or '' }}"
                                         data-secret2="{{ t.secret_2 or '' }}"
@@ -98,7 +104,7 @@
         {% else %}
         <div class="empty-state">
             <h3 class="empty-title">No templates yet</h3>
-            <p class="empty-text">Create a template to quickly launch Ansible Playbooks</p>
+            <p class="empty-text">Create a template to quickly launch {{ 'Python scripts' if is_python else 'Ansible playbooks' }}</p>
         </div>
         {% endif %}
     </div>
@@ -111,6 +117,7 @@
         </div>
         <form method="POST" action="{{ url_for('create_playbook_template') }}" id="createForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="job_type" value="{{ mode }}">
             <div style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
 
                 <div class="form-group">
@@ -124,9 +131,9 @@
                 </div>
 
                 <div class="form-group">
-                    <label class="form-label">Playbook *</label>
+                    <label class="form-label">{{ file_label }} *</label>
                     <div style="position: relative;">
-                        <input type="text" id="playbookSearch" class="form-input" placeholder="Search or select playbook..." autocomplete="off" readonly style="cursor: pointer;" onclick="togglePlaybookDropdown()">
+                        <input type="text" id="playbookSearch" class="form-input" placeholder="Search or select {{ file_label|lower }}..." autocomplete="off" readonly style="cursor: pointer;" onclick="togglePlaybookDropdown()">
                         <input type="hidden" name="playbook_path" id="playbookPathHidden" required>
                         <div id="playbookDropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); z-index: 1000; max-height: 200px; overflow-y: auto; box-shadow: var(--shadow-md);">
                             <div style="padding: 8px; position: relative;">
@@ -149,23 +156,40 @@
                 </div>
 
                 <div class="form-group">
+                    {% if is_python %}
+                    <label class="form-label">Target</label>
+                    <input type="text" name="target" id="createTarget" class="form-input" placeholder="Optional — group or hostname, comma-separated">
+                    {% else %}
                     <label class="form-label">Target *</label>
                     <input type="text" name="target" id="createTarget" class="form-input" placeholder="Group or Hostname" required>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; margin-top: 8px;">
                         <input type="checkbox" name="run_local" id="createRunLocal" onchange="toggleRunLocal('create')" style="width: 16px; height: 16px; accent-color: var(--accent);">
                         Run on the NetPAC server (localhost)
                     </label>
+                    {% endif %}
                 </div>
 
+                {% if is_python %}
+                <div class="form-group">
+                    <label class="form-label">Fixed Arguments</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one argument per line, available as sys.argv[1], sys.argv[2] … (max. {{ max_script_vars }})</span>
+                    <textarea name="script_args" id="createArgs" class="form-input" rows="3" placeholder="prod&#10;berlin" style="font-family: inherit; resize: vertical;"></textarea>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 0.75rem;">
+                    <input type="checkbox" name="use_venv" id="createVenv" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
+                    <label for="createVenv" class="form-label" style="margin: 0; cursor: pointer;">Run in virtual environment (venv)</label>
+                </div>
+                {% else %}
                 <div class="form-group">
                     <label class="form-label">Fixed Extra Vars</label>
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one variable per line, format: Key=Value</span>
                     <textarea name="extra_vars" class="form-input" rows="4" placeholder="Version=12&#10;Env=prod" style="font-family: inherit; resize: vertical;"></textarea>
                 </div>
+                {% endif %}
 
                 <div class="form-group">
                     <label class="form-label">Survey Fields</label>
-                    <span class="form-hint" style="margin-bottom: 8px; display: block;">Asked when the template is launched. Values override fixed extra vars with the same name.</span>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">{% if is_python %}Asked when the template is launched. Each field is passed to the script as environment variable NETPAC_VAR_&lt;NAME&gt; (e.g. field "version" → NETPAC_VAR_VERSION).{% else %}Asked when the template is launched. Values override fixed extra vars with the same name.{% endif %}</span>
                     <div id="createFields"></div>
                     <button type="button" class="action-button action-button-secondary" onclick="addFieldRow('createFields')">+ Add field</button>
                     <input type="hidden" name="fields_json" id="createFieldsJson">
@@ -233,6 +257,7 @@
         </div>
         <form id="editForm" method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="job_type" value="{{ mode }}">
             <div style="padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
                 <div class="form-group">
                     <label class="form-label">Name *</label>
@@ -243,7 +268,7 @@
                     <input type="text" name="description" id="editDescription" class="form-input">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Playbook *</label>
+                    <label class="form-label">{{ file_label }} *</label>
                     <div style="position: relative;">
                         <input type="text" id="editPlaybookSearch" class="form-input" autocomplete="off" readonly style="cursor: pointer;" onclick="toggleEditPlaybookDropdown()">
                         <input type="hidden" name="playbook_path" id="editPlaybookPathHidden" required>
@@ -267,21 +292,38 @@
                     </div>
                 </div>
                 <div class="form-group">
+                    {% if is_python %}
+                    <label class="form-label">Target</label>
+                    <input type="text" name="target" id="editTarget" class="form-input" placeholder="Optional — group or hostname, comma-separated">
+                    {% else %}
                     <label class="form-label">Target *</label>
                     <input type="text" name="target" id="editTarget" class="form-input" placeholder="Group or Hostname" required>
                     <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer; margin-top: 8px;">
                         <input type="checkbox" name="run_local" id="editRunLocal" onchange="toggleRunLocal('edit')" style="width: 16px; height: 16px; accent-color: var(--accent);">
                         Run on the NetPAC server (localhost)
                     </label>
+                    {% endif %}
                 </div>
+                {% if is_python %}
+                <div class="form-group">
+                    <label class="form-label">Fixed Arguments</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one argument per line, available as sys.argv[1], sys.argv[2] … (max. {{ max_script_vars }})</span>
+                    <textarea name="script_args" id="editArgs" class="form-input" rows="3" placeholder="prod&#10;berlin" style="font-family: inherit; resize: vertical;"></textarea>
+                </div>
+                <div class="form-group" style="display: flex; align-items: center; gap: 0.75rem;">
+                    <input type="checkbox" name="use_venv" id="editVenv" style="width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer;">
+                    <label for="editVenv" class="form-label" style="margin: 0; cursor: pointer;">Run in virtual environment (venv)</label>
+                </div>
+                {% else %}
                 <div class="form-group">
                     <label class="form-label">Fixed Extra Vars</label>
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one variable per line, format: Key=Value</span>
                     <textarea name="extra_vars" id="editExtraVars" class="form-input" rows="4" style="font-family: inherit; resize: vertical;"></textarea>
                 </div>
+                {% endif %}
                 <div class="form-group">
                     <label class="form-label">Survey Fields</label>
-                    <span class="form-hint" style="margin-bottom: 8px; display: block;">Asked when the template is launched. Values override fixed extra vars with the same name.</span>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">{% if is_python %}Asked when the template is launched. Each field is passed to the script as environment variable NETPAC_VAR_&lt;NAME&gt; (e.g. field "version" → NETPAC_VAR_VERSION).{% else %}Asked when the template is launched. Values override fixed extra vars with the same name.{% endif %}</span>
                     <div id="editFields"></div>
                     <button type="button" class="action-button action-button-secondary" onclick="addFieldRow('editFields')">+ Add field</button>
                     <input type="hidden" name="fields_json" id="editFieldsJson">
@@ -340,6 +382,13 @@
 
 bindFieldEditor('createForm', 'createFields', 'createFieldsJson');
 bindFieldEditor('editForm', 'editFields', 'editFieldsJson');
+
+window.setMode = function(mode) {
+    localStorage.setItem('netpac-mode', mode);
+    if (mode !== {{ mode|tojson }}) {
+        window.location.href = `{{ url_for('playbook_templates') }}?mode=${mode}`;
+    }
+};
 
 function launchTemplate(event, form) {
     const fields = JSON.parse(form.dataset.fields || '[]');
@@ -412,10 +461,17 @@ function openEditModal(btn) {
     document.getElementById('editDescription').value = d.description;
     document.getElementById('editPlaybookSearch').value = d.playbook;
     document.getElementById('editPlaybookPathHidden').value = d.playbook;
-    document.getElementById('editRunLocal').checked = d.target === 'localhost';
-    document.getElementById('editTarget').value = d.target === 'localhost' ? '' : d.target;
-    toggleRunLocal('edit');
-    document.getElementById('editExtraVars').value = d.extravars;
+    const runLocal = document.getElementById('editRunLocal');
+    if (runLocal) {
+        runLocal.checked = d.target === 'localhost';
+        document.getElementById('editTarget').value = d.target === 'localhost' ? '' : d.target;
+        toggleRunLocal('edit');
+        document.getElementById('editExtraVars').value = d.extravars;
+    } else {
+        document.getElementById('editTarget').value = d.target;
+        document.getElementById('editArgs').value = d.args;
+        document.getElementById('editVenv').checked = d.venv === '1';
+    }
     renderFieldEditor('editFields', JSON.parse(d.fields || '[]'));
     document.getElementById('editSecret1').value = d.secret1;
     document.getElementById('editSecret2').value = d.secret2;
@@ -424,7 +480,9 @@ function openEditModal(btn) {
 }
 
 function toggleRunLocal(prefix) {
-    const local = document.getElementById(`${prefix}RunLocal`).checked;
+    const box = document.getElementById(`${prefix}RunLocal`);
+    if (!box) return;
+    const local = box.checked;
     const target = document.getElementById(`${prefix}Target`);
     target.style.display = local ? 'none' : '';
     target.required = !local;
