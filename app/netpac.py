@@ -16,6 +16,7 @@ from markupsafe import Markup
 from flask_bcrypt import Bcrypt
 import logging
 from werkzeug.utils import secure_filename
+from werkzeug.datastructures import MultiDict
 from werkzeug.exceptions import HTTPException
 from flask_limiter import Limiter
 from flask import abort
@@ -893,7 +894,7 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
         if lock != 1:
             return
 
-        cur.execute("SELECT is_active, user_id FROM schedule_jobs WHERE job_id = %s", (job_id,))
+        cur.execute("SELECT is_active, user_id, template_id FROM schedule_jobs WHERE job_id = %s", (job_id,))
         active_row = cur.fetchone()
         if not active_row or not active_row[0]:
             scheduler_logger.info(f"Job {job_id} ({script_name}) is inactive in DB — removing from scheduler and skipping")
@@ -915,6 +916,15 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
             audit("schedule.paused", f"#{job_id}", f"owner {user_id} no longer exists or is not an operator", user="scheduler")
             return
 
+        template = None
+        if active_row[2]:
+            template, error = template_run_settings(cur, active_row[2])
+            if error:
+                scheduler_logger.warning(f"Schedule #{job_id} skipped: {error}")
+                audit("schedule.skipped", f"#{job_id}", error, user="scheduler")
+                return
+            script_name, target, secrets_json = template["playbook_path"], template["target"], template["secrets_json"]
+
         cur.execute("""
             SELECT COUNT(*) FROM history_jobs
             WHERE script_name = %s AND COALESCE(target, '') = %s AND job_type = %s AND status = 'planned'
@@ -924,7 +934,10 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
             return
 
         history_vars = variables
-        if job_type == 'ansible':
+        if template:
+            payload = {"extra_vars": json.dumps(template["extra_vars"]) if template["extra_vars"] else ""}
+            history_vars = template["variables"]
+        elif job_type == 'ansible':
             extra_vars = vars_dict.get('extra_vars') or {}
             payload = {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}
             history_vars = history_variables(extra_vars, **{k: v for k, v in vars_dict.items() if k != 'extra_vars'})
@@ -3474,14 +3487,70 @@ def playbook_templates():
         cur.execute("SELECT template_id, name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3, created_at, created_by FROM playbook_templates ORDER BY name")
         rows = cur.fetchall()
         templates = [dict(zip(['template_id','name','description','playbook_path','target','extra_vars','secret_1','secret_2','secret_3','created_at','created_by'], row)) for row in rows]
+        cur.execute("SELECT template_id, job_id, schedule_expression FROM schedule_jobs WHERE template_id IS NOT NULL")
+        schedules_by_template = {}
+        for template_id, job_id, expression in cur.fetchall():
+            schedules_by_template.setdefault(template_id, []).append(f"#{job_id} ({expression})")
         for template in templates:
             template['fields'] = load_template_fields(cur, template['template_id'])
+            template['schedules'] = schedules_by_template.get(template['template_id'], [])
     finally:
         cur.close()
         conn.close()
 
     return render_template("playbook_templates.html", templates=templates,
                            playbooks=list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS), secrets=load_secret_choices())
+
+
+TRUTHY_VALUES = ("true", "1", "yes", "on")
+
+
+def survey_defaults_form(fields):
+    """Builds form values from the default values of survey fields (scheduled runs have nobody to fill them in)."""
+
+    form = MultiDict()
+    for field in fields:
+        key = f"field_{field['var_name']}"
+        default = (field["default_value"] or "").strip()
+        if field["field_type"] == "boolean":
+            if default.lower() in TRUTHY_VALUES:
+                form.add(key, "on")
+        elif field["field_type"] == "multiselect":
+            for value in [v.strip() for v in default.split(",") if v.strip()]:
+                form.add(key, value)
+        elif field["field_type"] == "select":
+            value = default or (field["options"][0] if field["required"] and field["options"] else "")
+            if value:
+                form.add(key, value)
+        elif field["field_type"] != "password" and default:
+            form.add(key, default)
+    return form
+
+
+def template_run_settings(cur, template_id):
+    """Returns the current run settings of a template with the survey defaults; (settings, error)."""
+
+    cur.execute("SELECT name, playbook_path, target, extra_vars, secret_1, secret_2, secret_3 FROM playbook_templates WHERE template_id = %s", (template_id,))
+    row = cur.fetchone()
+    if not row:
+        return None, "Template not found"
+    name, playbook_path, target, extra_vars_raw, secret_1, secret_2, secret_3 = row
+    if not target:
+        return None, f"Template '{name}' has no target"
+    fields = load_template_fields(cur, template_id)
+    survey, error = collect_survey_values(fields, survey_defaults_form(fields))
+    if error:
+        return None, (f"Template '{name}' can't run unattended: {error}. Scheduled runs use the default values "
+                      "of the survey fields; password fields are never stored.")
+    extra_vars = {**parse_extra_vars(extra_vars_raw), **survey}
+    return {
+        "name": name,
+        "playbook_path": playbook_path,
+        "target": target,
+        "extra_vars": extra_vars,
+        "variables": history_variables(extra_vars, template=name),
+        "secrets_json": json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""}),
+    }, None
 
 
 def parse_playbook_target(form):
@@ -3710,6 +3779,12 @@ def edit_playbook_template(template_id):
         logger.info(f"Template {template_id} ('{sanitize_log(name)}') updated by {current_user.id}")
         audit("template.update", name, f"playbook: {playbook_path}")
         flash(f"Template '{name}' updated", "success")
+        cur.execute("SELECT COUNT(*) FROM schedule_jobs WHERE template_id = %s", (template_id,))
+        linked = cur.fetchone()[0]
+        if linked:
+            _, problem = template_run_settings(cur, template_id)
+            if problem:
+                flash(f"{linked} schedule(s) use this template and will be skipped: {problem}", "warning")
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to update template {template_id}: {e}")
@@ -3725,16 +3800,24 @@ def edit_playbook_template(template_id):
 @login_required
 @role_required("operator")
 def delete_playbook_template(template_id):
-    """Deletes a playbook template."""
+    """Deletes a playbook template and the schedules that run it."""
 
     conn = get_db()
     cur = conn.cursor()
     try:
+        cur.execute("SELECT job_id FROM schedule_jobs WHERE template_id = %s", (template_id,))
+        schedule_ids = [row[0] for row in cur.fetchall()]
+        cur.execute("DELETE FROM schedule_jobs WHERE template_id = %s", (template_id,))
         cur.execute("DELETE FROM playbook_templates WHERE template_id = %s", (template_id,))
         conn.commit()
-        logger.info(f"Template {template_id} deleted by {current_user.id}")
-        audit("template.delete", f"#{template_id}")
-        flash("Template deleted", "success")
+        for schedule_id in schedule_ids:
+            try:
+                scheduler.remove_job(str(schedule_id))
+            except Exception:
+                pass
+        logger.info(f"Template {template_id} deleted by {current_user.id}" + (f" with schedules {schedule_ids}" if schedule_ids else ""))
+        audit("template.delete", f"#{template_id}", f"{len(schedule_ids)} schedule(s) deleted" if schedule_ids else None)
+        flash("Template deleted" + (f" together with {len(schedule_ids)} schedule(s)" if schedule_ids else ""), "success")
     except Exception as e:
         conn.rollback()
         logger.error(f"Failed to delete template: {e}")
@@ -4626,49 +4709,58 @@ def schedule():
     cur.execute("SELECT * FROM schedule_jobs ORDER BY created_at DESC")
     jobs = cur.fetchall()
 
+    cur.execute("SELECT template_id, name FROM playbook_templates ORDER BY name")
+    templates = []
+    for template_id, name in cur.fetchall():
+        settings, error = template_run_settings(cur, template_id)
+        templates.append({"id": template_id, "name": name, "problem": error,
+                          "playbook": settings["playbook_path"] if settings else "",
+                          "target": settings["target"] if settings else ""})
+
     cur.close()
     conn.close()
 
-    return render_template("schedule.html", jobs=jobs, secrets=load_secret_choices(),
+    return render_template("schedule.html", jobs=jobs, secrets=load_secret_choices(), templates=templates,
+                           template_names={t["id"]: t for t in templates},
                            scripts=list_repo_files(SCRIPTS_DIR, ('.py',)),
                            playbooks=list_repo_files(PLAYBOOKS_DIR, PLAYBOOK_EXTENSIONS))
 
 
-@app.route("/schedule/add", methods=["POST"])
-@login_required
-@role_required("operator")
-def add_schedule():
-    """Creates a schedule and registers it in the scheduler."""
+def parse_schedule_form(form):
+    """Reads and validates the schedule form; returns (data, error)."""
 
-    job_type = request.form.get("job_type", "python").strip()
-    script_name = request.form.get("script_name", "").strip()
-    target = request.form.get("target", "").strip()
-    schedule_type = request.form.get("schedule_type", "").strip()
-    secret_1 = request.form.get("secret_1", "").strip()
-    secret_2 = request.form.get("secret_2", "").strip()
-    secret_3 = request.form.get("secret_3", "").strip()
+    job_type = form.get("job_type", "python").strip()
+    script_name = form.get("script_name", "").strip()
+    target = form.get("target", "").strip()
+    schedule_type = form.get("schedule_type", "").strip()
+    secret_1 = form.get("secret_1", "").strip()
+    secret_2 = form.get("secret_2", "").strip()
+    secret_3 = form.get("secret_3", "").strip()
 
     if job_type not in ("python", "ansible"):
-        flash("Invalid job type", "danger")
-        return redirect(url_for("schedule"))
+        return None, "Invalid job type"
 
-    if job_type == "ansible":
-        target, error = parse_playbook_target(request.form)
+    template_id = None
+    if job_type == "ansible" and form.get("source") == "template":
+        try:
+            template_id = int(form.get("template_id", ""))
+        except ValueError:
+            return None, "Please select a template"
+        script_name, target, variables, use_venv = "template", "", "{}", 0
+    elif job_type == "ansible":
+        target, error = parse_playbook_target(form)
         if error:
-            flash(error, "danger")
-            return redirect(url_for("schedule"))
-
-    if job_type == "ansible":
-        extra_vars = parse_extra_vars(request.form.get("extra_vars_raw", ""))
+            return None, error
+        extra_vars = parse_extra_vars(form.get("extra_vars_raw", ""))
         variables = json.dumps({"extra_vars": extra_vars})
         use_venv = 0
     else:
-        var_count = parse_var_count(request.form.get("varCount"))
+        var_count = parse_var_count(form.get("varCount"))
         vars_dict = {"varCount": var_count}
         for i in range(1, var_count + 1):
-            vars_dict[f"variable{i}"] = request.form.get(f"variable{i}", "").strip()
+            vars_dict[f"variable{i}"] = form.get(f"variable{i}", "").strip()
         variables = json.dumps(vars_dict)
-        use_venv = 1 if request.form.get("use_venv") == "on" else 0
+        use_venv = 1 if form.get("use_venv") == "on" else 0
 
     secrets_json = json.dumps({
         "secret_1": secret_1,
@@ -4679,31 +4771,65 @@ def add_schedule():
     if schedule_type == "hourly":
         schedule = "0 * * * *"
     elif schedule_type == "daily":
-        hour = request.form.get("hour", "0")
-        minute = request.form.get("minute", "0")
+        hour = form.get("hour", "0")
+        minute = form.get("minute", "0")
         schedule = f"{minute} {hour} * * *"
     elif schedule_type == "weekly":
-        hour = request.form.get("hour", "0")
-        minute = request.form.get("minute", "0")
-        weekday = request.form.get("weekday", "0")
+        hour = form.get("hour", "0")
+        minute = form.get("minute", "0")
+        weekday = form.get("weekday", "0")
         schedule = f"{minute} {hour} * * {weekday}"
     elif schedule_type == "custom":
-        schedule = request.form.get("schedule", "").strip()
+        schedule = form.get("schedule", "").strip()
     else:
-        flash("Invalid schedule type", "danger")
-        return redirect(url_for("schedule"))
+        return None, "Invalid schedule type"
 
     if not script_name or not schedule:
-        flash("Script/Playbook and schedule are required", "danger")
-        return redirect(url_for("schedule"))
+        return None, "Script/Playbook and schedule are required"
 
     try:
         if len(schedule.split()) != 5:
             raise ValueError("expected 5 fields")
         CronTrigger(**parse_schedule(schedule))
     except Exception as e:
-        flash(f"Invalid schedule '{schedule}': {e}", "danger")
+        return None, f"Invalid schedule '{schedule}': {e}"
+
+    return {"job_type": job_type, "script_name": script_name, "target": target, "schedule": schedule,
+            "variables": variables, "secrets_json": secrets_json, "use_venv": use_venv, "template_id": template_id}, None
+
+
+def apply_schedule_template(data):
+    """Fills a schedule that runs a template with the template's playbook, target and secrets; returns an error or None."""
+
+    if not data["template_id"]:
+        return None
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        settings, error = template_run_settings(cur, data["template_id"])
+    finally:
+        cur.close()
+        conn.close()
+    if error:
+        return error
+    data.update(script_name=settings["playbook_path"], target=settings["target"],
+                secrets_json=settings["secrets_json"], variables=json.dumps({"template": settings["name"]}))
+    return None
+
+
+@app.route("/schedule/add", methods=["POST"])
+@login_required
+@role_required("operator")
+def add_schedule():
+    """Creates a schedule and registers it in the scheduler."""
+
+    data, error = parse_schedule_form(request.form)
+    error = error or apply_schedule_template(data)
+    if error:
+        flash(error, "danger")
         return redirect(url_for("schedule"))
+    job_type, script_name, target, schedule = data["job_type"], data["script_name"], data["target"], data["schedule"]
+    variables, secrets_json, use_venv = data["variables"], data["secrets_json"], data["use_venv"]
 
     conn = get_db()
     cur = conn.cursor()
@@ -4711,9 +4837,9 @@ def add_schedule():
         conn.begin()
         cur.execute("""
             INSERT INTO schedule_jobs 
-            (script_name, user_id, target, schedule_expression, variables, credential, is_active, created_at, use_venv, job_type)
-            VALUES (%s, %s, %s, %s, %s, %s, TRUE, NOW(), %s, %s)
-        """, (script_name, current_user.id, target, schedule, variables, secrets_json, use_venv, job_type))
+            (script_name, user_id, target, schedule_expression, variables, credential, is_active, created_at, use_venv, job_type, template_id)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE, NOW(), %s, %s, %s)
+        """, (script_name, current_user.id, target, schedule, variables, secrets_json, use_venv, job_type, data["template_id"]))
         cron_id = cur.lastrowid
 
         register_schedule_job(cron_id, script_name, current_user.id, target, variables,
@@ -4727,6 +4853,55 @@ def add_schedule():
         logger.error(f"Error adding schedule: {e}")
         conn.rollback()
         flash("Error adding schedule", "danger")
+    finally:
+        cur.close()
+        conn.close()
+
+    return redirect(url_for("schedule"))
+
+
+@app.route("/schedule/edit/<int:cron_id>", methods=["POST"])
+@login_required
+@role_required("operator")
+def edit_schedule(cron_id):
+    """Changes a schedule; an active schedule is re-registered with the new settings."""
+
+    data, error = parse_schedule_form(request.form)
+    error = error or apply_schedule_template(data)
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("schedule"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT user_id, is_active FROM schedule_jobs WHERE job_id = %s", (cron_id,))
+        row = cur.fetchone()
+        if not row:
+            abort(404)
+        owner, is_active = row
+
+        conn.begin()
+        cur.execute("""
+            UPDATE schedule_jobs
+            SET script_name = %s, target = %s, schedule_expression = %s, variables = %s,
+                credential = %s, use_venv = %s, job_type = %s, template_id = %s
+            WHERE job_id = %s
+        """, (data["script_name"], data["target"], data["schedule"], data["variables"],
+              data["secrets_json"], data["use_venv"], data["job_type"], data["template_id"], cron_id))
+        if is_active:
+            register_schedule_job(cron_id, data["script_name"], owner, data["target"], data["variables"],
+                                  data["secrets_json"], data["use_venv"], data["job_type"], data["schedule"])
+        conn.commit()
+        logger.info(f"Schedule #{cron_id} ({sanitize_log(data['script_name'])}, '{data['schedule']}') changed by {current_user.id}")
+        audit("schedule.edit", data["script_name"], f"#{cron_id}, {data['schedule']}")
+        flash("Schedule saved", "success")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error changing schedule {cron_id}: {e}")
+        conn.rollback()
+        flash("Error saving schedule", "danger")
     finally:
         cur.close()
         conn.close()

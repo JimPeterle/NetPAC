@@ -97,6 +97,11 @@ Scripts and playbooks can be scheduled with cron expressions (hourly, daily, wee
 each with target, variables and secrets. A schedule is skipped while its previous run is still
 waiting in the queue.
 
+A schedule can also run a **playbook template**. It uses the template's current playbook, target,
+extra vars and secrets at every run, and the default values of its survey fields. Templates with a
+required survey field without default value, or with a required password field, can't be scheduled.
+Deleting a template also deletes the schedules that run it — the delete dialog lists them.
+
 ## Notifications
 
 NetPAC sends e-mail or Matrix messages when jobs finish (completed, failed, timeout, cancelled).
