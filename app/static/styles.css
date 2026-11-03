@@ -1005,6 +1005,27 @@ select.form-input {
 .segmented-btn.active,
 .segmented-btn.active:hover { background: var(--accent); color: var(--accent-contrast); }
 
+.channel-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    gap: 1.5rem;
+    align-items: start;
+}
+
+.channel-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.channel-mail { background: var(--blue-dim); color: var(--blue); }
+
+.channel-matrix { background: var(--success-dim); color: var(--success); }
+
 .host-table .host-col-narrow { width: 1%; white-space: nowrap; }
 
 .data-table.host-table thead th.host-col-status,

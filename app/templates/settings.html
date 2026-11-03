@@ -229,7 +229,15 @@
                 <li class="host-item">
                     <div class="host-info" style="{% if not rule.is_active %}opacity: 0.5;{% endif %}">
                         <span class="host-name">{{ rule.name }}</span>
-                        <span style="background: var(--blue-dim); color: var(--blue); font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px;">{{ 'Mail' if rule.channel == 'email' else 'Matrix' }}</span>
+                        {% if rule.channel == 'email' %}
+                        <span class="channel-badge channel-mail" title="E-Mail">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>Mail
+                        </span>
+                        {% else %}
+                        <span class="channel-badge channel-matrix" title="Matrix">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Matrix
+                        </span>
+                        {% endif %}
                         <span style="background: var(--bg-table-head); color: var(--text-muted); font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 4px; border: 1px solid var(--border);">{{ rule.target }}</span>
                         {% for s in notify_statuses %}
                         {% if rule['on_' ~ s] %}
@@ -282,77 +290,107 @@
         </div>
     </div>
 
-    <div class="content-card" style="margin-top: 1.5rem;">
-        <div class="card-header">
-            <h3 class="card-title">Notification Channels</h3>
+    <form method="POST" action="{{ url_for('save_notification_settings') }}" style="margin-top: 1.5rem;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+        <div class="channel-grid">
+            <div class="content-card" style="margin: 0;">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 6px;"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>E-Mail (SMTP)
+                    </h3>
+                    {% if notification_config.smtp_host and notification_config.smtp_from %}
+                    <span class="status-badge status-success">Configured</span>
+                    {% else %}
+                    <span class="status-badge status-cancelled">Not configured</span>
+                    {% endif %}
+                </div>
+                <div class="card-body" style="padding: 24px;">
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <div class="form-group" style="margin-bottom: 16px; flex: 2; min-width: 200px;">
+                            <label class="form-label">SMTP Host</label>
+                            <input type="text" name="smtp_host" class="form-input" placeholder="smtp.example.com" value="{{ notification_config.smtp_host }}">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 100px;">
+                            <label class="form-label">Port</label>
+                            <input type="number" name="smtp_port" class="form-input" placeholder="587" value="{{ notification_config.smtp_port }}">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 140px;">
+                            <label class="form-label">Security</label>
+                            <select name="smtp_security" class="form-input">
+                                <option value="starttls" {% if notification_config.smtp_security == 'starttls' %}selected{% endif %}>STARTTLS</option>
+                                <option value="ssl" {% if notification_config.smtp_security == 'ssl' %}selected{% endif %}>SSL/TLS</option>
+                                <option value="none" {% if notification_config.smtp_security == 'none' %}selected{% endif %}>None</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                        <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 200px;">
+                            <label class="form-label">Username</label>
+                            <input type="text" name="smtp_user" class="form-input" placeholder="Leave empty for no authentication" value="{{ notification_config.smtp_user }}" autocomplete="off">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 200px;">
+                            <label class="form-label">Password</label>
+                            <input type="password" name="smtp_password" class="form-input" autocomplete="new-password"
+                                placeholder="{% if notification_config.smtp_password_set %}Password saved – leave blank to keep{% else %}SMTP password{% endif %}">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Sender Address</label>
+                        <input type="text" name="smtp_from" class="form-input" placeholder="netpac@example.com" value="{{ notification_config.smtp_from }}">
+                    </div>
+
+                </div>
+            </div>
+
+            <div class="content-card" style="margin: 0;">
+                <div class="card-header">
+                    <h3 class="card-title">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 6px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Matrix
+                    </h3>
+                    {% if notification_config.matrix_homeserver and notification_config.matrix_token_set %}
+                    <span class="status-badge status-success">Configured</span>
+                    {% else %}
+                    <span class="status-badge status-cancelled">Not configured</span>
+                    {% endif %}
+                </div>
+                <div class="card-body" style="padding: 24px;">
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label class="form-label">Homeserver URL</label>
+                        <input type="text" name="matrix_homeserver" class="form-input" placeholder="https://matrix.example.org" value="{{ notification_config.matrix_homeserver }}">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label class="form-label">Access Token</label>
+                        <input type="password" name="matrix_token" class="form-input" autocomplete="new-password"
+                            placeholder="{% if notification_config.matrix_token_set %}Token saved – leave blank to keep{% else %}Access token of the bot account{% endif %}">
+                        <span class="form-hint">Invite the bot account to the room first. End-to-end encrypted rooms are not supported.</span>
+                    </div>
+
+                </div>
+            </div>
         </div>
-        <div class="card-body" style="padding: 30px;">
-            <p class="settings-description" style="margin-bottom: 20px;">
-                SMTP password and Matrix access token are stored encrypted in the database.
-            </p>
-            <form method="POST" action="{{ url_for('save_notification_settings') }}">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
 
-                <h4 style="margin: 0 0 12px; color: var(--text-primary);">E-Mail (SMTP)</h4>
-                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                    <div class="form-group" style="margin-bottom: 16px; flex: 2; min-width: 200px;">
-                        <label class="form-label">SMTP Host</label>
-                        <input type="text" name="smtp_host" class="form-input" placeholder="smtp.example.com" value="{{ notification_config.smtp_host }}">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 100px;">
-                        <label class="form-label">Port</label>
-                        <input type="number" name="smtp_port" class="form-input" placeholder="587" value="{{ notification_config.smtp_port }}">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 140px;">
-                        <label class="form-label">Security</label>
-                        <select name="smtp_security" class="form-input">
-                            <option value="starttls" {% if notification_config.smtp_security == 'starttls' %}selected{% endif %}>STARTTLS</option>
-                            <option value="ssl" {% if notification_config.smtp_security == 'ssl' %}selected{% endif %}>SSL/TLS</option>
-                            <option value="none" {% if notification_config.smtp_security == 'none' %}selected{% endif %}>None</option>
-                        </select>
-                    </div>
-                </div>
-                <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 200px;">
-                        <label class="form-label">Username</label>
-                        <input type="text" name="smtp_user" class="form-input" placeholder="Leave empty for no authentication" value="{{ notification_config.smtp_user }}" autocomplete="off">
-                    </div>
-                    <div class="form-group" style="margin-bottom: 16px; flex: 1; min-width: 200px;">
-                        <label class="form-label">Password</label>
-                        <input type="password" name="smtp_password" class="form-input" autocomplete="new-password"
-                            placeholder="{% if notification_config.smtp_password_set %}Password saved – leave blank to keep{% else %}SMTP password{% endif %}">
-                    </div>
-                </div>
-                <div class="form-group" style="margin-bottom: 24px;">
-                    <label class="form-label">Sender Address</label>
-                    <input type="text" name="smtp_from" class="form-input" placeholder="netpac@example.com" value="{{ notification_config.smtp_from }}">
-                </div>
-
-                <h4 style="margin: 0 0 12px; color: var(--text-primary);">Matrix</h4>
-                <div class="form-group" style="margin-bottom: 16px;">
-                    <label class="form-label">Homeserver URL</label>
-                    <input type="text" name="matrix_homeserver" class="form-input" placeholder="https://matrix.example.org" value="{{ notification_config.matrix_homeserver }}">
-                </div>
-                <div class="form-group" style="margin-bottom: 24px;">
-                    <label class="form-label">Access Token</label>
-                    <input type="password" name="matrix_token" class="form-input" autocomplete="new-password"
-                        placeholder="{% if notification_config.matrix_token_set %}Token saved – leave blank to keep{% else %}Access token of the bot account{% endif %}">
-                    <span class="form-hint">Invite the bot account to the room first. End-to-end encrypted rooms are not supported.</span>
-                </div>
-
-                <h4 style="margin: 0 0 12px; color: var(--text-primary);">General</h4>
-                <div class="form-group" style="margin-bottom: 20px;">
+        <div class="content-card" style="margin-top: 1.5rem;">
+            <div class="card-header">
+                <h3 class="card-title">General</h3>
+            </div>
+            <div class="card-body" style="padding: 24px;">
+                <div class="form-group" style="margin-bottom: 0;">
                     <label class="form-label">NetPAC Base URL</label>
                     <input type="text" name="notify_base_url" class="form-input" placeholder="{{ request.url_root }}" value="{{ notification_config.base_url }}">
-                    <span class="form-hint">Used for the link to the job details in notifications. Leave empty to send no link.</span>
+                    <span class="form-hint">Address of NetPAC only, e.g. https://netpac.example.com — the path to the job is added automatically (…/history/&lt;job id&gt;). Leave empty to send no link.</span>
                 </div>
 
-                <button type="submit" class="action-button action-button-primary">
-                    <span>Save</span>
-                </button>
-            </form>
+            </div>
         </div>
-    </div>
+
+        <div style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem;">
+            <button type="submit" class="action-button action-button-primary">
+                <span>Save channels</span>
+            </button>
+            <span class="form-hint" style="margin: 0;">SMTP password and Matrix access token are stored encrypted in the database.</span>
+        </div>
+    </form>
 </div>
 
 <div id="tabGit" style="{{ 'display: none;' if active_tab != 'git' else '' }}">

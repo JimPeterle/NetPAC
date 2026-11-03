@@ -76,7 +76,7 @@ def config_path(name, folder=CONFIG_DIR):
     return legacy if not os.path.exists(path) and os.path.exists(legacy) else path
 
 
-APP_VERSION = "9.0.0"
+APP_VERSION = "9.1.0"
 DEFAULT_PASSWORD = "admin"
 db_database = "netpac_db"
 SSL_CERT_DIR = "/etc/netpac/certs"
