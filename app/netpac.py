@@ -16,7 +16,6 @@ from markupsafe import Markup
 from flask_bcrypt import Bcrypt
 import logging
 from werkzeug.utils import secure_filename
-from werkzeug.datastructures import MultiDict
 from werkzeug.exceptions import HTTPException
 from flask_limiter import Limiter
 from flask import abort
@@ -28,8 +27,6 @@ import re
 import threading
 import json
 import functools
-import math
-import collections
 import csv
 import hashlib
 import hmac
@@ -58,6 +55,12 @@ import smtplib
 import ssl
 from email.message import EmailMessage
 from db_migrations import run_migrations, MigrationError
+from queue_rules import jobs_conflict
+from validation import MAX_SCRIPT_VARS, validate_hostname, parse_var_count, validate_password, parse_extra_vars
+from redaction import REDACTED_VALUE, SENSITIVE_VAR_RE, history_variables, csv_safe, hide_sensitive
+from survey import parse_template_fields, collect_survey_values, survey_defaults_form, survey_env_value
+from job_output import JobOutput
+from roles import ROLE_LEVELS, ROLE_LABELS, PROTECTED_ADMIN, ROLE_DENIED_MESSAGES, effective_role, role_at_least
 
 
 # --------------------
@@ -385,11 +388,7 @@ def inject_app_info():
             "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH}
 
 
-@app.template_filter("hide_sensitive")
-def hide_sensitive_filter(extra_vars):
-    """Formats extra vars as 'key=value, …' with sensitive values hidden (e.g. on the schedule page)."""
-
-    return ", ".join(f"{k}={REDACTED_VALUE if SENSITIVE_VAR_RE.search(str(k)) else v}" for k, v in extra_vars.items())
+app.add_template_filter(hide_sensitive, "hide_sensitive")
 
 
 @app.template_filter("filesize")
@@ -635,7 +634,7 @@ def send_notification_matrix(cfg, room_id, body, html_body, txn_id):
         headers={"Authorization": f"Bearer {cfg['matrix_token']}", "Content-Type": "application/json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=NOTIFY_SEND_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=NOTIFY_SEND_TIMEOUT) as resp:  # nosec B310 # URL checked for http(s) in settings
             resp.read()
     except urllib.error.HTTPError as e:
         try:
@@ -727,6 +726,8 @@ def _notify_job_finished_worker(job_id):
         job = dict(zip(['script_name', 'user_id', 'target', 'status', 'started_at', 'finished_at',
                         'duration', 'job_type', 'ansible_dry_run'], row))
 
+        if job['status'] not in NOTIFY_STATUSES:
+            return
         status_column = f"on_{job['status']}"
         cur.execute(f"""
             SELECT rule_id, name, channel, target FROM notification_rules
@@ -865,7 +866,7 @@ def schedule_owner_allowed(cur, username):
         return True
     cur.execute("SELECT role FROM user WHERE name = %s", (username,))
     row = cur.fetchone()
-    return bool(row) and ROLE_LEVELS.get(row[0], 0) >= ROLE_LEVELS["operator"]
+    return bool(row) and role_at_least(row[0], "operator")
 
 
 def pause_user_schedules(cur, username):
@@ -1162,83 +1163,12 @@ def load_secret_choices():
         conn.close()
 
 
-def parse_extra_vars(raw):
-    """Parses 'Key=Value' lines into a dict."""
-
-    extra_vars = {}
-    for line in (raw or "").splitlines():
-        if "=" in line:
-            key, value = line.split("=", 1)
-            key, value = key.strip(), value.strip()
-            if key:
-                extra_vars[key] = value
-    return extra_vars
-
-
-REDACTED_VALUE = "********"
-SENSITIVE_VAR_RE = re.compile(r"passw|passwd|_pass$|^pass$|secret|token|api_?key|private_?key|credential", re.IGNORECASE)
-
-
-def history_variables(extra_vars, hidden_fields=(), **info):
-    """Returns the extra vars as stored in the job history, with sensitive values hidden."""
-
-    hidden = [k for k in extra_vars if k in hidden_fields or SENSITIVE_VAR_RE.search(k)]
-    stored = {k: (REDACTED_VALUE if k in hidden else v) for k, v in extra_vars.items()}
-    return json.dumps({"extra_vars": stored, **info, **({"redacted_fields": hidden} if hidden else {})})
-
-
 # --------------------
 #   Job output limit and timeout
 # --------------------
-MAX_JOB_OUTPUT_BYTES = 10 * 1024 * 1024
 JOB_TIMEOUT_SECONDS = 4 * 3600
 JOB_OUTPUT_READ_CHUNK = 64 * 1024
 JOB_KILL_GRACE_SECONDS = 10
-
-
-class JobOutput:
-    """Collects job output up to MAX_JOB_OUTPUT_BYTES, keeping the beginning and the end."""
-
-    def __init__(self, limit=MAX_JOB_OUTPUT_BYTES):
-        """Starts with an empty buffer; half of the limit is used for the beginning, half for the end."""
-
-        self.head_limit = limit // 2
-        self.tail_limit = limit - self.head_limit
-        self.head, self.head_size = [], 0
-        self.tail, self.tail_size = collections.deque(), 0
-        self.live, self.truncated, self.dropped = [], False, 0
-
-    def add(self, text):
-        """Adds a piece of output."""
-
-        size = len(text.encode("utf-8", "replace"))
-        if not self.truncated and self.head_size + size <= self.head_limit:
-            self.head.append(text)
-            self.head_size += size
-            self.live.append(text)
-            return
-        if not self.truncated:
-            self.truncated = True
-            self.live.append(f"\n[NetPAC] Output is larger than {MAX_JOB_OUTPUT_BYTES // (1024 * 1024)} MB, "
-                             "the end is shown when the job has finished.\n")
-        self.tail.append((text, size))
-        self.tail_size += size
-        while self.tail_size > self.tail_limit and self.tail:
-            old_text, old_size = self.tail.popleft()
-            self.tail_size -= old_size
-            self.dropped += old_size
-
-    def take_live(self):
-        """Returns the output not yet written to the live view."""
-
-        text, self.live = "".join(self.live), []
-        return text
-
-    def text(self):
-        """Returns the stored output (beginning, omission note, end)."""
-
-        note = f"\n\n[NetPAC] ... {self.dropped} bytes of output omitted ...\n\n" if self.dropped else ""
-        return "".join(self.head) + note + "".join(t for t, _ in self.tail)
 
 
 def stop_process_group(process):
@@ -1426,7 +1356,6 @@ def run_owned_job(job_id, target_fn, args):
 MAX_PARALLEL_JOBS = 5
 EXECUTOR_POLL_SECONDS = 1
 EXECUTOR_LOCK = "netpac_executor_claim"
-LOCAL_HOSTS = {"", "localhost"}
 
 
 def encode_payload(data):
@@ -1489,16 +1418,6 @@ def resolve_job_hosts(cur, target, job_type):
             raise ValueError(f"Target '{item}' not found in database")
         hosts.add(row[0])
     return hosts
-
-
-def jobs_conflict(script_a, stored_a, script_b, stored_b):
-    """True if two jobs share a host; jobs without real hosts only conflict with the same script or playbook."""
-
-    hosts_a = set((stored_a or "").split("\n")) - LOCAL_HOSTS
-    hosts_b = set((stored_b or "").split("\n")) - LOCAL_HOSTS
-    if hosts_a & hosts_b:
-        return True
-    return script_a == script_b and not hosts_a and not hosts_b
 
 
 def fail_queued_job(cur, job_id, message):
@@ -1718,62 +1637,14 @@ def cleanup_job_history():
 
 
 # --------------------
-#   Validate script variable count
-# --------------------
-MAX_SCRIPT_VARS = 10
-
-
-# --------------------
 #   Input validation
 # --------------------
 MAX_USERNAME_LENGTH = 100
-MAX_HOSTNAME_LENGTH = 255
 
-HOSTNAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]*\Z')
 PIP_INSTALL_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-\[\],<>=!~]*\Z')
 PIP_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._\-]*\Z')
 COLLECTION_INSTALL_RE = re.compile(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+(:[A-Za-z0-9._<>=!*,\-]+)?\Z')
 COLLECTION_NAME_RE = re.compile(r'^[A-Za-z0-9_]+\.[A-Za-z0-9_]+\Z')
-
-
-def validate_hostname(hostname):
-    """Returns an error message if the hostname is invalid, else None."""
-
-    if not hostname:
-        return "Hostname is required"
-    if len(hostname) > MAX_HOSTNAME_LENGTH:
-        return f"Hostname is too long (max. {MAX_HOSTNAME_LENGTH} characters)"
-    if not HOSTNAME_RE.match(hostname):
-        return "Hostname may only contain letters, numbers, dots, colons, dashes and underscores (no spaces)"
-    return None
-
-def parse_var_count(value) -> int:
-    """Returns the number of script variables, limited to MAX_SCRIPT_VARS."""
-
-    try:
-        count = int(value or 0)
-    except (TypeError, ValueError):
-        return 0
-    return max(0, min(count, MAX_SCRIPT_VARS))
-
-
-# --------------------
-#   Validate password
-# --------------------
-def validate_password(password: str) -> str | None:
-    """Returns an error message if the password is too weak, else None."""
-
-    if len(password) < 8:
-        return "Password must be at least 8 characters"
-    if not re.search(r'[A-Z]', password):
-        return "Password must contain at least one uppercase letter"
-    if not re.search(r'[a-z]', password):
-        return "Password must contain at least one lowercase letter"
-    if not re.search(r'[0-9]', password):
-        return "Password must contain at least one number"
-    if not re.search(r'[^A-Za-z0-9]', password):
-        return "Password must contain at least one special character"
-    return None
 
 
 # --------------------
@@ -1789,15 +1660,6 @@ login_manager.login_message_category = "warning"
 # --------------------
 #   Define user
 # --------------------
-ROLE_LEVELS = {"viewer": 1, "operator": 2, "admin": 3}
-ROLE_LABELS = {"admin": "Admin", "operator": "Operator", "viewer": "Viewer"}
-PROTECTED_ADMIN = "admin"
-ROLE_DENIED_MESSAGES = {
-    "admin": "Only an admin can do this",
-    "operator": "Your role (Viewer) can only view NetPAC — ask an admin for the Operator role",
-}
-
-
 class User(UserMixin):
     """Logged-in user for Flask-Login."""
 
@@ -1806,12 +1668,12 @@ class User(UserMixin):
 
         self.id = username
         self.username = username
-        self.role = "admin" if username == PROTECTED_ADMIN else (role if role in ROLE_LEVELS else "viewer")
+        self.role = effective_role(username, role)
 
     def has_role(self, role):
         """True if the user has at least the given role."""
 
-        return ROLE_LEVELS[self.role] >= ROLE_LEVELS[role]
+        return role_at_least(self.role, role)
 
 
 def safe_back_url(fallback="dashboard"):
@@ -3516,41 +3378,6 @@ def playbook_templates():
                            playbooks=files, secrets=load_secret_choices())
 
 
-TRUTHY_VALUES = ("true", "1", "yes", "on")
-
-
-def survey_defaults_form(fields):
-    """Builds form values from the default values of survey fields (scheduled runs have nobody to fill them in)."""
-
-    form = MultiDict()
-    for field in fields:
-        key = f"field_{field['var_name']}"
-        default = (field["default_value"] or "").strip()
-        if field["field_type"] == "boolean":
-            if default.lower() in TRUTHY_VALUES:
-                form.add(key, "on")
-        elif field["field_type"] == "multiselect":
-            for value in [v.strip() for v in default.split(",") if v.strip()]:
-                form.add(key, value)
-        elif field["field_type"] == "select":
-            value = default or (field["options"][0] if field["required"] and field["options"] else "")
-            if value:
-                form.add(key, value)
-        elif field["field_type"] != "password" and default:
-            form.add(key, default)
-    return form
-
-
-def survey_env_value(value):
-    """Formats a survey value for an environment variable (lists comma-separated, booleans true/false)."""
-
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, list):
-        return ",".join(str(v) for v in value)
-    return str(value)
-
-
 def build_template_job(cur, template_id, form=None):
     """Builds a job from a template with the given survey form (default values if None); returns (job, error)."""
 
@@ -3621,57 +3448,6 @@ def parse_playbook_target(form):
     return target, None
 
 
-FIELD_TYPES = ("text", "textarea", "number", "select", "multiselect", "boolean", "password")
-FIELD_VAR_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,99}\Z")
-MAX_TEMPLATE_FIELDS = 30
-
-
-def parse_template_fields(raw):
-    """Returns (fields, error) from the JSON sent by the survey field editor."""
-
-    try:
-        items = json.loads(raw or "[]")
-    except ValueError:
-        return None, "Survey fields could not be read"
-    if not isinstance(items, list) or len(items) > MAX_TEMPLATE_FIELDS:
-        return None, f"At most {MAX_TEMPLATE_FIELDS} survey fields are allowed"
-
-    fields, seen = [], set()
-    for item in items:
-        if not isinstance(item, dict):
-            return None, "Survey fields could not be read"
-        var_name = str(item.get("var_name", "")).strip()
-        field_type = str(item.get("field_type", "text"))
-        label = str(item.get("label", "")).strip()[:255] or var_name
-        options = [o.strip() for o in str(item.get("options", "")).splitlines() if o.strip()]
-        default = str(item.get("default_value", "")).strip()
-
-        if not FIELD_VAR_RE.match(var_name):
-            return None, f"Invalid variable name '{var_name}' (letters, digits and _ only, not starting with a digit)"
-        if var_name in seen:
-            return None, f"Variable '{var_name}' is used twice"
-        if field_type not in FIELD_TYPES:
-            return None, f"Invalid field type for '{var_name}'"
-        if field_type in ("select", "multiselect") and not options:
-            return None, f"Field '{var_name}' needs at least one option (one per line)"
-        if field_type == "number" and default:
-            try:
-                if not math.isfinite(float(default)):
-                    raise ValueError
-            except ValueError:
-                return None, f"Default value of '{var_name}' must be a number"
-        if field_type == "select" and default and default not in options:
-            return None, f"Default value of '{var_name}' must be one of its options"
-        if field_type == "password":
-            default = ""
-
-        seen.add(var_name)
-        fields.append({"var_name": var_name, "label": label, "field_type": field_type,
-                       "required": bool(item.get("required")), "default_value": default,
-                       "options": options})
-    return fields, None
-
-
 def load_template_fields(cur, template_id):
     """Returns the survey fields of a template in display order."""
 
@@ -3695,49 +3471,6 @@ def save_template_fields(cur, template_id, fields):
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (template_id, field["var_name"], field["label"], field["field_type"], field["required"],
               field["default_value"] or None, "\n".join(field["options"]) or None, order))
-
-
-def collect_survey_values(fields, form):
-    """Returns (values, error) for the survey fields submitted when launching a template."""
-
-    values = {}
-    for field in fields:
-        name, field_type = field["var_name"], field["field_type"]
-        key = f"field_{name}"
-
-        if field_type == "boolean":
-            values[name] = form.get(key) == "on"
-            continue
-        if field_type == "multiselect":
-            chosen = form.getlist(key)
-            if any(choice not in field["options"] for choice in chosen):
-                return None, f"Invalid choice for '{field['label']}'"
-            if field["required"] and not chosen:
-                return None, f"'{field['label']}' is required"
-            values[name] = chosen
-            continue
-
-        raw = form.get(key, "")
-        value = raw if field_type in ("textarea", "password") else raw.strip()
-        if not value:
-            if field["required"]:
-                return None, f"'{field['label']}' is required"
-            continue
-        if field_type == "number":
-            try:
-                number = float(value)
-                if not math.isfinite(number):
-                    raise ValueError
-            except ValueError:
-                return None, f"'{field['label']}' must be a number"
-            values[name] = int(number) if number.is_integer() else number
-        elif field_type == "select":
-            if value not in field["options"]:
-                return None, f"Invalid choice for '{field['label']}'"
-            values[name] = value
-        else:
-            values[name] = value
-    return values, None
 
 
 @app.route("/playbook_templates/create", methods=["POST"])
@@ -4696,16 +4429,6 @@ def audit_log_page():
                            retention_days=AUDIT_RETENTION_DAYS)
 
 
-CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
-
-
-def csv_safe(value):
-    """Prevents spreadsheet programs from running cell values as formulas."""
-
-    text = "" if value is None else str(value)
-    return "'" + text if text.startswith(CSV_FORMULA_PREFIXES) else text
-
-
 @app.route("/audit/export")
 @login_required
 @role_required("admin")
@@ -5413,7 +5136,7 @@ def set_user_role():
         if row[0] == role:
             return redirect(url_for("settings", tab="user"))
         cur.execute("UPDATE user SET role = %s WHERE name = %s", (role, username))
-        paused = pause_user_schedules(cur, username) if ROLE_LEVELS[role] < ROLE_LEVELS["operator"] else []
+        paused = pause_user_schedules(cur, username) if not role_at_least(role, "operator") else []
         conn.commit()
     finally:
         cur.close()

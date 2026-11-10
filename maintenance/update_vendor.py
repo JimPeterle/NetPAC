@@ -42,7 +42,7 @@ def fetch(url):
     """Downloads a URL and returns its content."""
 
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310 # https URLs from manifest.json
             if response.status != 200:
                 raise RuntimeError(f"HTTP {response.status} for {url}")
             return response.read()

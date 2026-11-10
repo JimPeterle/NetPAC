@@ -27,3 +27,6 @@ backups
 !database/migrations/*.sql
 app/static/vendor/*.tmp
 docs/screenshots
+tests
+pyproject.toml
+.pytest_cache

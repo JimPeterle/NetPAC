@@ -4,6 +4,8 @@
   <a href="docs/install-setup.md"><img src="https://img.shields.io/badge/platform-Linux%20(Ubuntu%20%7C%20Debian)-E95420?logo=ubuntu&logoColor=white" alt="Platform: Linux (Ubuntu | Debian)"></a>
   <a href="https://github.com/JimPeterle/NetPAC/releases/latest"><img src="https://img.shields.io/github/v/release/JimPeterle/NetPAC?label=release&color=blue" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT"></a>
+  <a href="https://github.com/JimPeterle/NetPAC/actions/workflows/tests.yml"><img src="https://github.com/JimPeterle/NetPAC/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+  <a href="https://github.com/JimPeterle/NetPAC/actions/workflows/codeql.yml"><img src="https://github.com/JimPeterle/NetPAC/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
   <br>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/ansible-playbooks-EE0000?logo=ansible&logoColor=white" alt="Ansible">
@@ -87,7 +89,7 @@ password right away under **Settings → User**.
 | [Operation](docs/operation.md) | `netpac` command, updates, job queue, logs, backups |
 | [Troubleshooting](docs/troubleshooting.md) | Lost encryption key, containers or services don't start |
 | [Remove NetPAC](docs/uninstall.md) | Uninstall with setup.sh or Docker |
-| [Development](docs/development.md) | Repository layout, frontend libraries, Docker image |
+| [Development](docs/development.md) | Repository layout, tests, frontend libraries, Docker image |
 
 Security issues: see [SECURITY.md](SECURITY.md).
 

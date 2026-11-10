@@ -47,6 +47,21 @@ jobs:
           fi
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Run tests before building
+        run: |
+          # Releases before the test suite have no tests folder
+          if [ -d tests ]; then
+            pip install pytest pyflakes werkzeug
+            python -m pyflakes app tests
+            python -m pytest -v
+          else
+            echo "No tests in ${{ steps.source.outputs.version }}, skipping"
+          fi
+
       - uses: docker/setup-qemu-action@v3
 
       - uses: docker/setup-buildx-action@v3

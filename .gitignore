@@ -31,3 +31,6 @@ __pycache__/
 
 # Docker: backups folder next to docker-compose.yml (e.g. docker/backups)
 backups/
+
+# Test runs
+.pytest_cache/

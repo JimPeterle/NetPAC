@@ -10,6 +10,32 @@
 | `database/migrations/` | Database changes as numbered SQL files, applied automatically on start |
 | `docker/` | Dockerfile, docker-compose.yml, entrypoint and Gunicorn configuration of the image |
 | `docs/` | This documentation and screenshots |
+| `tests/` | Automated tests (pytest) |
+| `.github/workflows/` | GitHub Actions: tests, CodeQL, Docker image |
+
+## Tests
+
+The tests cover the logic that runs without a database: roles, input validation, hiding of
+sensitive values, survey fields of templates, job output limits and the job queue rules. A static
+test also checks that every page needs a login and every action (POST) checks the role. This logic
+lives in small modules in `app/` (`roles.py`, `validation.py`, `redaction.py`, `survey.py`,
+`job_output.py`, `queue_rules.py`) that `netpac.py` imports.
+
+Run them from the repository root:
+
+```bash
+python3 -m pip install pytest pyflakes werkzeug
+python3 -m pyflakes app tests   # finds unused imports and undefined names
+python3 -m pytest               # runs all files tests/test_*.py
+```
+
+A new public route has to be added to `PUBLIC_ROUTES` in `tests/test_routes.py`, otherwise the test
+fails — on purpose, so no page is public by accident.
+
+GitHub Actions runs the tests on every push to `main` and every pull request (Python 3.10 and 3.14),
+and before every Docker image build: if a test fails, no image is published. CodeQL
+(`.github/workflows/codeql.yml`) scans Python and JavaScript for security issues; results appear
+under **Security → Code scanning** on GitHub.
 
 ## Frontend libraries
 
@@ -39,7 +65,7 @@ The image is built by GitHub Actions (`.github/workflows/docker.yml`) and publis
 
 | Trigger | Built version | Tags |
 |---|---|---|
-| New tag `v*` | this version | `9.0.1`, `9.0`, `9`, and `latest` if it is the newest version |
+| New tag `v*` | this version, after the tests pass | `9.0.1`, `9.0`, `9`, and `latest` if it is the newest version |
 | Every Monday 03:00 UTC | the newest release, with current Ubuntu packages | `9.0.1`, `9.0`, `9`, `latest` |
 | Manual run | the newest release, or the `main` branch for testing (tag `main`) | as above / `main` |
 

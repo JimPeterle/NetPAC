@@ -1,0 +1,17 @@
+[tool.pytest.ini_options]
+pythonpath = ["app"]
+testpaths = ["tests"]
+
+[tool.pyright]
+extraPaths = ["app"]
+
+# Run with: bandit -c pyproject.toml -r app maintenance/update_vendor.py
+[tool.bandit]
+exclude_dirs = ["tests", "app/static"]
+skips = [
+    "B404",  # subprocess import: NetPAC runs scripts and playbooks by design
+    "B603",  # subprocess with an argument list (no shell); shell=True (B602) is still reported
+    "B105",  # compares with strings like 'ssh_key' or '' are no hardcoded passwords
+    "B110",  # try/except/pass is used on purpose for best-effort cleanup
+    "B608",  # f-string SQL only inserts placeholders and fixed column names; CodeQL checks real SQL injection
+]

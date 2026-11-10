@@ -89,7 +89,7 @@ def backup_database(cnf_file, backup_dir, database):
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         result = subprocess.run(
-            ["mysqldump", f"--defaults-extra-file={cnf_file}", "--single-transaction", "--routines", database],
+            ["mysqldump", f"--defaults-extra-file={cnf_file}", "--single-transaction", "--routines", database],  # nosec B607 # mysqldump from PATH
             stdout=f, stderr=subprocess.PIPE, text=True, timeout=600
         )
     if result.returncode != 0:
