@@ -1,0 +1,4 @@
+# Tools for the tests and GitHub Actions; versions are pinned and updated by Dependabot
+pytest==9.2.0
+pyflakes==4.1.0; python_version >= "3.11"
+werkzeug==3.1.9

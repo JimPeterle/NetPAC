@@ -15,20 +15,28 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  build:
+  # Selects the version and tests it; has no write access, so the test tools can't publish anything
+  test:
     runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.source.outputs.ref }}
+      release: ${{ steps.source.outputs.release }}
+      latest: ${{ steps.source.outputs.latest }}
+      version: ${{ steps.source.outputs.version }}
+      week: ${{ steps.source.outputs.week }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - id: source
         name: Select the version to build
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.build_main }}" = "true" ]; then
+            echo "ref=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
             echo "release=false" >> "$GITHUB_OUTPUT"
             echo "latest=false" >> "$GITHUB_OUTPUT"
             echo "version=main" >> "$GITHUB_OUTPUT"
@@ -41,49 +49,63 @@ jobs:
             fi
             [ -n "$tag" ] || { echo "No release tag (v*) found"; exit 1; }
             git checkout --quiet "$tag"
+            echo "ref=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             echo "release=true" >> "$GITHUB_OUTPUT"
             echo "latest=$([ "$tag" = "$newest" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
             echo "version=$tag" >> "$GITHUB_OUTPUT"
           fi
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.14"
 
-      - name: Run tests before building
+      - name: Run tests
         run: |
           # Releases before the test suite have no tests folder
-          if [ -d tests ]; then
-            pip install pytest pyflakes werkzeug
+          if [ -f tests/requirements.txt ]; then
+            pip install -r tests/requirements.txt
             python -m pyflakes app tests
             python -m pytest -v
           else
             echo "No tests in ${{ steps.source.outputs.version }}, skipping"
           fi
 
-      - uses: docker/setup-qemu-action@v3
+  # Builds and publishes the image of exactly the tested commit, only if the tests passed
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.test.outputs.ref }}
+          persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/jimpeterle/netpac
           tags: |
-            type=raw,value=main,enable=${{ steps.source.outputs.release == 'false' }}
-            type=semver,pattern={{version}},value=${{ steps.source.outputs.version }},enable=${{ steps.source.outputs.release == 'true' }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ steps.source.outputs.version }},enable=${{ steps.source.outputs.release == 'true' }}
-            type=semver,pattern={{major}},value=${{ steps.source.outputs.version }},enable=${{ steps.source.outputs.release == 'true' }}
-            type=raw,value=latest,enable=${{ steps.source.outputs.latest == 'true' }}
+            type=raw,value=main,enable=${{ needs.test.outputs.release == 'false' }}
+            type=semver,pattern={{version}},value=${{ needs.test.outputs.version }},enable=${{ needs.test.outputs.release == 'true' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.test.outputs.version }},enable=${{ needs.test.outputs.release == 'true' }}
+            type=semver,pattern={{major}},value=${{ needs.test.outputs.version }},enable=${{ needs.test.outputs.release == 'true' }}
+            type=raw,value=latest,enable=${{ needs.test.outputs.latest == 'true' }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: docker/Dockerfile
@@ -92,6 +114,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            APT_REFRESH=${{ steps.source.outputs.week }}
+            APT_REFRESH=${{ needs.test.outputs.week }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -24,7 +24,7 @@ lives in small modules in `app/` (`roles.py`, `validation.py`, `redaction.py`, `
 Run them from the repository root:
 
 ```bash
-python3 -m pip install pytest pyflakes werkzeug
+python3 -m pip install -r tests/requirements.txt
 python3 -m pyflakes app tests   # finds unused imports and undefined names
 python3 -m pytest               # runs all files tests/test_*.py
 ```
@@ -33,9 +33,15 @@ A new public route has to be added to `PUBLIC_ROUTES` in `tests/test_routes.py`,
 fails — on purpose, so no page is public by accident.
 
 GitHub Actions runs the tests on every push to `main` and every pull request (Python 3.10 and 3.14),
-and before every Docker image build: if a test fails, no image is published. CodeQL
+and before every Docker image build: if a test fails, no image is published. The tests run in a
+separate job without write access; only the build job may publish the image. CodeQL
 (`.github/workflows/codeql.yml`) scans Python and JavaScript for security issues; results appear
 under **Security → Code scanning** on GitHub.
+
+The actions are pinned to a commit (`@<sha> # v4.4.0`) and the test tools to fixed versions in
+`tests/requirements.txt`. Dependabot (`.github/dependabot.yml`) opens a pull request every week when
+new versions are available — new major versions of an action come as a separate pull request, check
+their changelog before merging.
 
 ## Frontend libraries
 
