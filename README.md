@@ -36,6 +36,7 @@ encrypted credentials and user roles.
 
 **Inventory and credentials**
 - Hosts and groups with Ansible group variables, search, status filter and bulk edit
+- REST API with tokens to manage hosts and groups from other tools
 - Secrets: username + password, SSH keys and Ansible Vault passwords, stored encrypted
 - Scripts and playbooks locally or synced from a Git repository
 - Python packages and Ansible collections managed in the web interface
@@ -86,6 +87,7 @@ password right away under **Settings → User**.
 | [Installation with setup.sh](docs/install-setup.md) | Prepare the server, database, configuration, setup |
 | [Installation with Docker](docs/install-docker.md) | Containers, data and folders, updates, commands |
 | [Configuration and usage](docs/configuration.md) | Login, RADIUS, users and roles, secrets, scripts, playbooks, schedules, notifications |
+| [REST API](docs/api.md) | Tokens, endpoints and examples for hosts and groups |
 | [Operation](docs/operation.md) | `netpac` command, updates, job queue, logs, backups |
 | [Troubleshooting](docs/troubleshooting.md) | Lost encryption key, containers or services don't start |
 | [Remove NetPAC](docs/uninstall.md) | Uninstall with setup.sh or Docker |

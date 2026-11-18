@@ -49,6 +49,11 @@ Hosts are created, edited and deleted in the web interface and can belong to sev
 Groups can carry Ansible variables (one `key=value` per line). The host list can be searched and
 filtered by status; several hosts can be edited at once.
 
+## REST API
+
+Operators can manage hosts and groups through a REST API with an API token. Admins create tokens for
+every operator, operators for themselves, under **Settings → User → API tokens**. See [REST API](api.md).
+
 ## Secrets
 
 Credentials are stored encrypted under **Secrets** and passed to scripts and playbooks at runtime:

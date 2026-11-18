@@ -88,10 +88,10 @@ jobs:
           NETPAC_TEST_DB_PASSWORD: test
         run: /usr/bin/python3 -m pytest -v -rs tests/test_migrations_db.py
 
-      - name: Page tests
+      - name: Page and API tests
         env:
           NETPAC_TEST_PAGES: "1"
-        run: /usr/bin/python3 -m pytest -v -rs tests/test_pages.py
+        run: /usr/bin/python3 -m pytest -v -rs tests/test_pages.py tests/test_api_db.py
 
       - name: Show NetPAC logs
         if: failure()

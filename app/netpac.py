@@ -2,7 +2,7 @@
 #   Import library
 # --------------------
 from flask import Flask, render_template, request, redirect, url_for, flash, session, make_response, send_from_directory
-from flask import has_request_context
+from flask import has_request_context, g
 from flask_login import LoginManager, login_user, login_required, logout_user, UserMixin, current_user
 from pyrad.client import Client, Timeout as RadiusTimeout
 from pyrad.dictionary import Dictionary
@@ -61,6 +61,8 @@ from redaction import REDACTED_VALUE, SENSITIVE_VAR_RE, history_variables, csv_s
 from survey import parse_template_fields, collect_survey_values, survey_defaults_form, survey_env_value
 from job_output import JobOutput
 from roles import ROLE_LEVELS, ROLE_LABELS, PROTECTED_ADMIN, ROLE_DENIED_MESSAGES, effective_role, role_at_least
+from api_rules import (TOKEN_DAYS, new_token, hash_token, bearer_token, token_expiry, may_use_api, may_create_token,
+                       validate_token_name, vars_to_dict, clean_host, clean_group)
 
 
 # --------------------
@@ -2637,6 +2639,415 @@ def delete_host():
 
 
 # ---------------------
+#   REST API (hosts and groups only)
+# ---------------------
+API_RATE_LIMIT = "120 per minute"
+
+
+def api_error(status, message):
+    """Returns a JSON error response."""
+
+    return jsonify({"error": message}), status
+
+
+def api_audit(action, target, details=None):
+    """Writes an audit log entry for a change made with an API token."""
+
+    note = f"API token '{g.api_token}'"
+    audit(action, target, f"{note}, {details}" if details else note, user=g.api_user)
+
+
+def api_token_required(view):
+    """Allows an API route only with a valid, unexpired token of a user who is an operator right now."""
+
+    @functools.wraps(view)
+    def wrapper(*args, **kwargs):
+        """Checks the Bearer token before running the view."""
+
+        token = bearer_token(request.headers.get("Authorization"))
+        if not token:
+            return api_error(401, "Missing API token — send 'Authorization: Bearer nppat-…'")
+
+        conn = get_db()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT token_id, name, username, expires_at > NOW() FROM api_tokens WHERE token_hash = %s",
+                        (hash_token(token),))
+            row = cur.fetchone()
+            role = None
+            if row:
+                cur.execute("SELECT role FROM user WHERE name = %s", (row[2],))
+                user_row = cur.fetchone()
+                role = user_row[0] if user_row else None
+                if row[3] and may_use_api(row[2], role):
+                    cur.execute("UPDATE api_tokens SET last_used_at = NOW(), last_used_ip = %s WHERE token_id = %s",
+                                (get_real_ip(), row[0]))
+        finally:
+            cur.close()
+            conn.close()
+
+        if not row:
+            logger.warning(f"API request with an unknown token from {get_real_ip()}")
+            return api_error(401, "Invalid API token")
+        if not row[3]:
+            return api_error(401, "API token has expired")
+        if not may_use_api(row[2], role):
+            audit("access.denied", request.endpoint, f"API token '{row[1]}', role {role or 'deleted'}", user=row[2])
+            return api_error(403, "Only operators may use the API")
+
+        g.api_token, g.api_user = row[1], row[2]
+        return view(*args, **kwargs)
+    return wrapper
+
+
+def api_json_body():
+    """Returns the JSON body of the request, or None if it isn't valid JSON."""
+
+    return request.get_json(silent=True)
+
+
+# GROUP_CONCAT stops at 1024 bytes by default, which cuts the host list of large groups
+API_GROUP_CONCAT_MAX_LEN = 16 * 1024 * 1024
+
+
+def api_load_hosts(cur, where="", params=()):
+    """Returns hosts as API dicts; 'where' is a fixed SQL condition with placeholders."""
+
+    cur.execute("SET SESSION group_concat_max_len = %s", (API_GROUP_CONCAT_MAX_LEN,))
+    cur.execute(f"""
+        SELECT h.host_id, h.hostname, h.description, h.is_active,
+               COALESCE(GROUP_CONCAT(g.name ORDER BY g.name SEPARATOR ','), '')
+        FROM hosts h
+        LEFT JOIN host_group_membership m ON h.host_id = m.host_id
+        LEFT JOIN host_groups g ON m.group_id = g.group_id
+        {where}
+        GROUP BY h.host_id, h.hostname, h.description, h.is_active
+        ORDER BY h.hostname
+    """, params)
+    return [{"id": r[0], "hostname": r[1], "description": r[2] or "", "is_active": bool(r[3]),
+             "groups": [name for name in r[4].split(",") if name]} for r in cur.fetchall()]
+
+
+def api_load_host(cur, hostname):
+    """Returns one host as API dict, or None."""
+
+    hosts = api_load_hosts(cur, "WHERE h.hostname = %s", (hostname,))
+    return hosts[0] if hosts else None
+
+
+def api_load_groups(cur, where="", params=()):
+    """Returns groups as API dicts; 'where' is a fixed SQL condition with placeholders."""
+
+    cur.execute("SET SESSION group_concat_max_len = %s", (API_GROUP_CONCAT_MAX_LEN,))
+    cur.execute(f"""
+        SELECT g.group_id, g.name, g.ansible_vars,
+               COALESCE(GROUP_CONCAT(h.hostname ORDER BY h.hostname SEPARATOR ','), '')
+        FROM host_groups g
+        LEFT JOIN host_group_membership m ON g.group_id = m.group_id
+        LEFT JOIN hosts h ON m.host_id = h.host_id
+        {where}
+        GROUP BY g.group_id, g.name, g.ansible_vars
+        ORDER BY g.name
+    """, params)
+    return [{"id": r[0], "name": r[1], "ansible_vars": vars_to_dict(r[2]),
+             "hosts": [name for name in r[3].split(",") if name]} for r in cur.fetchall()]
+
+
+def api_load_group(cur, name):
+    """Returns one group as API dict, or None."""
+
+    groups = api_load_groups(cur, "WHERE g.name = %s", (name,))
+    return groups[0] if groups else None
+
+
+def api_group_ids(cur, names):
+    """Returns (group ids, unknown names) for a list of group names."""
+
+    if not names:
+        return [], []
+    placeholders = ", ".join(["%s"] * len(names))
+    cur.execute(f"SELECT name, group_id FROM host_groups WHERE name IN ({placeholders})", names)
+    found = {name.lower(): group_id for name, group_id in cur.fetchall()}
+    return list(found.values()), [name for name in names if name.lower() not in found]
+
+
+def api_set_host_groups(cur, host_id, group_ids):
+    """Replaces the groups of a host."""
+
+    cur.execute("DELETE FROM host_group_membership WHERE host_id = %s", (host_id,))
+    for group_id in group_ids:
+        cur.execute("INSERT INTO host_group_membership (host_id, group_id) VALUES (%s, %s)", (host_id, group_id))
+
+
+@app.route("/api/v1/hosts", methods=["GET"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_list_hosts():
+    """API: lists all hosts, optionally of one group (?group=name)."""
+
+    group = request.args.get("group", "").strip()
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        if not group:
+            return jsonify(api_load_hosts(cur))
+        if not api_load_group(cur, group):
+            return api_error(404, f"Group '{group}' not found")
+        return jsonify(api_load_hosts(cur, """
+            WHERE h.host_id IN (SELECT m2.host_id FROM host_group_membership m2
+                                JOIN host_groups g2 ON m2.group_id = g2.group_id WHERE g2.name = %s)
+        """, (group,)))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/v1/hosts", methods=["POST"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_create_host():
+    """API: creates a host."""
+
+    values, error = clean_host(api_json_body())
+    if error:
+        return api_error(400, error)
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        if api_load_host(cur, values["hostname"]):
+            return api_error(409, f"Host '{values['hostname']}' already exists")
+        group_ids, unknown = api_group_ids(cur, values["groups"])
+        if unknown:
+            return api_error(400, f"Unknown group(s): {', '.join(unknown)}")
+
+        conn.begin()
+        cur.execute("INSERT INTO hosts (hostname, description, is_active) VALUES (%s, %s, %s)",
+                    (values["hostname"], values["description"], values["is_active"]))
+        api_set_host_groups(cur, cur.lastrowid, group_ids)
+        conn.commit()
+        host = api_load_host(cur, values["hostname"])
+    except pymysql.IntegrityError:
+        conn.rollback()
+        return api_error(409, f"Host '{values['hostname']}' already exists")
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"Host '{sanitize_log(host['hostname'])}' added via API by {g.api_user}")
+    api_audit("host.create", host["hostname"], f"groups: {host['groups']}")
+    response = jsonify(host)
+    response.status_code = 201
+    response.headers["Location"] = url_for("api_get_host", hostname=host["hostname"])
+    return response
+
+
+@app.route("/api/v1/hosts/<hostname>", methods=["GET"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_get_host(hostname):
+    """API: returns one host."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        host = api_load_host(cur, hostname)
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(host) if host else api_error(404, f"Host '{hostname}' not found")
+
+
+@app.route("/api/v1/hosts/<hostname>", methods=["PATCH"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_update_host(hostname):
+    """API: changes hostname, description, groups or status of a host (only the fields sent)."""
+
+    values, error = clean_host(api_json_body(), partial=True)
+    if error:
+        return api_error(400, error)
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        host = api_load_host(cur, hostname)
+        if not host:
+            return api_error(404, f"Host '{hostname}' not found")
+        new_name = values.get("hostname", host["hostname"])
+        existing = api_load_host(cur, new_name)
+        if existing and existing["id"] != host["id"]:
+            return api_error(409, f"Host '{new_name}' already exists")
+        group_ids, unknown = api_group_ids(cur, values.get("groups", []))
+        if unknown:
+            return api_error(400, f"Unknown group(s): {', '.join(unknown)}")
+
+        conn.begin()
+        cur.execute("UPDATE hosts SET hostname = %s, description = %s, is_active = %s WHERE host_id = %s",
+                    (new_name, values.get("description", host["description"]),
+                     values.get("is_active", host["is_active"]), host["id"]))
+        if "groups" in values:
+            api_set_host_groups(cur, host["id"], group_ids)
+        conn.commit()
+        updated = api_load_host(cur, new_name)
+    except pymysql.IntegrityError:
+        conn.rollback()
+        return api_error(409, f"Host '{values.get('hostname')}' already exists")
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"Host '{sanitize_log(hostname)}' updated via API by {g.api_user}")
+    api_audit("host.update", hostname, f"changed: {', '.join(sorted(values))}")
+    return jsonify(updated)
+
+
+@app.route("/api/v1/hosts/<hostname>", methods=["DELETE"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_delete_host(hostname):
+    """API: deletes a host."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM hosts WHERE hostname = %s", (hostname,))
+        deleted = cur.rowcount
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not deleted:
+        return api_error(404, f"Host '{hostname}' not found")
+    logger.info(f"Host '{sanitize_log(hostname)}' deleted via API by {g.api_user}")
+    api_audit("host.delete", hostname)
+    return "", 204
+
+
+@app.route("/api/v1/groups", methods=["GET"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_list_groups():
+    """API: lists all groups with their variables and hosts."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        return jsonify(api_load_groups(cur))
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.route("/api/v1/groups", methods=["POST"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_create_group():
+    """API: creates a group."""
+
+    values, error = clean_group(api_json_body())
+    if error:
+        return api_error(400, error)
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("INSERT INTO host_groups (name, ansible_vars) VALUES (%s, %s)", (values["name"], values["ansible_vars"]))
+        conn.commit()
+        group = api_load_group(cur, values["name"])
+    except pymysql.IntegrityError:
+        return api_error(409, f"Group '{values['name']}' already exists")
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"Group '{sanitize_log(group['name'])}' created via API by {g.api_user}")
+    api_audit("group.create", group["name"])
+    response = jsonify(group)
+    response.status_code = 201
+    response.headers["Location"] = url_for("api_get_group", name=group["name"])
+    return response
+
+
+@app.route("/api/v1/groups/<name>", methods=["GET"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_get_group(name):
+    """API: returns one group."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        group = api_load_group(cur, name)
+    finally:
+        cur.close()
+        conn.close()
+    return jsonify(group) if group else api_error(404, f"Group '{name}' not found")
+
+
+@app.route("/api/v1/groups/<name>", methods=["PATCH"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_update_group(name):
+    """API: replaces the Ansible variables of a group."""
+
+    values, error = clean_group(api_json_body(), partial=True)
+    if error:
+        return api_error(400, error)
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        group = api_load_group(cur, name)
+        if not group:
+            return api_error(404, f"Group '{name}' not found")
+        cur.execute("UPDATE host_groups SET ansible_vars = %s WHERE group_id = %s", (values["ansible_vars"], group["id"]))
+        conn.commit()
+        updated = api_load_group(cur, group["name"])
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"Group '{sanitize_log(name)}' updated via API by {g.api_user}")
+    api_audit("group.update", group["name"])
+    return jsonify(updated)
+
+
+@app.route("/api/v1/groups/<name>", methods=["DELETE"])
+@csrf.exempt
+@limiter.limit(API_RATE_LIMIT)
+@api_token_required
+def api_delete_group(name):
+    """API: deletes a group (its hosts stay, they only leave the group)."""
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("DELETE FROM host_groups WHERE name = %s", (name,))
+        deleted = cur.rowcount
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    if not deleted:
+        return api_error(404, f"Group '{name}' not found")
+    logger.info(f"Group '{sanitize_log(name)}' deleted via API by {g.api_user}")
+    api_audit("group.delete", name)
+    return "", 204
+
+
+# ---------------------
 #   Git Config
 # ---------------------
 GIT_CONFIG_FILE = config_path("git_config.json", STATE_DIR)
@@ -4825,6 +5236,21 @@ def settings():
         users = [{"name": r[0], "method": r[1] or "local", "role": "admin" if r[0] == PROTECTED_ADMIN else r[2]}
                  for r in cur.fetchall()]
 
+    # API tokens: admins see all and create them for operators, operators manage their own
+    can_use_api = may_use_api(current_user.id, current_user.role)
+    api_tokens = []
+    if is_admin or can_use_api:
+        sql = """SELECT token_id, username, name, prefix, created_by, created_at, expires_at, last_used_at,
+                        expires_at <= NOW() FROM api_tokens"""
+        if is_admin:
+            cur.execute(sql + " ORDER BY username, created_at DESC")
+        else:
+            cur.execute(sql + " WHERE username = %s ORDER BY created_at DESC", (current_user.id,))
+        api_tokens = [{"id": r[0], "username": r[1], "name": r[2], "prefix": r[3], "created_by": r[4],
+                       "created_at": r[5], "expires_at": r[6], "last_used_at": r[7], "expired": bool(r[8])}
+                      for r in cur.fetchall()]
+    api_operators = [u["name"] for u in users if may_use_api(u["name"], u["role"])]
+
     cur.close()
     conn.close()
 
@@ -4839,7 +5265,10 @@ def settings():
                         active_tab=active_tab, radius_config=radius_config, ssl_info=ssl_info_data,
                         notification_config=notification_config, notification_rules=notification_rules,
                         notify_statuses=NOTIFY_STATUSES, is_admin=is_admin, roles=list(ROLE_LEVELS),
-                        protected_admin=PROTECTED_ADMIN)
+                        protected_admin=PROTECTED_ADMIN, can_use_api=can_use_api, api_tokens=api_tokens,
+                        api_operators=api_operators, api_token_days=TOKEN_DAYS,
+                        new_api_token=session.pop("new_api_token", None),
+                        api_base_url=request.url_root.rstrip("/") + "/api/v1")
 
 
 @app.route("/settings/git", methods=["POST"])
@@ -5092,11 +5521,13 @@ def delete_user():
 
     try:
         paused = pause_user_schedules(cur, username)
+        tokens = delete_user_api_tokens(cur, username)
         cur.execute("DELETE FROM user WHERE name = %s", (username,))
         conn.commit()
         flash(f"User '{sanitize_log(username)}' deleted successfully", "success")
         logger.info(f"User '{sanitize_log(username)}' deleted by {current_user.id}")
-        audit("user.delete", username, f"{len(paused)} schedule(s) paused" if paused else None)
+        notes = [f"{len(paused)} schedule(s) paused" if paused else "", f"{tokens} API token(s) deleted" if tokens else ""]
+        audit("user.delete", username, ", ".join(n for n in notes if n) or None)
         if paused:
             flash(f"{len(paused)} schedule(s) of {username} were paused — an operator can activate them again and becomes their owner", "warning")
 
@@ -5142,17 +5573,100 @@ def set_user_role():
             return redirect(url_for("settings", tab="user"))
         cur.execute("UPDATE user SET role = %s WHERE name = %s", (role, username))
         paused = pause_user_schedules(cur, username) if not role_at_least(role, "operator") else []
+        # API tokens are only for operators
+        tokens = delete_user_api_tokens(cur, username) if role != "operator" else 0
         conn.commit()
     finally:
         cur.close()
         conn.close()
 
     logger.info(f"Role of '{sanitize_log(username)}' changed from {row[0]} to {role} by {current_user.id}")
-    audit("user.role", username, f"{row[0]} -> {role}" + (f", {len(paused)} schedule(s) paused" if paused else ""))
+    audit("user.role", username, f"{row[0]} -> {role}" + (f", {len(paused)} schedule(s) paused" if paused else "")
+          + (f", {tokens} API token(s) deleted" if tokens else ""))
     flash(f"{username} is now {ROLE_LABELS[role]}", "success")
+    if tokens:
+        flash(f"{tokens} API token(s) of {username} were deleted — API tokens are only for operators", "warning")
     if paused:
         flash(f"{len(paused)} schedule(s) of {username} were paused — an operator can activate them again and becomes their owner", "warning")
     return redirect(url_for("settings", tab="user"))
+
+
+# ---------------------
+#   API tokens
+# ---------------------
+@app.route("/settings/api_tokens/create", methods=["POST"])
+@login_required
+@role_required("operator", tab="user")
+def create_api_token():
+    """Creates an API token: admins for every operator, operators for themselves. The token is shown once."""
+
+    owner = request.form.get("username", "").strip() or current_user.id
+    name = request.form.get("name", "").strip()
+    expires_at = token_expiry(request.form.get("days"))
+
+    error = validate_token_name(name)
+    if error or expires_at is None:
+        flash(error or "Invalid validity", "danger")
+        return redirect(url_for("settings", tab="user"))
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT role FROM user WHERE name = %s", (owner,))
+        row = cur.fetchone()
+        if not row or not may_create_token(current_user.id, current_user.role, owner, row[0]):
+            flash("API tokens are only for operators — admins create them for every operator, operators for themselves", "danger")
+            return redirect(url_for("settings", tab="user"))
+
+        token, token_hash, prefix = new_token()
+        cur.execute("""
+            INSERT INTO api_tokens (username, name, token_hash, prefix, created_by, expires_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (owner, name, token_hash, prefix, current_user.id, expires_at))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"API token '{sanitize_log(name)}' for {sanitize_log(owner)} created by {current_user.id}")
+    audit("api_token.create", owner, f"'{name}', valid until {expires_at:%Y-%m-%d}")
+    session["new_api_token"] = {"token": token, "username": owner, "name": name}
+    return redirect(url_for("settings", tab="user"))
+
+
+@app.route("/settings/api_tokens/delete", methods=["POST"])
+@login_required
+@role_required("operator", tab="user")
+def delete_api_token():
+    """Deletes an API token: admins every token, operators their own."""
+
+    token_id = request.form.get("token_id", type=int)
+
+    conn = get_db()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT username, name FROM api_tokens WHERE token_id = %s", (token_id,))
+        row = cur.fetchone()
+        if not row or (not current_user.has_role("admin") and row[0] != current_user.id):
+            flash("API token not found", "warning")
+            return redirect(url_for("settings", tab="user"))
+        cur.execute("DELETE FROM api_tokens WHERE token_id = %s", (token_id,))
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    logger.info(f"API token '{sanitize_log(row[1])}' of {sanitize_log(row[0])} deleted by {current_user.id}")
+    audit("api_token.delete", row[0], f"'{row[1]}'")
+    flash(f"API token '{row[1]}' deleted", "success")
+    return redirect(url_for("settings", tab="user"))
+
+
+def delete_user_api_tokens(cur, username):
+    """Deletes all API tokens of a user and returns how many there were."""
+
+    cur.execute("DELETE FROM api_tokens WHERE username = %s", (username,))
+    return cur.rowcount
 
 
 @app.route("/settings/radius", methods=["POST"])
@@ -5707,6 +6221,8 @@ def handle_error(e):
         location = f" at {os.path.basename(frame.filename)}:{frame.lineno} in {frame.name}()" if frame else ""
         logger.error(f"Unhandled {type(e).__name__}{location}: {sanitize_log(str(e))} — {request_log_context()}")
 
+    if request.path.startswith("/api/"):
+        return jsonify({"error": ERROR_MESSAGES.get(error_code, "An error has occurred")}), error_code
     return render_template("error.html",
                            error_code=error_code,
                            error_message=ERROR_MESSAGES.get(error_code, "An error has occurred")), error_code

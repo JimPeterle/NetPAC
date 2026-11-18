@@ -54,6 +54,105 @@
     </div>
     {% endif %}
 
+    {% if is_admin or can_use_api %}
+    <div class="content-card" style="margin-top: 1.5rem;">
+        <div class="card-header">
+            <h3 class="card-title">API tokens</h3>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            {% if new_api_token %}
+            <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);">
+                <p style="margin: 0 0 0.5rem 0; font-weight: 600;">New token '{{ new_api_token.name }}' for {{ new_api_token.username }} — copy it now, it is shown only once:</p>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="newApiToken" class="form-input" value="{{ new_api_token.token }}" readonly style="font-family: monospace;" onclick="this.select()">
+                    <button type="button" class="action-button action-button-secondary" onclick="navigator.clipboard.writeText(document.getElementById('newApiToken').value); this.textContent = 'Copied';">Copy</button>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if api_tokens %}
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        {% if is_admin %}<th>User</th>{% endif %}
+                        <th>Name</th>
+                        <th>Token</th>
+                        <th>Valid until</th>
+                        <th>Last used</th>
+                        <th style="text-align: right; padding-right: 1.5rem;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for token in api_tokens %}
+                    <tr>
+                        {% if is_admin %}<td style="font-weight: 600;">{{ token.username }}</td>{% endif %}
+                        <td>{{ token.name }}{% if token.created_by != token.username %} <span style="color: var(--text-muted);">(by {{ token.created_by }})</span>{% endif %}</td>
+                        <td style="font-family: monospace; color: var(--text-muted);">{{ token.prefix }}…</td>
+                        <td>
+                            {% if token.expired %}
+                            <span class="status-badge status-error">Expired {{ token.expires_at.strftime('%Y-%m-%d') }}</span>
+                            {% else %}
+                            {{ token.expires_at.strftime('%Y-%m-%d') }}
+                            {% endif %}
+                        </td>
+                        <td style="color: var(--text-muted);">{{ token.last_used_at.strftime('%Y-%m-%d %H:%M') if token.last_used_at else 'never' }}</td>
+                        <td style="text-align: right; padding-right: 1.5rem;">
+                            <form method="POST" action="{{ url_for('delete_api_token') }}" style="margin: 0;" onsubmit="return confirm('Delete this API token? Scripts using it stop working.');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <input type="hidden" name="token_id" value="{{ token.id }}"/>
+                                <button type="submit" class="action-button action-button-secondary" title="Delete token">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+
+            {% if can_use_api or api_operators %}
+            <form method="POST" action="{{ url_for('create_api_token') }}" style="padding: 1.25rem 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                {% if is_admin %}
+                <div class="form-group" style="margin: 0;">
+                    <label class="form-label">Operator</label>
+                    <select name="username" class="form-input" required>
+                        {% for name in api_operators %}
+                        <option value="{{ name }}">{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+                <div class="form-group" style="margin: 0; flex: 1; min-width: 12rem;">
+                    <label class="form-label">Name</label>
+                    <input type="text" name="name" class="form-input" maxlength="100" placeholder="e.g. inventory sync" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label class="form-label">Valid for</label>
+                    <select name="days" class="form-input">
+                        {% for days in api_token_days %}
+                        <option value="{{ days }}" {% if days == 90 %}selected{% endif %}>{{ days }} days</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="action-button action-button-primary">Create token</button>
+            </form>
+            {% endif %}
+
+            <p class="form-hint" style="padding: 0 1.5rem 1.25rem 1.5rem; margin: 0;">
+                With an API token, scripts can view, create, change and delete hosts and groups — nothing else.
+                Only operators can use tokens{% if is_admin %}; an admin creates them for every operator{% else %}; you can create tokens for yourself{% endif %}.
+                Tokens are deleted when their user is deleted or is no longer an operator.
+                Send it as <code>Authorization: Bearer nppat-…</code> to <code>{{ api_base_url }}</code>.
+            </p>
+            {% if is_admin and not api_operators %}
+            <p class="form-hint" style="padding: 0 1.5rem 1.25rem 1.5rem; margin: 0;">There is no operator yet — give a user the Operator role to create a token for them.</p>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
     {% if is_admin %}
     <div class="content-card" style="margin-top: 1.5rem;">
         <div class="card-header">

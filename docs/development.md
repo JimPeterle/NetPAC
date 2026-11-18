@@ -32,11 +32,12 @@ python3 -m pytest               # runs all files tests/test_*.py
 A new public route has to be added to `PUBLIC_ROUTES` in `tests/test_routes.py`, otherwise the test
 fails — on purpose, so no page is public by accident.
 
-Two test files need a MariaDB and run only on GitHub Actions (locally they are skipped):
+Three test files need a MariaDB and run only on GitHub Actions (locally they are skipped):
 
 | File | Checks |
 |---|---|
 | `tests/test_migrations_db.py` | All migrations on an empty database (new installation), and updates from the schemas of v5.0.0 and v6.0.0 (`tests/fixtures/`) — afterwards every table and column of a new installation must exist and the roles must be set |
+| `tests/test_api_db.py` | Uses the REST API with tokens of different roles: only operators get in, every change works and is in the audit log |
 | `tests/test_pages.py` | Imports NetPAC with a real database, fills in test data and opens every page as admin and as viewer; a page with an error (500) fails the test and shows the end of `netpac.log` |
 
 The job `database` in `tests.yml` runs them with MariaDB 10.11 and 11.8 and installs the same Ubuntu

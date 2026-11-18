@@ -22,7 +22,8 @@ NOT_A_PAGE = {"static", "login", "totp_setup", "totp_verify", "favicon", "apple_
 
 # Every GET page without URL parameters, so new pages are tested automatically
 PAGES = sorted(rule.rule for rule in netpac.app.url_map.iter_rules()
-               if "GET" in rule.methods and not rule.arguments and rule.endpoint not in NOT_A_PAGE)
+               if "GET" in rule.methods and not rule.arguments and rule.endpoint not in NOT_A_PAGE
+               and not rule.rule.startswith("/api/"))
 
 VIEWER_ALLOWED = ["/dashboard", "/hosts", "/groups", "/scripts", "/playbooks/", "/playbook_templates",
                   "/history", "/schedule", "/secrets", "/settings"]
