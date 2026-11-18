@@ -173,3 +173,19 @@ def test_viewer_can_view(client, path):
 def test_viewer_is_sent_back(client, path):
     response = log_in(client, "vera").get(path)
     assert response.status_code == 302, f"{path} returned {response.status_code} for a viewer"
+
+
+def test_template_passes_forks_to_the_job(data):
+    template_id = execute("""
+        INSERT INTO playbook_templates (name, playbook_path, job_type, target, forks, created_by)
+        VALUES ('Forks', 'site.yml', 'ansible', 'core', 20, 'admin')
+    """)
+    conn = netpac.get_db()
+    try:
+        with conn.cursor() as cur:
+            job, error = netpac.build_template_job(cur, template_id)
+    finally:
+        conn.close()
+    assert error is None
+    assert job["payload"]["forks"] == 20
+    assert '"forks": 20' in job["variables"]

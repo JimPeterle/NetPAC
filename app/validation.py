@@ -3,6 +3,10 @@ import re
 
 MAX_SCRIPT_VARS = 10
 
+MAX_FORKS = 100
+
+FORKS_RE = re.compile(r"^[0-9]{1,3}\Z")
+
 MAX_HOSTNAME_LENGTH = 255
 
 HOSTNAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]*\Z')
@@ -28,6 +32,29 @@ def parse_var_count(value) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, min(count, MAX_SCRIPT_VARS))
+
+
+def parse_forks(value):
+    """Returns (forks, error) for the optional number of Ansible forks; empty means Ansible's own default."""
+
+    text = "" if value is None else str(value).strip()
+    if not text:
+        return None, None
+    if not FORKS_RE.match(text) or not 1 <= int(text) <= MAX_FORKS:
+        return None, f"Forks must be a whole number from 1 to {MAX_FORKS}"
+    return int(text), None
+
+
+def forks_info(forks):
+    """Returns the forks as dict entry for job payloads and the job history; empty if not set."""
+
+    return {"forks": forks} if forks else {}
+
+
+def forks_args(forks):
+    """Returns the ansible-playbook arguments for the number of forks."""
+
+    return ["--forks", str(forks)] if forks else []
 
 
 def validate_password(password: str) -> str | None:

@@ -69,6 +69,14 @@ vars:
   ansible_password: "{{ lookup('env', 'SECRET_1_PASSWORD') }}"
 ```
 
+## Forks
+
+Forks set how many hosts Ansible works on at the same time. With 12 hosts and 5 forks, each task runs on
+5 hosts at once until all 12 are done. Set them when starting a playbook, in a template or in a schedule
+(1–100). Empty uses the Ansible default of 5, or `forks` from an `ansible.cfg` next to the playbook.
+
+More forks are faster but need more memory and CPU on the NetPAC server.
+
 ## Secrets
 
 Credentials of type **Username + password** are injected as environment variables:

@@ -86,6 +86,7 @@
                                 {% if jtype == 'ansible' %}
                                     {% set evars = vars.extra_vars if vars.extra_vars else {} %}
                                     {{ evars|hide_sensitive if evars else '-' }}
+                                    {% if vars.forks %}<div style="font-size: 0.8rem; color: var(--text-muted);">Forks: {{ vars.forks }}</div>{% endif %}
                                 {% else %}
                                     {% set vparts = [] %}
                                     {% if vars.variable1 %}{% set _ = vparts.append(vars.variable1) %}{% endif %}
@@ -286,6 +287,11 @@
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">One variable per line — format: Key=Value</span>
                     <textarea name="extra_vars_raw" id="scheduleExtraVars" class="form-input" rows="4" placeholder="Version=12&#10;Env=prod" style="font-family: inherit; resize: vertical;"></textarea>
                 </div>
+                <div class="form-group">
+                    <label class="form-label">Forks</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">How many hosts Ansible works on at the same time. Empty = default (5, or forks from an ansible.cfg next to the playbook).</span>
+                    <input type="number" name="forks" id="scheduleForks" class="form-input" min="1" max="{{ max_forks }}" step="1" placeholder="Default" style="max-width: 10rem;">
+                </div>
                 </div>
             </div>
 
@@ -462,6 +468,7 @@
                 selectPlaybook(data.script_name);
                 document.getElementById('scheduleExtraVars').value = Object.entries(vars.extra_vars || {})
                     .map(([key, value]) => `${key}=${value}`).join('\n');
+                document.getElementById('scheduleForks').value = vars.forks || '';
                 if (data.target === 'localhost') {
                     document.getElementById('scheduleRunLocal').checked = true;
                 } else {
@@ -557,6 +564,7 @@
         const jobType = document.getElementById('jobTypeHidden').value;
         const isAnsible = jobType === 'ansible';
         const fromTemplate = document.getElementById('scheduleSourceHidden').value === 'template';
+        if (!isAnsible || fromTemplate) document.getElementById('scheduleForks').value = '';
         document.getElementById('sourceFileLabel').textContent = isAnsible ? 'Playbook' : 'Script';
         document.getElementById('templateSourceFields').style.display = fromTemplate ? 'block' : 'none';
         document.getElementById('pythonFields').style.display = !isAnsible && !fromTemplate ? 'block' : 'none';

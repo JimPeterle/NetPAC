@@ -56,7 +56,8 @@ import ssl
 from email.message import EmailMessage
 from db_migrations import run_migrations, MigrationError
 from queue_rules import jobs_conflict
-from validation import MAX_SCRIPT_VARS, validate_hostname, parse_var_count, validate_password, parse_extra_vars
+from validation import (MAX_SCRIPT_VARS, MAX_FORKS, validate_hostname, parse_var_count, validate_password, parse_extra_vars,
+                        parse_forks, forks_info, forks_args)
 from redaction import REDACTED_VALUE, SENSITIVE_VAR_RE, history_variables, csv_safe, hide_sensitive
 from survey import parse_template_fields, collect_survey_values, survey_defaults_form, survey_env_value
 from job_output import JobOutput
@@ -387,7 +388,7 @@ def inject_app_info():
         return current_user.is_authenticated and current_user.has_role(role)
 
     return {"app_version": APP_VERSION, "static_file": static_file, "can": can, "role_labels": ROLE_LABELS,
-            "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH}
+            "max_script_vars": MAX_SCRIPT_VARS, "max_username_length": MAX_USERNAME_LENGTH, "max_forks": MAX_FORKS}
 
 
 app.add_template_filter(hide_sensitive, "hide_sensitive")
@@ -945,7 +946,7 @@ def trigger_schedule_job(job_id, script_name, user_id, target, variables, secret
             history_vars = template["variables"]
         elif job_type == 'ansible':
             extra_vars = vars_dict.get('extra_vars') or {}
-            payload = {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}
+            payload = {"extra_vars": json.dumps(extra_vars) if extra_vars else "", **forks_info(vars_dict.get('forks'))}
             history_vars = history_variables(extra_vars, **{k: v for k, v in vars_dict.items() if k != 'extra_vars'})
         else:
             payload = {"variables": variables, "use_venv": bool(use_venv)}
@@ -1524,7 +1525,7 @@ def start_claimed_job(job_id):
     secret_args = (secrets.get("secret_1", ""), secrets.get("secret_2", ""), secrets.get("secret_3", ""))
     if job_type == "ansible":
         target_fn = execute_playbook_background
-        args = (job_id, script_name, target, payload.get("extra_vars", ""), *secret_args, bool(dry_run))
+        args = (job_id, script_name, target, payload.get("extra_vars", ""), *secret_args, bool(dry_run), payload.get("forks"))
     else:
         target_fn = execute_script_background
         args = (job_id, script_name, target, payload.get("variables", "{}"), payload.get("use_venv", False), *secret_args,
@@ -3730,15 +3731,20 @@ def run_playbook(subpath):
     secret_2 = request.form.get("secret_2", "").strip()
     secret_3 = request.form.get("secret_3", "").strip()
 
+    forks, error = parse_forks(request.form.get("forks"))
+    if error:
+        flash(error, "danger")
+        return redirect(url_for("browse_playbooks", subpath=subpath))
+
     extra_vars = parse_extra_vars(request.form.get("extra_vars_raw", ""))
     extra_vars_str = json.dumps(extra_vars) if extra_vars else ""
 
-    variables = history_variables(extra_vars)
+    variables = history_variables(extra_vars, **forks_info(forks))
     secrets_json = json.dumps({"secret_1": secret_1, "secret_2": secret_2, "secret_3": secret_3})
 
     try:
         job_id = enqueue_job(subpath, current_user.id, target, variables, secrets_json, 'ansible',
-                             {"extra_vars": extra_vars_str}, dry_run)
+                             {"extra_vars": extra_vars_str, **forks_info(forks)}, dry_run)
     except Exception as e:
         logger.error(f"Failed to queue playbook job: {e}")
         flash("Failed to queue the playbook", "danger")
@@ -3767,12 +3773,12 @@ def playbook_templates():
     try:
         cur.execute("""
             SELECT template_id, name, description, playbook_path, target, extra_vars, secret_1, secret_2, secret_3,
-                   created_at, created_by, script_args, use_venv
+                   created_at, created_by, script_args, use_venv, forks
             FROM playbook_templates WHERE COALESCE(job_type, 'ansible') = %s ORDER BY name
         """, (mode,))
         rows = cur.fetchall()
         templates = [dict(zip(['template_id', 'name', 'description', 'playbook_path', 'target', 'extra_vars', 'secret_1',
-                               'secret_2', 'secret_3', 'created_at', 'created_by', 'script_args', 'use_venv'], row)) for row in rows]
+                               'secret_2', 'secret_3', 'created_at', 'created_by', 'script_args', 'use_venv', 'forks'], row)) for row in rows]
         cur.execute("SELECT template_id, job_id, schedule_expression FROM schedule_jobs WHERE template_id IS NOT NULL")
         schedules_by_template = {}
         for template_id, job_id, expression in cur.fetchall():
@@ -3793,13 +3799,13 @@ def build_template_job(cur, template_id, form=None):
     """Builds a job from a template with the given survey form (default values if None); returns (job, error)."""
 
     cur.execute("""
-        SELECT name, playbook_path, job_type, target, extra_vars, script_args, use_venv, secret_1, secret_2, secret_3
+        SELECT name, playbook_path, job_type, target, extra_vars, script_args, use_venv, secret_1, secret_2, secret_3, forks
         FROM playbook_templates WHERE template_id = %s
     """, (template_id,))
     row = cur.fetchone()
     if not row:
         return None, "Template not found"
-    name, path, job_type, target, extra_vars_raw, script_args, use_venv, secret_1, secret_2, secret_3 = row
+    name, path, job_type, target, extra_vars_raw, script_args, use_venv, secret_1, secret_2, secret_3, forks = row
     job_type = job_type or "ansible"
     if job_type == "ansible" and not target:
         return None, f"Template '{name}' has no target"
@@ -3817,8 +3823,8 @@ def build_template_job(cur, template_id, form=None):
            "secrets_json": json.dumps({"secret_1": secret_1 or "", "secret_2": secret_2 or "", "secret_3": secret_3 or ""})}
     if job_type == "ansible":
         extra_vars = {**parse_extra_vars(extra_vars_raw), **survey}
-        job["payload"] = {"extra_vars": json.dumps(extra_vars) if extra_vars else ""}
-        job["variables"] = history_variables(extra_vars, hidden, template=name)
+        job["payload"] = {"extra_vars": json.dumps(extra_vars) if extra_vars else "", **forks_info(forks)}
+        job["variables"] = history_variables(extra_vars, hidden, template=name, **forks_info(forks))
     else:
         args = [line.strip() for line in (script_args or "").splitlines() if line.strip()]
         script_vars = {"varCount": len(args), **{f"variable{i}": arg for i, arg in enumerate(args, 1)}}
@@ -3839,13 +3845,16 @@ def parse_template_form(form):
         target, error = parse_playbook_target(form)
         if error:
             return None, error
+        forks, error = parse_forks(form.get("forks"))
+        if error:
+            return None, error
         return {"job_type": job_type, "target": target, "extra_vars": form.get("extra_vars", "").strip(),
-                "script_args": None, "use_venv": 0}, None
+                "script_args": None, "use_venv": 0, "forks": forks}, None
     script_args = "\n".join(line.strip() for line in form.get("script_args", "").splitlines() if line.strip())
     if len(script_args.splitlines()) > MAX_SCRIPT_VARS:
         return None, f"At most {MAX_SCRIPT_VARS} arguments are allowed"
     return {"job_type": job_type, "target": form.get("target", "").strip(), "extra_vars": "",
-            "script_args": script_args, "use_venv": 1 if form.get("use_venv") == "on" else 0}, None
+            "script_args": script_args, "use_venv": 1 if form.get("use_venv") == "on" else 0, "forks": None}, None
 
 
 def parse_playbook_target(form):
@@ -3917,10 +3926,10 @@ def create_playbook_template():
         conn.begin()
         cur.execute("""
             INSERT INTO playbook_templates
-            (name, description, playbook_path, job_type, target, extra_vars, script_args, use_venv,
+            (name, description, playbook_path, job_type, target, extra_vars, script_args, use_venv, forks,
              secret_1, secret_2, secret_3, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (name, description, playbook_path, mode, target, extra_vars, data["script_args"], data["use_venv"],
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (name, description, playbook_path, mode, target, extra_vars, data["script_args"], data["use_venv"], data["forks"],
               secret_1, secret_2, secret_3, current_user.id))
         save_template_fields(cur, cur.lastrowid, fields)
         conn.commit()
@@ -3972,9 +3981,9 @@ def edit_playbook_template(template_id):
         cur.execute("""
             UPDATE playbook_templates
             SET name=%s, description=%s, playbook_path=%s, job_type=%s, target=%s,
-                extra_vars=%s, script_args=%s, use_venv=%s, secret_1=%s, secret_2=%s, secret_3=%s
+                extra_vars=%s, script_args=%s, use_venv=%s, forks=%s, secret_1=%s, secret_2=%s, secret_3=%s
             WHERE template_id=%s
-        """, (name, description, playbook_path, mode, target, extra_vars, data["script_args"], data["use_venv"],
+        """, (name, description, playbook_path, mode, target, extra_vars, data["script_args"], data["use_venv"], data["forks"],
               secret_1, secret_2, secret_3, template_id))
         save_template_fields(cur, template_id, fields)
         conn.commit()
@@ -4073,7 +4082,7 @@ def launch_playbook_template(template_id):
 # --------------------
 #   Background Playbook execution
 # --------------------
-def execute_playbook_background(job_id, filename, target, extra_vars_str, secret_1, secret_2, secret_3, dry_run=False):
+def execute_playbook_background(job_id, filename, target, extra_vars_str, secret_1, secret_2, secret_3, dry_run=False, forks=None):
     """Runs a playbook and stores output and result in the job history."""
 
     exec_logger.info(f"Background executing playbook: {filename}" + (" (DRY RUN)" if dry_run else ""))
@@ -4192,7 +4201,7 @@ def execute_playbook_background(job_id, filename, target, extra_vars_str, secret
         if not os.path.isfile(playbook_path):
             raise FileNotFoundError(f"Playbook not found: {filename}")
 
-        args = [ansible, playbook_path, '-i', temp_inventory] + secret_args
+        args = [ansible, playbook_path, '-i', temp_inventory] + secret_args + forks_args(forks)
 
         if extra_vars_str:
             fd, temp_extra_vars = tempfile.mkstemp(prefix="netpac_extra_vars_", suffix=".json")
@@ -4643,7 +4652,7 @@ def rerun_failed_hosts(job_id):
 
     target = ",".join(failed_hosts)
     new_job_id = enqueue_job(script_name, current_user.id, target, json.dumps({**variables, "rerun_of": job_id}),
-                             credential, 'ansible', {"extra_vars": extra_vars_str}, dry_run)
+                             credential, 'ansible', {"extra_vars": extra_vars_str, **forks_info(variables.get("forks"))}, dry_run)
 
     exec_logger.info(f"Playbook '{sanitize_log(script_name)}' re-run for failed hosts of job #{job_id} queued as job #{new_job_id} by {current_user.id}")
     audit("job.rerun_failed", script_name, f"job #{new_job_id} from #{job_id}: {target}")
@@ -4932,8 +4941,11 @@ def parse_schedule_form(form):
         target, error = parse_playbook_target(form)
         if error:
             return None, error
+        forks, error = parse_forks(form.get("forks"))
+        if error:
+            return None, error
         extra_vars = parse_extra_vars(form.get("extra_vars_raw", ""))
-        variables = json.dumps({"extra_vars": extra_vars})
+        variables = json.dumps({"extra_vars": extra_vars, **forks_info(forks)})
         use_venv = 0
     else:
         var_count = parse_var_count(form.get("varCount"))

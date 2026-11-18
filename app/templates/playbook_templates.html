@@ -48,7 +48,10 @@
                             {% endif %}
                         </td>
                         <td><code style="background: var(--bg-table-head); color: var(--accent); padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.875rem;">{{ t.playbook_path }}</code></td>
-                        <td>{{ t.target if t.target else '-' }}</td>
+                        <td>
+                            {{ t.target if t.target else '-' }}
+                            {% if t.forks %}<div style="font-size: 0.8rem; color: var(--text-muted);">Forks: {{ t.forks }}</div>{% endif %}
+                        </td>
                         <td>
                             {% if t.secret_1 %}<div style="font-size: 0.875rem;">{{ t.secret_1 }}</div>{% endif %}
                             {% if t.secret_2 %}<div style="font-size: 0.875rem;">{{ t.secret_2 }}</div>{% endif %}
@@ -80,6 +83,7 @@
                                         data-extravars="{{ t.extra_vars or '' }}"
                                         data-args="{{ t.script_args or '' }}"
                                         data-venv="{{ '1' if t.use_venv else '' }}"
+                                        data-forks="{{ t.forks or '' }}"
                                         data-fields='{{ t.fields|tojson }}'
                                         data-secret1="{{ t.secret_1 or '' }}"
                                         data-secret2="{{ t.secret_2 or '' }}"
@@ -184,6 +188,11 @@
                     <label class="form-label">Fixed Extra Vars</label>
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one variable per line, format: Key=Value</span>
                     <textarea name="extra_vars" class="form-input" rows="4" placeholder="Version=12&#10;Env=prod" style="font-family: inherit; resize: vertical;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Forks</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">How many hosts Ansible works on at the same time. Empty = default (5, or forks from an ansible.cfg next to the playbook).</span>
+                    <input type="number" name="forks" id="createForks" class="form-input" min="1" max="{{ max_forks }}" step="1" placeholder="Default" style="max-width: 10rem;">
                 </div>
                 {% endif %}
 
@@ -319,6 +328,11 @@
                     <label class="form-label">Fixed Extra Vars</label>
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one variable per line, format: Key=Value</span>
                     <textarea name="extra_vars" id="editExtraVars" class="form-input" rows="4" style="font-family: inherit; resize: vertical;"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Forks</label>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">How many hosts Ansible works on at the same time. Empty = default (5, or forks from an ansible.cfg next to the playbook).</span>
+                    <input type="number" name="forks" id="editForks" class="form-input" min="1" max="{{ max_forks }}" step="1" placeholder="Default" style="max-width: 10rem;">
                 </div>
                 {% endif %}
                 <div class="form-group">
@@ -467,6 +481,7 @@ function openEditModal(btn) {
         document.getElementById('editTarget').value = d.target === 'localhost' ? '' : d.target;
         toggleRunLocal('edit');
         document.getElementById('editExtraVars').value = d.extravars;
+        document.getElementById('editForks').value = d.forks;
     } else {
         document.getElementById('editTarget').value = d.target;
         document.getElementById('editArgs').value = d.args;

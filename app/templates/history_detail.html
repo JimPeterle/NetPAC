@@ -232,6 +232,9 @@
                             {% else %}
                                 <div><span class="var-label">No variables defined</span></div>
                             {% endif %}
+                            {% if job.variables and job.variables.forks %}
+                            <div><span class="var-label">Forks: {{ job.variables.forks }}</span></div>
+                            {% endif %}
                         {% else %}
                             {% if job.variables and job.variables.varCount != '0' %}
                                 {% if job.variables.variable1 %}

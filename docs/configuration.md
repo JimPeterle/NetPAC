@@ -88,7 +88,10 @@ history, but secrets are the safe place for credentials.
   against a host, a group or locally on the NetPAC server.
 - Extra vars at start, syntax check, dry run (`--check --diff`) and a visual graph
   (ansible-playbook-grapher).
-- **Playbook templates** save a playbook together with target, extra vars, secrets and survey fields
+- **Forks** set how many hosts Ansible works on at the same time (1–100). They can be set when starting
+  a playbook, in a template and in a schedule; empty uses the Ansible default (5, or `forks` from an
+  `ansible.cfg` next to the playbook). A schedule that runs a template uses the forks of the template.
+- **Playbook templates** save a playbook together with target, extra vars, forks, secrets and survey fields
   (text, number, selection, checkbox, password …) for repeatable launches.
 - For playbook jobs, the **Hosts** tab shows the result per host; failed hosts can be re-run with one click.
 - Ansible collections are installed, updated and removed in the web interface. Collections of the
