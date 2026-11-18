@@ -185,7 +185,7 @@
                 </div>
                 {% else %}
                 <div class="form-group">
-                    <label class="form-label">Fixed Extra Vars</label>
+                    <label class="form-label">Extra Vars</label>
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one variable per line, format: Key=Value</span>
                     <textarea name="extra_vars" class="form-input" rows="4" placeholder="Version=12&#10;Env=prod" style="font-family: inherit; resize: vertical;"></textarea>
                 </div>
@@ -198,7 +198,7 @@
 
                 <div class="form-group">
                     <label class="form-label">Survey Fields</label>
-                    <span class="form-hint" style="margin-bottom: 8px; display: block;">{% if is_python %}Asked when the template is launched. Each field is passed to the script as environment variable NETPAC_VAR_&lt;NAME&gt; (e.g. field "version" → NETPAC_VAR_VERSION).{% else %}Asked when the template is launched. Values override fixed extra vars with the same name.{% endif %}</span>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">{% if is_python %}Asked when the template is launched. Each field is passed to the script as environment variable NETPAC_VAR_&lt;NAME&gt; (e.g. field "version" → NETPAC_VAR_VERSION).{% else %}Asked when the template is launched. Values override Extra Vars with the same name.{% endif %}</span>
                     <div id="createFields"></div>
                     <button type="button" class="action-button action-button-secondary" onclick="addFieldRow('createFields')">+ Add field</button>
                     <input type="hidden" name="fields_json" id="createFieldsJson">
@@ -325,7 +325,7 @@
                 </div>
                 {% else %}
                 <div class="form-group">
-                    <label class="form-label">Fixed Extra Vars</label>
+                    <label class="form-label">Extra Vars</label>
                     <span class="form-hint" style="margin-bottom: 8px; display: block;">Always passed — one variable per line, format: Key=Value</span>
                     <textarea name="extra_vars" id="editExtraVars" class="form-input" rows="4" style="font-family: inherit; resize: vertical;"></textarea>
                 </div>
@@ -337,7 +337,7 @@
                 {% endif %}
                 <div class="form-group">
                     <label class="form-label">Survey Fields</label>
-                    <span class="form-hint" style="margin-bottom: 8px; display: block;">{% if is_python %}Asked when the template is launched. Each field is passed to the script as environment variable NETPAC_VAR_&lt;NAME&gt; (e.g. field "version" → NETPAC_VAR_VERSION).{% else %}Asked when the template is launched. Values override fixed extra vars with the same name.{% endif %}</span>
+                    <span class="form-hint" style="margin-bottom: 8px; display: block;">{% if is_python %}Asked when the template is launched. Each field is passed to the script as environment variable NETPAC_VAR_&lt;NAME&gt; (e.g. field "version" → NETPAC_VAR_VERSION).{% else %}Asked when the template is launched. Values override Extra Vars with the same name.{% endif %}</span>
                     <div id="editFields"></div>
                     <button type="button" class="action-button action-button-secondary" onclick="addFieldRow('editFields')">+ Add field</button>
                     <input type="hidden" name="fields_json" id="editFieldsJson">
