@@ -33,20 +33,26 @@ def test_token_expiry():
 
 
 @pytest.mark.parametrize("username, role, allowed", [
-    ("anna", "operator", True), ("anna", "viewer", False), ("anna", "admin", False),
-    ("admin", "operator", False),  # the user 'admin' is always admin
+    ("anna", "operator", True), ("anna", "admin", True), ("anna", "viewer", False), ("anna", "root", False),
+    ("admin", "admin", False),     # the local user 'admin' never gets a token
+    ("admin", "operator", False),
     ("anna", None, False),         # deleted user
 ])
-def test_only_operators_use_the_api(username, role, allowed):
+def test_who_may_use_the_api(username, role, allowed):
     assert may_use_api(username, role) is allowed
 
 
 @pytest.mark.parametrize("creator, creator_role, owner, owner_role, allowed", [
-    ("admin", "admin", "anna", "operator", True),   # admin for any operator
+    ("admin", "admin", "anna", "operator", True),   # admins for every operator and admin
+    ("admin", "admin", "boss", "admin", True),
     ("boss", "admin", "anna", "operator", True),
+    ("boss", "admin", "boss", "admin", True),
+    ("boss", "admin", "carla", "admin", True),
     ("anna", "operator", "anna", "operator", True),  # operator for themselves
     ("anna", "operator", "otto", "operator", False),  # not for others
-    ("admin", "admin", "admin", "admin", False),     # no tokens for admins
+    ("anna", "operator", "boss", "admin", False),
+    ("admin", "admin", "admin", "admin", False),     # no tokens for the local user 'admin'
+    ("boss", "admin", "admin", "admin", False),
     ("admin", "admin", "vera", "viewer", False),     # no tokens for viewers
     ("vera", "viewer", "vera", "viewer", False),
 ])

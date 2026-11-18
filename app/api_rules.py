@@ -3,7 +3,7 @@ import re
 import secrets
 from datetime import datetime, timedelta
 
-from roles import effective_role
+from roles import PROTECTED_ADMIN, effective_role, role_at_least
 from validation import parse_extra_vars, validate_hostname
 
 
@@ -62,13 +62,13 @@ def token_expiry(days, now=None):
 
 
 def may_use_api(username, role):
-    """True if the user may use API tokens: only operators (not admins, not viewers)."""
+    """True if the user may use API tokens: operators and admins, but not viewers and not the local user 'admin'."""
 
-    return role is not None and effective_role(username, role) == "operator"
+    return role is not None and username != PROTECTED_ADMIN and role_at_least(effective_role(username, role), "operator")
 
 
 def may_create_token(creator, creator_role, owner, owner_role):
-    """Admins create tokens for every operator, operators only for themselves."""
+    """Admins create tokens for everyone who may use the API, operators only for themselves."""
 
     if not may_use_api(owner, owner_role):
         return False

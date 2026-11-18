@@ -111,15 +111,15 @@
             </table>
             {% endif %}
 
-            {% if can_use_api or api_operators %}
+            {% if can_use_api or api_token_users %}
             <form method="POST" action="{{ url_for('create_api_token') }}" style="padding: 1.25rem 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 {% if is_admin %}
                 <div class="form-group" style="margin: 0;">
-                    <label class="form-label">Operator</label>
+                    <label class="form-label">User</label>
                     <select name="username" class="form-input" required>
-                        {% for name in api_operators %}
-                        <option value="{{ name }}">{{ name }}</option>
+                        {% for name in api_token_users %}
+                        <option value="{{ name }}" {% if name == current_user.id %}selected{% endif %}>{{ name }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -142,12 +142,12 @@
 
             <p class="form-hint" style="padding: 0 1.5rem 1.25rem 1.5rem; margin: 0;">
                 With an API token, scripts can view, create, change and delete hosts and groups — nothing else.
-                Only operators can use tokens{% if is_admin %}; an admin creates them for every operator{% else %}; you can create tokens for yourself{% endif %}.
-                Tokens are deleted when their user is deleted or is no longer an operator.
+                Operators and admins can use tokens, the local user {{ protected_admin }} can't{% if is_admin %}; admins create them for every one of these users{% else %}; you can create tokens for yourself{% endif %}.
+                Tokens are deleted when their user is deleted or becomes a viewer.
                 Send it as <code>Authorization: Bearer nppat-…</code> to <code>{{ api_base_url }}</code>.
             </p>
-            {% if is_admin and not api_operators %}
-            <p class="form-hint" style="padding: 0 1.5rem 1.25rem 1.5rem; margin: 0;">There is no operator yet — give a user the Operator role to create a token for them.</p>
+            {% if is_admin and not api_token_users %}
+            <p class="form-hint" style="padding: 0 1.5rem 1.25rem 1.5rem; margin: 0;">There is no user who can have a token yet — give a user the Operator or Admin role first.</p>
             {% endif %}
         </div>
     </div>

@@ -65,9 +65,13 @@ def test_expired_token(client):
     assert client.get("/api/v1/hosts", headers=add_token("olga", days_valid=-1)).status_code == 401
 
 
-@pytest.mark.parametrize("username", ["vera_api", "boss", "admin"])
-def test_only_operators(client, username):
+@pytest.mark.parametrize("username", ["vera_api", "admin"])
+def test_viewer_and_local_admin_are_refused(client, username):
     assert client.get("/api/v1/hosts", headers=add_token(username)).status_code == 403
+
+
+def test_admin_group_may_use_the_api(client):
+    assert client.get("/api/v1/hosts", headers=add_token("boss")).status_code == 200
 
 
 def test_downgraded_operator_loses_access(client):

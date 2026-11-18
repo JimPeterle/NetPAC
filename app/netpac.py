@@ -2658,7 +2658,7 @@ def api_audit(action, target, details=None):
 
 
 def api_token_required(view):
-    """Allows an API route only with a valid, unexpired token of a user who is an operator right now."""
+    """Allows an API route only with a valid, unexpired token of a user who may use the API right now."""
 
     @functools.wraps(view)
     def wrapper(*args, **kwargs):
@@ -2693,7 +2693,7 @@ def api_token_required(view):
             return api_error(401, "API token has expired")
         if not may_use_api(row[2], role):
             audit("access.denied", request.endpoint, f"API token '{row[1]}', role {role or 'deleted'}", user=row[2])
-            return api_error(403, "Only operators may use the API")
+            return api_error(403, "Only operators and admins may use the API, not the local user admin")
 
         g.api_token, g.api_user = row[1], row[2]
         return view(*args, **kwargs)
@@ -5236,7 +5236,7 @@ def settings():
         users = [{"name": r[0], "method": r[1] or "local", "role": "admin" if r[0] == PROTECTED_ADMIN else r[2]}
                  for r in cur.fetchall()]
 
-    # API tokens: admins see all and create them for operators, operators manage their own
+    # API tokens: admins see all and create them for everyone allowed, operators manage their own
     can_use_api = may_use_api(current_user.id, current_user.role)
     api_tokens = []
     if is_admin or can_use_api:
@@ -5249,7 +5249,7 @@ def settings():
         api_tokens = [{"id": r[0], "username": r[1], "name": r[2], "prefix": r[3], "created_by": r[4],
                        "created_at": r[5], "expires_at": r[6], "last_used_at": r[7], "expired": bool(r[8])}
                       for r in cur.fetchall()]
-    api_operators = [u["name"] for u in users if may_use_api(u["name"], u["role"])]
+    api_token_users = [u["name"] for u in users if may_use_api(u["name"], u["role"])]
 
     cur.close()
     conn.close()
@@ -5266,7 +5266,7 @@ def settings():
                         notification_config=notification_config, notification_rules=notification_rules,
                         notify_statuses=NOTIFY_STATUSES, is_admin=is_admin, roles=list(ROLE_LEVELS),
                         protected_admin=PROTECTED_ADMIN, can_use_api=can_use_api, api_tokens=api_tokens,
-                        api_operators=api_operators, api_token_days=TOKEN_DAYS,
+                        api_token_users=api_token_users, api_token_days=TOKEN_DAYS,
                         new_api_token=session.pop("new_api_token", None),
                         api_base_url=request.url_root.rstrip("/") + "/api/v1")
 
@@ -5573,8 +5573,8 @@ def set_user_role():
             return redirect(url_for("settings", tab="user"))
         cur.execute("UPDATE user SET role = %s WHERE name = %s", (role, username))
         paused = pause_user_schedules(cur, username) if not role_at_least(role, "operator") else []
-        # API tokens are only for operators
-        tokens = delete_user_api_tokens(cur, username) if role != "operator" else 0
+        # Viewers can't use API tokens
+        tokens = delete_user_api_tokens(cur, username) if not may_use_api(username, role) else 0
         conn.commit()
     finally:
         cur.close()
@@ -5585,7 +5585,7 @@ def set_user_role():
           + (f", {tokens} API token(s) deleted" if tokens else ""))
     flash(f"{username} is now {ROLE_LABELS[role]}", "success")
     if tokens:
-        flash(f"{tokens} API token(s) of {username} were deleted — API tokens are only for operators", "warning")
+        flash(f"{tokens} API token(s) of {username} were deleted — viewers can't use API tokens", "warning")
     if paused:
         flash(f"{len(paused)} schedule(s) of {username} were paused — an operator can activate them again and becomes their owner", "warning")
     return redirect(url_for("settings", tab="user"))
@@ -5615,7 +5615,7 @@ def create_api_token():
         cur.execute("SELECT role FROM user WHERE name = %s", (owner,))
         row = cur.fetchone()
         if not row or not may_create_token(current_user.id, current_user.role, owner, row[0]):
-            flash("API tokens are only for operators — admins create them for every operator, operators for themselves", "danger")
+            flash("API tokens are for operators and admins, not for the local user admin — admins create them for everyone, operators for themselves", "danger")
             return redirect(url_for("settings", tab="user"))
 
         token, token_hash, prefix = new_token()

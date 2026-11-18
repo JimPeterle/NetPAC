@@ -6,16 +6,17 @@ templates or settings.
 
 ## API tokens
 
-- Only users with the role **Operator** can use the API. Admins and viewers can't, not even with a
-  token.
-- An **admin** creates tokens for every operator, an **operator** creates tokens for themselves —
-  both under **Settings → User → API tokens**.
+- Users with the role **Operator** or **Admin** can use the API. Viewers and the local user `admin`
+  can't, not even with a token. Admins can do the same through the API as operators: only hosts and
+  groups.
+- An **admin** creates tokens for every operator and admin, an **operator** creates tokens for
+  themselves — both under **Settings → User → API tokens**.
 - Every token gets a name (e.g. "inventory sync") and starts with `nppat-` (NetPAC personal access
   token), so it can be recognised — also by secret scanners — if it ends up in a file or log.
 - A token is valid for 30, 90 or 365 days. It is shown **only once**, right after creating it; NetPAC
   only stores a hash of it and can't show it again. The list shows its name, its first characters,
   the expiry date and when it was last used. Delete a token there to revoke it.
-- Tokens are deleted when their user is deleted or gets another role than Operator.
+- Tokens are deleted when their user is deleted or becomes a viewer.
 - Every change made through the API is recorded in the audit log under the token's user, with the
   name of the token.
 
@@ -123,7 +124,7 @@ for host in requests.get(f"{api}/hosts", headers=headers, params={"group": "core
 | `204` | Deleted |
 | `400` | Invalid request; `error` says what is wrong |
 | `401` | Token missing, unknown or expired |
-| `403` | The token's user is not an operator (anymore) |
+| `403` | The token's user may not use the API (anymore) |
 | `404` | Host or group not found |
 | `409` | A host or group with this name already exists |
 | `429` | More than 120 requests per minute to one endpoint from one address |

@@ -51,8 +51,9 @@ filtered by status; several hosts can be edited at once.
 
 ## REST API
 
-Operators can manage hosts and groups through a REST API with an API token. Admins create tokens for
-every operator, operators for themselves, under **Settings → User → API tokens**. See [REST API](api.md).
+Operators and admins can manage hosts and groups through a REST API with an API token; the local user
+`admin` can't have a token. Admins create tokens for all of these users, operators for themselves, under
+**Settings → User → API tokens**. See [REST API](api.md).
 
 ## Secrets
 
