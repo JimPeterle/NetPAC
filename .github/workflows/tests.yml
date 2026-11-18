@@ -35,3 +35,64 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -v
+
+  # Migrations and pages against a real MariaDB, with the Ubuntu packages setup.sh installs
+  database:
+    name: database (MariaDB ${{ matrix.mariadb }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Ubuntu 24.04 ships 10.11, Ubuntu 26.04 ships 11.8
+        mariadb: ["10.11", "11.8"]
+    services:
+      mariadb:
+        image: mariadb:${{ matrix.mariadb }}
+        env:
+          MARIADB_ROOT_PASSWORD: test
+          MARIADB_DATABASE: netpac_db
+          MARIADB_USER: netpac
+          MARIADB_PASSWORD: test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install NetPAC dependencies (Ubuntu packages, like setup.sh)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-flask python3-flask-login python3-flask-bcrypt python3-flask-limiter python3-flaskext.wtf \
+            python3-pyrad python3-dotenv python3-pymysql python3-cryptography python3-markdown \
+            python3-pyotp python3-qrcode python3-pil python3-apscheduler python3-sqlalchemy \
+            python3-pytest
+
+      - name: Prepare folders and config/secret.env
+        run: |
+          sudo mkdir -p /var/log/netpac /var/lib/netpac/{scripts,playbooks,data,git,graphs}
+          sudo chown -R "$USER" /var/log/netpac /var/lib/netpac
+          key="$(/usr/bin/python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
+          umask 077
+          printf 'ENCRYPTION_KEY=%s\nFLASK_KEY=%s\nDB_USER=netpac\nDB_PW=test\nDB_IP=127.0.0.1\nDB_PORT=3306\n' \
+            "$key" "$(openssl rand -hex 32)" > config/secret.env
+
+      - name: Migration tests
+        env:
+          NETPAC_TEST_DB_HOST: 127.0.0.1
+          NETPAC_TEST_DB_PORT: "3306"
+          NETPAC_TEST_DB_USER: root
+          NETPAC_TEST_DB_PASSWORD: test
+        run: /usr/bin/python3 -m pytest -v -rs tests/test_migrations_db.py
+
+      - name: Page tests
+        env:
+          NETPAC_TEST_PAGES: "1"
+        run: /usr/bin/python3 -m pytest -v -rs tests/test_pages.py
+
+      - name: Show NetPAC logs
+        if: failure()
+        run: tail -n 100 /var/log/netpac/*.log || true

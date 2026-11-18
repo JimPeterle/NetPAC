@@ -3856,13 +3856,18 @@ def ansible_collections():
     collections = []
     system_collections = []
 
-    result = subprocess.run(
-        [ANSIBLE_GALAXY, 'collection', 'list', '--format', 'json'],
-        capture_output=True, text=True,
-        env=tool_env()
-    )
+    try:
+        result = subprocess.run(
+            [ANSIBLE_GALAXY, 'collection', 'list', '--format', 'json'],
+            capture_output=True, text=True,
+            env=tool_env()
+        )
+    except FileNotFoundError:
+        logger.error(f"ansible-galaxy not found ({ANSIBLE_GALAXY})")
+        flash("ansible-galaxy was not found — is Ansible installed?", "danger")
+        result = None
 
-    if result.returncode == 0:
+    if result and result.returncode == 0:
         try:
             raw = json.loads(result.stdout)
             for path, cols in raw.items():
