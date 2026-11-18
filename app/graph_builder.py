@@ -28,8 +28,8 @@ NODE_STYLES = {
     "section": ("#52525b", "#ffffff"),
     "block": ("#0f766e", "#ffffff"),
     "include": ("#b45309", "#ffffff"),
-    "task": ("#f4f4f5", "#18181b"),
-    "unresolved": ("#fee2e2", "#991b1b"),
+    "task": ("#ffffff", "#18181b"),
+    "unresolved": ("#dc2626", "#ffffff"),
 }
 
 
