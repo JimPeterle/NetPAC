@@ -25,6 +25,8 @@ __pycache__/
 # Database dumps / backups
 *.sql
 !database/migrations/*.sql
+# Schemas of old releases (no data) for the migration tests
+!tests/fixtures/*.sql
 
 # OS / editor
 .DS_Store
