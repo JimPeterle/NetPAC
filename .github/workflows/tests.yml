@@ -68,8 +68,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             python3-flask python3-flask-login python3-flask-bcrypt python3-flask-limiter python3-flaskext.wtf \
             python3-pyrad python3-dotenv python3-pymysql python3-cryptography python3-markdown \
-            python3-pyotp python3-qrcode python3-pil python3-apscheduler python3-sqlalchemy \
-            python3-pytest
+            python3-pyotp python3-qrcode python3-pil python3-apscheduler python3-sqlalchemy python3-yaml \
+            python3-pytest graphviz
 
       - name: Prepare folders and config/secret.env
         run: |

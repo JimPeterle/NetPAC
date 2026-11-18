@@ -189,3 +189,15 @@ def test_template_passes_forks_to_the_job(data):
     assert error is None
     assert job["payload"]["forks"] == 20
     assert '"forks": 20' in job["variables"]
+
+
+def test_playbook_graph_is_drawn(client):
+    netpac.app.config["WTF_CSRF_ENABLED"] = False
+    try:
+        response = log_in(client, "admin").post("/playbook_graph/site.yml")
+    finally:
+        netpac.app.config["WTF_CSRF_ENABLED"] = True
+    assert response.status_code == 302 and location_path(response) == "/playbook_graph/view/site"
+    assert client.get("/playbook_graph/view/site").status_code == 200
+    svg = client.get("/playbook_graph/raw/site.svg")
+    assert svg.status_code == 200 and b"<svg" in svg.data and b"Ping" in svg.data

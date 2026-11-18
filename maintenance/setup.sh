@@ -308,6 +308,7 @@ sudo apt install python3-qrcode -y
 sudo apt install python3-pil -y
 sudo apt install python3-apscheduler -y
 sudo apt install python3-sqlalchemy -y
+sudo apt install python3-yaml -y
 sudo apt install python3-venv -y
 
 echo ""
@@ -404,51 +405,21 @@ fi
 # ===================================
 # 14. GRAPHVIZ (OPTIONAL)
 # ===================================
-GRAPHVIZ_AVAILABLE=false
-
 if command -v dot &> /dev/null; then
     print_status "graphviz already installed"
-    GRAPHVIZ_AVAILABLE=true
 else
-    read -p "Install graphviz with apt(required for Playbook Graph feature)? (y/n) " -n 1 -r
+    read -p "Install graphviz with apt (required for the Playbook Graph)? (y/n) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         sudo apt install graphviz -y
         print_status "graphviz installed"
-        GRAPHVIZ_AVAILABLE=true
     else
         print_warning "graphviz skipped — install later with: sudo apt install graphviz -y"
-        print_warning "ansible-playbook-grapher will be skipped too"
     fi
 fi
 
 # ===================================
-# 15. ANSIBLE PLAYBOOK GRAPHER (OPTIONAL)
-# ===================================
-if [ "$GRAPHVIZ_AVAILABLE" = true ]; then
-    if command -v ansible-playbook-grapher &> /dev/null; then
-        print_status "ansible-playbook-grapher already installed"
-    else
-        read -p "Install ansible-playbook-grapher with pip inside venv? (y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            source $APP_DIR/venv/bin/activate
-            pip install ansible-playbook-grapher
-            print_status "ansible-playbook-grapher installed in venv"
-            deactivate
-        else
-            echo "..................................................."
-            print_warning "ansible-playbook-grapher skipped — install later with:"
-            print_warning "source $APP_DIR/venv/bin/activate"
-            print_warning "pip install ansible-playbook-grapher"
-            print_warning "or Web-Interface -> Python -> Environment"
-            echo "..................................................."
-        fi
-    fi
-fi
-
-# ===================================
-# 16. CREATE GUNICORN CONFIG
+# 15. CREATE GUNICORN CONFIG
 # ===================================
 
 echo ""
@@ -481,7 +452,7 @@ EOF
 print_status "Gunicorn configuration created"
 
 # ===================================
-# 17. CREATE SYSTEMD SERVICES
+# 16. CREATE SYSTEMD SERVICES
 # ===================================
 
 echo ""
@@ -560,7 +531,7 @@ EOF
 print_status "Systemd service created for job executor"
 
 # ===================================
-# 18. INSTALL NGINX (IF REQUIRED)
+# 17. INSTALL NGINX (IF REQUIRED)
 # ===================================
 
 echo ""
@@ -583,7 +554,7 @@ else
 fi
 
 # ===================================
-# 19. NGINX PERMISSION FOR THE APP DIRECTORY
+# 18. NGINX PERMISSION FOR THE APP DIRECTORY
 # ===================================
 
 echo ""
@@ -605,7 +576,7 @@ done
 print_status "Nginx can reach $APP_DIR/app/static"
 
 # ===================================
-# 20. CREATE SSL CERTIFICATE
+# 19. CREATE SSL CERTIFICATE
 # ===================================
 
 if [ ! -d "$CERT_DIR" ]; then
@@ -637,7 +608,7 @@ if [ -n "$NGINX_USER" ]; then
 fi
 
 # ===================================
-# 21. CREATE NGINX CONFIG
+# 20. CREATE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -739,7 +710,7 @@ EOF
 print_status "Nginx configuration created"
 
 # ===================================
-# 22. ENABLE NGINX CONFIG
+# 21. ENABLE NGINX CONFIG
 # ===================================
 
 echo ""
@@ -766,7 +737,7 @@ else
 fi
 
 # ===================================
-# 23. START SERVICES
+# 22. START SERVICES
 # ===================================
 
 echo ""
@@ -796,7 +767,7 @@ else
 fi
 
 # ===================================
-# 24. INSTALL NETPAC COMMAND
+# 23. INSTALL NETPAC COMMAND
 # ===================================
 
 echo ""
@@ -807,7 +778,7 @@ sudo ln -sf "$APP_DIR/maintenance/netpac" /usr/local/bin/netpac
 print_status "Command installed: netpac (see: netpac help)"
 
 # ===================================
-# 25. SUMMARY
+# 24. SUMMARY
 # ===================================
 
 echo ""

@@ -86,8 +86,9 @@ history, but secrets are the safe place for credentials.
 
 - All playbooks under `/var/lib/netpac/playbooks` are shown in the web interface and can be started
   against a host, a group or locally on the NetPAC server.
-- Extra vars at start, syntax check, dry run (`--check --diff`) and a visual graph
-  (ansible-playbook-grapher).
+- Extra vars at start, syntax check and dry run (`--check --diff`).
+- **Graph:** NetPAC draws plays, roles, tasks, blocks and imports from the playbook files with Graphviz,
+  without running anything. Includes that depend on variables are only known at run time and are marked in red.
 - **Forks** set how many hosts Ansible works on at the same time (1–100). They can be set when starting
   a playbook, in a template and in a schedule; empty uses the Ansible default (5, or `forks` from an
   `ansible.cfg` next to the playbook). A schedule that runs a template uses the forks of the template.

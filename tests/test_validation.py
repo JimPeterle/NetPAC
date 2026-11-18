@@ -50,3 +50,4 @@ def test_forks_are_only_passed_when_set():
     assert forks_args(None) == []
     assert forks_info(20) == {"forks": 20}
     assert forks_info(None) == {}
+

@@ -58,6 +58,7 @@ from db_migrations import run_migrations, MigrationError
 from queue_rules import jobs_conflict
 from validation import (MAX_SCRIPT_VARS, MAX_FORKS, validate_hostname, parse_var_count, validate_password, parse_extra_vars,
                         parse_forks, forks_info, forks_args)
+from graph_builder import GraphError, build_playbook_dot
 from redaction import REDACTED_VALUE, SENSITIVE_VAR_RE, history_variables, csv_safe, hide_sensitive
 from survey import parse_template_fields, collect_survey_values, survey_defaults_form, survey_env_value
 from job_output import JobOutput
@@ -3598,41 +3599,55 @@ def browse_playbooks(subpath):
 @login_required
 @role_required("operator")
 def playbook_graph(subpath):
-    """Generates a graph of a playbook with ansible-playbook-grapher."""
+    """Draws a graph of a playbook from its YAML files with Graphviz; the playbook is not executed."""
 
-    _, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
+    base_dir, target = resolve_repo_path(subpath, PLAYBOOKS_DIR)
 
     if target is None:
         logger.warning(f"Path traversal attempt detected: {sanitize_log(subpath)}")
         abort(403)
 
-    os.makedirs(GRAPH_DIR, exist_ok=True)
+    if not os.path.isfile(target):
+        abort(404)
 
-    graph_name = subpath.replace("/", "_").replace(".yml", "").replace(".yaml", "")
-    output_path = os.path.join(GRAPH_DIR, graph_name)
-
-    grapher = os.path.join(VENV_DIR, "bin", "ansible-playbook-grapher")
-
-    if not os.path.exists(grapher) and not shutil.which("ansible-playbook-grapher"):
-        flash("ansible-playbook-grapher is not installed. Install it manually over the Web-Interface -> Python -> Environment", "danger")
-        return redirect(url_for("browse_playbooks", subpath=subpath))
-    
     env = tool_env()
+    dot = shutil.which("dot", path=env.get("PATH"))
+    if not dot:
+        flash("Graphviz is not installed — install it with: sudo apt install graphviz -y", "danger")
+        return redirect(url_for("browse_playbooks", subpath=subpath))
 
-    result = subprocess.run(
-        [grapher, target, "-o", output_path],
-        capture_output=True, text=True,
-        env=env
-    )
+    try:
+        dot_source, unresolved = build_playbook_dot(target, base_dir)
+    except GraphError as e:
+        flash(f"Graph generation failed: {e}", "danger")
+        return redirect(url_for("browse_playbooks", subpath=subpath))
+
+    os.makedirs(GRAPH_DIR, exist_ok=True)
+    graph_name = subpath.replace("/", "_").replace(".yml", "").replace(".yaml", "")
+    output_path = os.path.join(GRAPH_DIR, f"{graph_name}.svg")
+
+    try:
+        result = subprocess.run(
+            [dot, "-Tsvg", "-o", output_path],
+            input=dot_source, capture_output=True, text=True,
+            timeout=GRAPH_TIMEOUT_SECONDS, env=env
+        )
+    except subprocess.TimeoutExpired:
+        flash("Graph generation failed: the playbook is too large to draw", "danger")
+        return redirect(url_for("browse_playbooks", subpath=subpath))
 
     if result.returncode != 0:
-        flash(f"Graph generation failed: {result.stderr}", "danger")
+        logger.error(f"Graphviz failed for '{sanitize_log(subpath)}': {sanitize_log(result.stderr)}")
+        flash("Graph generation failed: Graphviz could not draw the playbook", "danger")
         return redirect(url_for("browse_playbooks", subpath=subpath))
 
+    if unresolved:
+        flash(f"{unresolved} element(s) could not be followed without running the playbook — they are marked in red", "warning")
     return redirect(url_for("view_playbook_graph", filename=graph_name))
 
 
 GRAPH_DIR = "/var/lib/netpac/graphs"
+GRAPH_TIMEOUT_SECONDS = 30
 
 def resolve_graph_path(filename):
     """Returns (graph_dir, svg_path) of a graph or aborts with 403/404."""

@@ -10,6 +10,11 @@
     </div>
 </div>
 <div class="content-card">
+    <div style="display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--text-secondary);">
+        {% for color, label in [('#2463eb', 'Play'), ('#7c3aed', 'Role'), ('#0f766e', 'Block'), ('#b45309', 'Include'), ('#52525b', 'Section'), ('#f4f4f5', 'Task'), ('#fee2e2', 'Known only at run time or not found')] %}
+        <span style="display: inline-flex; align-items: center; gap: 0.4rem;"><span style="width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border-strong); background: {{ color }};"></span>{{ label }}</span>
+        {% endfor %}
+    </div>
     <div class="card-body" style="overflow-x: auto;">
         <img src="{{ url_for('raw_playbook_graph', filename=filename) }}" alt="Playbook graph of {{ filename }}" style="max-width: none; display: block;">
 

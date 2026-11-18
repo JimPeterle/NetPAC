@@ -14,7 +14,7 @@ RUN echo "Package refresh: $APT_REFRESH" \
         python3 python3-venv \
         python3-flask python3-flask-login python3-flask-bcrypt python3-flask-limiter python3-flaskext.wtf \
         python3-pyrad python3-dotenv python3-pymysql python3-cryptography python3-markdown \
-        python3-gunicorn python3-pyotp python3-qrcode python3-pil python3-apscheduler python3-sqlalchemy \
+        python3-gunicorn python3-pyotp python3-qrcode python3-pil python3-apscheduler python3-sqlalchemy python3-yaml \
         python3-paramiko \
         ansible graphviz git openssh-client sshpass mariadb-client openssl \
         ca-certificates tzdata \
@@ -29,7 +29,6 @@ COPY --chown=netpac:netpac . .
 RUN cp docker/gunicorn_config.py gunicorn_config.py \
     && chmod 755 docker/entrypoint.sh \
     && python3 -m venv venv \
-    && venv/bin/pip install --no-cache-dir ansible-playbook-grapher \
     && mkdir -p /home/netpac/state /home/netpac/.ansible /home/netpac/.ssh /home/netpac/bin/netpac_backups \
     && chmod 700 /home/netpac/.ssh /home/netpac/state \
     && chown -R netpac:netpac /home/netpac
